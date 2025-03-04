@@ -7,7 +7,11 @@ endif()
 
 project ("canokey-mini-driver")
 
-add_library (canokey-mini-driver SHARED "canokey_minidriver.c" "cardmod.h")
+file (GLOB SOURCES *.c *.cpp)
+file (GLOB HEADERS *.h)
+
+add_library (canokey-mini-driver SHARED ${SOURCES} ${HEADERS})
+target_link_libraries (canokey-mini-driver PRIVATE "winscard.dll")
 
 if (CMAKE_VERSION VERSION_GREATER 3.12)
   set_property(TARGET canokey-mini-driver PROPERTY CXX_STANDARD 20)

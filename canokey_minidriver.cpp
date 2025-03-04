@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <windows.h>
+#include <winscard.h>
 
 // Global function pointers for data caching mechanisms
 PFN_CSP_CACHE_ADD_FILE g_pfnCspCacheAddFile = NULL;
@@ -52,6 +53,11 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData,
                                 __in DWORD dwFlags) {
   DWORD dwReturn = 0;
 
+  if (dwFlags & CARD_SECURE_KEY_INJECTION_NO_CARD_MODE) {
+      // This flag is not supported
+      return SCARD_E_INVALID_PARAMETER;
+  }
+
   // Check if pCardData is valid
   if (!pCardData) {
     return ERROR_INVALID_PARAMETER;
@@ -61,6 +67,27 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData,
   if (pCardData->dwVersion < CARD_DATA_VERSION_FOUR) {
     return ERROR_REVISION_MISMATCH;
   }
+
+  if (!pCardData->hSCardCtx || !pCardData->hScard) {
+	  return SCARD_E_INVALID_HANDLE;
+  }
+
+  if (!pCardData->pfnCspAlloc || !pCardData->pfnCspReAlloc ||
+	  !pCardData->pfnCspFree) {
+	  return ERROR_INVALID_PARAMETER;
+  }
+
+  if (!pCardData->pbAtr || pCardData->cbAtr == 0) {
+	  return ERROR_INVALID_PARAMETER;
+  }
+
+  if (!pCardData->pwszCardName) {
+	  return ERROR_INVALID_PARAMETER;
+  }
+
+  // TODO: check pbAtr content
+  
+  
 
   // Import the data caching functions
   g_pfnCspCacheAddFile = pCardData->pfnCspCacheAddFile;
@@ -88,6 +115,7 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData,
   // pCardData->pfnCardCreateContainer = CardCreateContainer;
   // pCardData->pfnCardDeleteContainer = CardDeleteContainer;
   // ... and so on for all the functions you'll implement
+
 
   return SCARD_S_SUCCESS;
 }
