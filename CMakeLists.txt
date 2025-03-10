@@ -5,10 +5,15 @@ if (POLICY CMP0141)
   set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<IF:$<AND:$<C_COMPILER_ID:MSVC>,$<CXX_COMPILER_ID:MSVC>>,$<$<CONFIG:Debug,RelWithDebInfo>:EditAndContinue>,$<$<CONFIG:Debug,RelWithDebInfo>:ProgramDatabase>>")
 endif()
 
-project ("canokey-mini-driver")
+project ("canokey-mini-driver" VERSION 1.0.0.0)
 
 file (GLOB SOURCES *.c *.cpp)
 file (GLOB HEADERS *.h)
+
+set (CMD_DRIVERDATE "03/09/2025")
+set (CMD_DRIVERVER ${CMAKE_PROJECT_VERSION})
+set (CMD_LIB_NAME "canokey-minidriver")
+configure_file ("canokey_minidriver.inf.in" "canokey_minidriver.inf" @ONLY)
 
 add_library (canokey-minidriver SHARED ${SOURCES} ${HEADERS})
 target_link_libraries (canokey-minidriver PRIVATE "winscard.dll")

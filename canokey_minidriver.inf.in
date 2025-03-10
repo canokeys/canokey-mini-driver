@@ -5,7 +5,7 @@ ClassGuid={990A2BD7-E738-46c7-B26F-1CF8FB9F1391}
 Provider=%ManufacturerName%
 ;CatalogFile=delta.cat
 ;PnpLockdown=1
-DriverVer=03/09/2025,10.0.0.0
+DriverVer=@CMD_DRIVERDATE@,@CMD_DRIVERVER@
 
 [Manufacturer]
 %ManufacturerName%=CanoKey,NTamd64.6.1,NTx86.6.1,NTarm64.10
@@ -89,6 +89,6 @@ CanoKeyFilter="SCFILTER\CID_43616e6f6b6579"
 CanoKeyMiniDriverDisk="CanoKey Minidriver Installation Disk"
 SmartCardKey="SOFTWARE\Microsoft\Cryptography\Calais\SmartCards\CanoKey"
 SmartCardKeyWOW64="SOFTWARE\Wow6432Node\Microsoft\Cryptography\Calais\SmartCards\CanoKey"
-SmartCardModule="canokey-minidriver.dll"
-SmartCardModuleAMD64="canokey-minidriver-amd64.dll"
-SmartCardModuleARM64="canokey-minidriver-arm64.dll"
+SmartCardModule="@CMD_LIB_NAME@.dll"
+SmartCardModuleAMD64="@CMD_LIB_NAME@-amd64.dll"
+SmartCardModuleARM64="@CMD_LIB_NAME@-arm64.dll"
