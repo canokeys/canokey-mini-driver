@@ -6,6 +6,8 @@
  */
 
 #include "cardmod.h"
+#include "logging.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +29,13 @@ PFN_CSP_UNPAD_DATA g_pfnCspUnpadData = NULL;
 
 // DllMain function
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
+  
+  int res = cmd_init_logging("c:\\canokey_minidriver.log", CMD_LOG_LEVEL_DEBUG);
+  if (res != 0) {
+	  return res;
+  }
+  CMD_INFO("CanoKey Smart Card Minidriver loaded with parameters %d %d\n", hinstDLL, fdwReason);
+
   switch (fdwReason) {
   case DLL_PROCESS_ATTACH:
     // Initialize the DLL
