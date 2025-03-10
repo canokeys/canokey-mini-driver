@@ -10,9 +10,9 @@ project ("canokey-mini-driver")
 file (GLOB SOURCES *.c *.cpp)
 file (GLOB HEADERS *.h)
 
-add_library (canokey-mini-driver SHARED ${SOURCES} ${HEADERS})
-target_link_libraries (canokey-mini-driver PRIVATE "winscard.dll")
+add_library (canokey-minidriver SHARED ${SOURCES} ${HEADERS})
+target_link_libraries (canokey-minidriver PRIVATE "winscard.dll")
 
 if (CMAKE_VERSION VERSION_GREATER 3.12)
-  set_property(TARGET canokey-mini-driver PROPERTY CXX_STANDARD 20)
+  set_property(TARGET canokey-minidriver PROPERTY CXX_STANDARD 20)
 endif()
