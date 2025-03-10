@@ -2,7 +2,7 @@
 Signature="$Windows NT$"
 Class=SmartCard
 ClassGuid={990A2BD7-E738-46c7-B26F-1CF8FB9F1391}
-Provider=%ProviderName%
+Provider=%ManufacturerName%
 CatalogFile=delta.cat
 DriverVer=03/09/2025,1.0.0.0
 
@@ -10,37 +10,62 @@ DriverVer=03/09/2025,1.0.0.0
 %ManufacturerName%=CanoKey,NTamd64,NTx86
 
 [CanoKey.NTamd64]
-%CanoKeyMiniDriver%=CanoKeyMiniDriver_Install,USB\VID_20A0&PID_42D4
+%CanoKeyMiniDriver%=CanoKeyMiniDriver64_Install,SCFILTER\CID_43616e6f6b6579
 
 [CanoKey.NTx86]
-%CanoKeyMiniDriver%=CanoKeyMiniDriver_Install,USB\VID_20A0&PID_42D4
+%CanoKeyMiniDriver%=CanoKeyMiniDriver32_Install,SCFILTER\CID_43616e6f6b6579
+; TODO: 32bit driver not supported yet
 
-[CanoKeyMiniDriver_Install.NT]
-CopyFiles=CanoKeyMiniDriver_CopyFiles
-AddReg=CanoKeyMiniDriver_AddReg
+[CanoKeyMiniDriver64_Install.NT]
+CopyFiles=amd64_CopyFiles
+CopyFiles=wow64_CopyFiles
+AddReg=AddRegWOW64
+AddReg=AddRegDefault
 
-[CanoKeyMiniDriver_CopyFiles]
-canokey-minidriver.dll
+[CanoKeyMiniDriver32_Install.NT]
+CopyFiles=x86_CopyFiles
+AddReg=AddRegDefault
 
 [SourceDisksNames]
 1=%CanoKeyMiniDriverDisk%
 
 [SourceDisksFiles]
-canokey-minidriver.dll=1,,0
+%SmartCardCardModule%=1
+%SmartCardCardModule64%=1
 
 [DestinationDirs]
-CanoKeyMiniDriver_CopyFiles=11 ; System32 directory
+amd64_CopyFiles=10,system32
+x86_CopyFiles=10,system32
+wow64_CopyFiles=10,syswow64
 
-[CanoKeyMiniDriver_AddReg]
+[amd64_CopyFiles]
+%SmartCardCardModule%,%SmartCardCardModule64%
+
+[x86_CopyFiles]
+%SmartCardCardModule%
+
+[wow64_CopyFiles]
+%SmartCardCardModule%
+
+[AddRegDefault]
 HKLM, %SmartCardName%,"ATR",0x00000001,3b,f7,11,00,00,81,31,fe,65,43,61,6e,6f,6b,65,79,99
 HKLM, %SmartCardName%,"ATRMask",0x00000001,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff
 HKLM, %SmartCardName%,"Crypto Provider",0x00000000,"Microsoft Base Smart Card Crypto Provider"
 HKLM, %SmartCardName%,"Smart Card Key Storage Provider",0x00000000,"Microsoft Smart Card Key Storage Provider"
-HKLM, %SmartCardName%,"80000001",0x00000000,"canokey-minidriver.dll"
+HKLM, %SmartCardName%,"80000001",0x00000000,%SmartCardCardModule%
+
+[AddRegWOW64]
+HKLM, %SmartCardNameWOW64%,"ATR",0x00000001,3b,f7,11,00,00,81,31,fe,65,43,61,6e,6f,6b,65,79,99
+HKLM, %SmartCardNameWOW64%,"ATRMask",0x00000001,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff
+HKLM, %SmartCardNameWOW64%,"Crypto Provider",0x00000000,"Microsoft Base Smart Card Crypto Provider"
+HKLM, %SmartCardNameWOW64%,"Smart Card Key Storage Provider",0x00000000,"Microsoft Smart Card Key Storage Provider"
+HKLM, %SmartCardNameWOW64%,"80000001",0x00000000,%SmartCardCardModule%
 
 [Strings]
-ProviderName="CanoKey"
 ManufacturerName="CanoKey"
 CanoKeyMiniDriver="CanoKey Minidriver"
 CanoKeyMiniDriverDisk="CanoKey Minidriver Installation Disk"
 SmartCardName="SOFTWARE\Microsoft\Cryptography\Calais\SmartCards\CanoKey"
+SmartCardNameWOW64="SOFTWARE\Wow6432Node\Microsoft\Cryptography\Calais\SmartCards\CanoKey"
+SmartCardCardModule="canokey-minidriver.dll"
+SmartCardCardModule64="canokey-minidriver-64.dll"
