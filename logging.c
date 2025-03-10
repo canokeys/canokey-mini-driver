@@ -21,10 +21,11 @@ int cmd_init_logging(const char* log_file, const int log_level) {
 			fclose(g_log_file);
 			g_log_file = NULL;
 		}
-		int errno = fopen_s(&g_log_file, log_file, "w+");
-		if (errno != 0) {
-			return errno;
+		int res = fopen_s(&g_log_file, log_file, "a+");
+		if (res != 0) {
+			return res;
 		}
+		fflush(g_log_file);
 		if (log_level >= 0 && log_level < CMD_LOG_LEVEL_SIZE) {
 			g_log_level = log_level;
 		}
@@ -42,6 +43,6 @@ void cmd_fprintf(const int level, FILE* const out, const char* const format, ...
 	va_list args;
 	va_start(args, format);
 	vfprintf(out, format, args);
-	fflush(out);
 	va_end(args);
+	fflush(out);
 }

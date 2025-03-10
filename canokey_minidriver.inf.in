@@ -84,7 +84,7 @@ HKLM, %SmartCardKeyWOW64%,"80000001",0x00000000,%SmartCardModule%
 
 [Strings]
 ManufacturerName="CanoKey"
-CanoKeyMiniDriver="CanoKey Minidriver"
+CanoKeyMiniDriver="CanoKey Minidriver@CMD_NAME_SUFFIX@"
 CanoKeyFilter="SCFILTER\CID_43616e6f6b6579"
 CanoKeyMiniDriverDisk="CanoKey Minidriver Installation Disk"
 SmartCardKey="SOFTWARE\Microsoft\Cryptography\Calais\SmartCards\CanoKey"

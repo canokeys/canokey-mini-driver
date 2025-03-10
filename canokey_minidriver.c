@@ -27,10 +27,11 @@ PFN_CSP_FREE g_pfnCspFree = NULL;
 // Global function pointer for padding removal
 PFN_CSP_UNPAD_DATA g_pfnCspUnpadData = NULL;
 
+
 // DllMain function
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
-  
-  int res = cmd_init_logging("c:\\canokey_minidriver.log", CMD_LOG_LEVEL_DEBUG);
+
+  int res = cmd_init_logging("C:\\Logs\\canokey_minidriver.log", CMD_LOG_LEVEL_DEBUG);
   if (res != 0) {
 	  return res;
   }
