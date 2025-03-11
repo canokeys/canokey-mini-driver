@@ -29,3 +29,12 @@ After successful build, you will get `canokey_minidriver.{inf,dll}` in your buil
 If you would like to test a new version, you **should** uninstall the old driver first.
 To do so, right-click on `canokey_minidriver.inf` and select `Uninstall`, check "Delete the driver software for this device" and click `OK`.
 Then you can install the new version and test again.
+
+## Troubleshooting
+
+If you encounter any strange problems, you may try to (in order):
+
+- Re-plug your CanoKey.
+- Uninstall and reinstall the driver.
+- Restart the `CertPropSvc` service (espcially when you cannot read or delete the log files).
+- Reboot your computer.
