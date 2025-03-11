@@ -11,7 +11,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <windows.h>
+#include <stdint.h>
+
+#include <Windows.h>
 #include <winscard.h>
 
 // Global function pointers for data caching mechanisms
@@ -28,23 +30,33 @@ PFN_CSP_FREE g_pfnCspFree = NULL;
 PFN_CSP_UNPAD_DATA g_pfnCspUnpadData = NULL;
 
 
+static void init_logging_file(int level) {
+  CreateDirectory("C:\\Logs", NULL); // ignore errors
+  char log_file_name[64], time[16];
+  SYSTEMTIME st;
+  GetLocalTime(&st);
+  sprintf_s(time, sizeof(time), "%04d%02d%02d_%02d%02d%02d", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+  sprintf_s(log_file_name, sizeof(log_file_name), "C:\\Logs\\canokey_minidriver_%s_%d.log", time, (int32_t) GetCurrentProcessId());
+  cmd_init_logging(log_file_name, level);
+  CMD_INFO("Start logging to file %s...\n", log_file_name);
+}
+
 // DllMain function
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
-  
-  
-  int res = cmd_init_logging("C:\\Logs\\canokey_minidriver.log", CMD_LOG_LEVEL_DEBUG);
-  if (res != 0) {
-	  return res;
-  }
-  CMD_INFO("CanoKey Smart Card Minidriver loaded with parameters %d %d\n", hinstDLL, fdwReason);
 
   switch (fdwReason) {
   case DLL_PROCESS_ATTACH:
     // Initialize the DLL
-    DisableThreadLibraryCalls(hinstDLL);
+    init_logging_file(CMD_LOG_LEVEL_DEBUG);
+    CMD_INFO("CanoKey Smart Card Minidriver compiled at %s %s\n", __DATE__, __TIME__);
+    CMD_INFO("DLL loaded with handle %p\n", hinstDLL);
+    FUNC_TRACE(DisableThreadLibraryCalls(hinstDLL));
     break;
   case DLL_PROCESS_DETACH:
     // Clean up resources
+    CMD_INFO("DLL unloaded with handle %p, stop logging...\n", hinstDLL);
+    CMD_INFO("========================================\n");
+    cmd_stop_logging();
     break;
   case DLL_THREAD_ATTACH:
   case DLL_THREAD_DETACH:
@@ -64,36 +76,39 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData,
                                 __in DWORD dwFlags) {
   DWORD dwReturn = 0;
 
+  CMD_DEBUG("CardAcquireContext called with pCardData %p, dwFlags %x\n", pCardData, dwFlags);
+  // TODO: add function to print internal structure of CARD_DATA?
+
   if (dwFlags & CARD_SECURE_KEY_INJECTION_NO_CARD_MODE) {
-      // This flag is not supported
-      return SCARD_E_INVALID_PARAMETER;
+    // This flag is not supported
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "CARD_SECURE_KEY_INJECTION_NO_CARD_MODE");
   }
 
   // Check if pCardData is valid
   if (!pCardData) {
-    return ERROR_INVALID_PARAMETER;
+    CMD_RETURN(ERROR_INVALID_PARAMETER, "pCardData is NULL");
   }
 
   // Check version
   if (pCardData->dwVersion < CARD_DATA_VERSION_FOUR) {
-    return ERROR_REVISION_MISMATCH;
+    CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion too old");
   }
 
   if (!pCardData->hSCardCtx || !pCardData->hScard) {
-	  return SCARD_E_INVALID_HANDLE;
+    CMD_RETURN(SCARD_E_INVALID_HANDLE, "No hSCardCtx or hScard");
   }
 
   if (!pCardData->pfnCspAlloc || !pCardData->pfnCspReAlloc ||
 	  !pCardData->pfnCspFree) {
-	  return ERROR_INVALID_PARAMETER;
+    CMD_RETURN(ERROR_INVALID_PARAMETER, "No pfnCsp* allocators");
   }
 
   if (!pCardData->pbAtr || pCardData->cbAtr == 0) {
-	  return ERROR_INVALID_PARAMETER;
+    CMD_RETURN(ERROR_INVALID_PARAMETER, "No pbAtr or cbAtr");
   }
 
   if (!pCardData->pwszCardName) {
-	  return ERROR_INVALID_PARAMETER;
+    CMD_RETURN(ERROR_INVALID_PARAMETER, "No pwszCardName");
   }
 
   // TODO: check pbAtr content
@@ -128,7 +143,7 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData,
   // ... and so on for all the functions you'll implement
 
 
-  return SCARD_S_SUCCESS;
+  CMD_RET_OK(SCARD_S_SUCCESS);
 }
 
 /*
@@ -137,8 +152,9 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData,
  * Purpose: Free resources consumed by the CARD_DATA structure.
  */
 DWORD WINAPI CardDeleteContext(__inout PCARD_DATA pCardData) {
+  CMD_DEBUG("CardDeleteContext called with pCardData %p\n", pCardData);
   if (!pCardData) {
-    return ERROR_INVALID_PARAMETER;
+    CMD_RETURN(ERROR_INVALID_PARAMETER, "pCardData is NULL");
   }
 
   // Free vendor specific data
@@ -147,7 +163,7 @@ DWORD WINAPI CardDeleteContext(__inout PCARD_DATA pCardData) {
     pCardData->pvVendorSpecific = NULL;
   }
 
-  return SCARD_S_SUCCESS;
+  CMD_RET_OK(SCARD_S_SUCCESS);
 }
 
 /*
