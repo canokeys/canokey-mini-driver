@@ -38,7 +38,7 @@
 #    include <execinfo.h>
 #endif
 #include <stdlib.h>
-#include <unistd.h>
+#define strerror_r(errno,buf,len) strerror_s(buf,len,errno)
 
 /* Library version. */
 #define DBG_VERSION "0.12.1"
