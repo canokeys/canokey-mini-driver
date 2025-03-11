@@ -7,6 +7,9 @@ endif()
 
 project ("canokey-mini-driver" VERSION 1.0.0.0)
 
+set (CMAKE_VERBOSE_MAKEFILE ON)
+set (CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
+
 file (GLOB SOURCES *.c *.cpp)
 file (GLOB HEADERS *.h)
 
@@ -16,8 +19,8 @@ set (CMD_LIB_NAME "canokey-minidriver")
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
   set (CMD_NAME_SUFFIX " Debug (${CMAKE_HOST_SYSTEM_PROCESSOR} ${CMD_DRIVERVER} ${CMD_DRIVERDATE})")
 endif ()
-configure_file ("canokey_minidriver.inf.in" "canokey_minidriver.inf" @ONLY)
 
+configure_file ("canokey_minidriver.inf.in" "canokey_minidriver.inf" @ONLY)
 add_library (canokey-minidriver SHARED ${SOURCES} ${HEADERS})
 target_link_libraries (canokey-minidriver PRIVATE "winscard.dll")
 
