@@ -43,6 +43,7 @@ extern void cmd_fprintf(const int level, FILE* const out, const char* format, ..
 #define CMD_RETURN(ARG, ...) return (ARG);
 #endif // CMD_VERBOSE
 
-#define CMD_RET_OK(ARG) CMD_RETURN(ARG, "Success")
+#define CMD_RET_OK CMD_RETURN(SCARD_S_SUCCESS, "success");
+#define CMD_RET_UNIMPL CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "should be supported (not implemented now)");
 
 #endif // __LOGGING__H__
