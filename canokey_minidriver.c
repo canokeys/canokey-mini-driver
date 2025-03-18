@@ -235,10 +235,17 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wcompare-distinct-pointer-types"
 
-#define CMD_SET_CARD_DATA_PFN(NAME) pCardData->pfn##NAME = (void *)CMD_NO_IMPL_FUNC_NAME(NAME);
-  INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
+// clang-format off
+#define CMD_SET_CARD_DATA_PFN(NAME) do { \
+  if (pCardData->pfn##NAME != NULL) { \
+    CMD_ERROR("pCardData->pfn%s (set to %p) overridden by generated stub\n", #NAME, pCardData->pfn##NAME); \
+  } \
+  pCardData->pfn##NAME = (void *) CMD_NO_IMPL_FUNC_NAME(NAME); \
+} while (0);
+INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
 #undef CMD_SET_CARD_DATA_PFN
 #undef CMD_NO_IMPL_FUNC_NAME
+// clang-format on
 
   // check whether pCardData is fully filled
   uintptr_t *begin = (uintptr_t *)&pCardData->pfnCardDeleteContext;
@@ -255,6 +262,8 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
 
   CMD_RET_OK;
 }
+
+#undef INVOKE_X_ON_NO_IMPL_FUNCS
 
 /*
  * Function: CardDeleteContext
