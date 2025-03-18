@@ -34,10 +34,9 @@ static void init_logging_file(int level) {
   char log_file_name[64], time[16];
   SYSTEMTIME st;
   GetLocalTime(&st);
-  sprintf_s(time, sizeof(time), "%04d%02d%02d_%02d%02d%02d", st.wYear,
-            st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
-  sprintf_s(log_file_name, sizeof(log_file_name),
-            "C:\\Logs\\canokey_minidriver_%s_%d.log", time,
+  sprintf_s(time, sizeof(time), "%04d%02d%02d_%02d%02d%02d", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute,
+            st.wSecond);
+  sprintf_s(log_file_name, sizeof(log_file_name), "C:\\Logs\\canokey_minidriver_%s_%d.log", time,
             (int32_t)GetCurrentProcessId());
   cmd_init_logging(log_file_name, level);
   CMD_INFO("Start logging to file %s...\n", log_file_name);
@@ -50,8 +49,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
   case DLL_PROCESS_ATTACH:
     // Initialize the DLL
     init_logging_file(CMD_LOG_LEVEL_DEBUG);
-    CMD_INFO("CanoKey Smart Card Minidriver compiled at %s %s\n", __DATE__,
-             __TIME__);
+    CMD_INFO("CanoKey Smart Card Minidriver compiled at %s %s\n", __DATE__, __TIME__);
     CMD_INFO("DLL loaded with handle %p\n", hinstDLL);
     FUNC_TRACE(DisableThreadLibraryCalls(hinstDLL));
     break;
@@ -69,6 +67,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
   return TRUE;
 }
 
+// clang-format off
 // This is the list of functions required by the spec
 // that we **do not want** to support.
 // Please make sure any function is either listed here
@@ -112,7 +111,7 @@ X(CardCreateContainerEx)
 }
 INVOKE_X_ON_NO_IMPL_FUNCS(CMD_GEN_NO_IMPL_FUNC);
 #undef CMD_GEN_NO_IMPL_FUNC
-
+// clang-format on
 
 /*
  * Function: CardAcquireContext
@@ -120,12 +119,10 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_GEN_NO_IMPL_FUNC);
  * Purpose: Initialize the CARD_DATA structure which will be used by
  *          the CSP to interact with a specific card.
  */
-DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData,
-                                __in DWORD dwFlags) {
+DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags) {
   DWORD dwReturn = 0;
 
-  CMD_DEBUG("CardAcquireContext called with pCardData %p, dwFlags %x\n",
-            pCardData, dwFlags);
+  CMD_DEBUG("CardAcquireContext called with pCardData %p, dwFlags %x\n", pCardData, dwFlags);
   // TODO: add function to print internal structure of CARD_DATA?
 
   // Check if pCardData is valid
@@ -135,8 +132,7 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData,
 
   if (dwFlags & CARD_SECURE_KEY_INJECTION_NO_CARD_MODE) {
     // This flag is not supported
-    CMD_RETURN(SCARD_E_INVALID_PARAMETER,
-               "CARD_SECURE_KEY_INJECTION_NO_CARD_MODE");
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "CARD_SECURE_KEY_INJECTION_NO_CARD_MODE");
   }
 
   // Check version
@@ -151,8 +147,7 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData,
 
   CMD_DEBUG("hScardCtx %p, hScard %p\n", pCardData->hSCardCtx, pCardData->hScard);
 
-  if (!pCardData->pfnCspAlloc || !pCardData->pfnCspReAlloc ||
-      !pCardData->pfnCspFree) {
+  if (!pCardData->pfnCspAlloc || !pCardData->pfnCspReAlloc || !pCardData->pfnCspFree) {
     CMD_RETURN(ERROR_INVALID_PARAMETER, "No pfnCsp* allocators");
   }
 
@@ -182,78 +177,77 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData,
   }
 
   // Set function pointers in pCardData
-  pCardData->pfnCardDeleteContext = CardDeleteContext; // Yes
+  pCardData->pfnCardDeleteContext = CardDeleteContext;         // Yes
   pCardData->pfnCardQueryCapabilities = CardQueryCapabilities; // Yes
-  pCardData->pfnCardDeleteContainer = NULL; // No
-  pCardData->pfnCardCreateContainer = NULL; // No
-  pCardData->pfnCardGetContainerInfo = CardGetContainerInfo; // Yes
-  pCardData->pfnCardAuthenticatePin = CardAuthenticatePin; // Yes
-  pCardData->pfnCardGetChallenge = NULL; // No (opt)
-  pCardData->pfnCardAuthenticateChallenge = NULL; // No (opt)
-  pCardData->pfnCardUnblockPin = NULL; // No (opt)
-  pCardData->pfnCardChangeAuthenticator = NULL; // No (opt)
-  pCardData->pfnCardDeauthenticate = NULL; // Yes (opt)
-  pCardData->pfnCardCreateDirectory = NULL; // No
-  pCardData->pfnCardDeleteDirectory = NULL; // No
-  pCardData->pfnCardCreateFile = NULL; // No
-  pCardData->pfnCardReadFile = CardReadFile; // Yes
-  pCardData->pfnCardWriteFile = NULL; // No
-  pCardData->pfnCardDeleteFile = NULL; // No
-  pCardData->pfnCardEnumFiles = CardEnumFiles; // Yes
-  pCardData->pfnCardGetFileInfo = CardGetFileInfo; // Yes
-  pCardData->pfnCardQueryFreeSpace = CardQueryFreeSpace; // Yes
-  pCardData->pfnCardQueryKeySizes = CardQueryKeySizes; // Yes
+  pCardData->pfnCardDeleteContainer = NULL;                    // No
+  pCardData->pfnCardCreateContainer = NULL;                    // No
+  pCardData->pfnCardGetContainerInfo = CardGetContainerInfo;   // Yes
+  pCardData->pfnCardAuthenticatePin = CardAuthenticatePin;     // Yes
+  pCardData->pfnCardGetChallenge = NULL;                       // No (opt)
+  pCardData->pfnCardAuthenticateChallenge = NULL;              // No (opt)
+  pCardData->pfnCardUnblockPin = NULL;                         // No (opt)
+  pCardData->pfnCardChangeAuthenticator = NULL;                // No (opt)
+  pCardData->pfnCardDeauthenticate = NULL;                     // Yes (opt)
+  pCardData->pfnCardCreateDirectory = NULL;                    // No
+  pCardData->pfnCardDeleteDirectory = NULL;                    // No
+  pCardData->pfnCardCreateFile = NULL;                         // No
+  pCardData->pfnCardReadFile = CardReadFile;                   // Yes
+  pCardData->pfnCardWriteFile = NULL;                          // No
+  pCardData->pfnCardDeleteFile = NULL;                         // No
+  pCardData->pfnCardEnumFiles = CardEnumFiles;                 // Yes
+  pCardData->pfnCardGetFileInfo = CardGetFileInfo;             // Yes
+  pCardData->pfnCardQueryFreeSpace = CardQueryFreeSpace;       // Yes
+  pCardData->pfnCardQueryKeySizes = CardQueryKeySizes;         // Yes
 
-  pCardData->pfnCardSignData = CardSignData; // Yes
-  pCardData->pfnCardRSADecrypt = NULL; // Yes (opt)
+  pCardData->pfnCardSignData = CardSignData;     // Yes
+  pCardData->pfnCardRSADecrypt = NULL;           // Yes (opt)
   pCardData->pfnCardConstructDHAgreement = NULL; // Yes (opt)
 
   // New functions in version five.
-  pCardData->pfnCardDeriveKey = NULL; // Yes (opt)
+  pCardData->pfnCardDeriveKey = NULL;          // Yes (opt)
   pCardData->pfnCardDestroyDHAgreement = NULL; // Yes (opt)
-  //pCardData->pfnCspGetDHAgreement;
+  // pCardData->pfnCspGetDHAgreement;
 
   // version 6 additions below here
-  pCardData->pfnCardGetChallengeEx = NULL; // No (opt)
-  pCardData->pfnCardAuthenticateEx = CardAuthenticateEx; // Yes
-  pCardData->pfnCardChangeAuthenticatorEx = NULL; // No (opt)
-  pCardData->pfnCardDeauthenticateEx = CardDeauthenticateEx; // Yes
+  pCardData->pfnCardGetChallengeEx = NULL;                           // No (opt)
+  pCardData->pfnCardAuthenticateEx = CardAuthenticateEx;             // Yes
+  pCardData->pfnCardChangeAuthenticatorEx = NULL;                    // No (opt)
+  pCardData->pfnCardDeauthenticateEx = CardDeauthenticateEx;         // Yes
   pCardData->pfnCardGetContainerProperty = CardGetContainerProperty; // Yes
-  pCardData->pfnCardSetContainerProperty = NULL; // No
-  pCardData->pfnCardGetProperty = CardGetProperty; // Yes
-  pCardData->pfnCardSetProperty = CardSetProperty; // Yes
-  
+  pCardData->pfnCardSetContainerProperty = NULL;                     // No
+  pCardData->pfnCardGetProperty = CardGetProperty;                   // Yes
+  pCardData->pfnCardSetProperty = CardSetProperty;                   // Yes
+
   // version 7 additions below here
-  //pCardData->pfnCspUnpadData;
-  pCardData->pfnMDImportSessionKey = NULL; // No (opt)
-  pCardData->pfnMDEncryptData = NULL; // No (opt)
-  pCardData->pfnCardImportSessionKey = NULL; // No (opt)
-  pCardData->pfnCardGetSharedKeyHandle = NULL; // No (opt)
+  // pCardData->pfnCspUnpadData;
+  pCardData->pfnMDImportSessionKey = NULL;       // No (opt)
+  pCardData->pfnMDEncryptData = NULL;            // No (opt)
+  pCardData->pfnCardImportSessionKey = NULL;     // No (opt)
+  pCardData->pfnCardGetSharedKeyHandle = NULL;   // No (opt)
   pCardData->pfnCardGetAlgorithmProperty = NULL; // No (opt)
-  pCardData->pfnCardGetKeyProperty = NULL; // No (opt)
-  pCardData->pfnCardSetKeyProperty = NULL; // No (opt)
-  pCardData->pfnCardDestroyKey = NULL; // No (opt)
+  pCardData->pfnCardGetKeyProperty = NULL;       // No (opt)
+  pCardData->pfnCardSetKeyProperty = NULL;       // No (opt)
+  pCardData->pfnCardDestroyKey = NULL;           // No (opt)
   pCardData->pfnCardProcessEncryptedData = NULL; // No (opt)
-  pCardData->pfnCardCreateContainerEx = NULL; // No (opt)
+  pCardData->pfnCardCreateContainerEx = NULL;    // No (opt)
 
   // fill in generated stubs
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wcompare-distinct-pointer-types"
 
-#define CMD_SET_CARD_DATA_PFN(NAME) pCardData->pfn##NAME = (void*) CMD_NO_IMPL_FUNC_NAME(NAME);
+#define CMD_SET_CARD_DATA_PFN(NAME) pCardData->pfn##NAME = (void *)CMD_NO_IMPL_FUNC_NAME(NAME);
   INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
 #undef CMD_SET_CARD_DATA_PFN
 #undef CMD_NO_IMPL_FUNC_NAME
 
-
   // check whether pCardData is fully filled
-  uintptr_t* begin = (uintptr_t*) &pCardData->pfnCardDeleteContext;
-  uintptr_t* end = (uintptr_t*) &pCardData->pfnCardCreateContainerEx;
-  for (uintptr_t* p = begin; p <= end; p++) {
-    if (*p == 0 &&
-      !(p == &pCardData->pvUnused3 || p == &pCardData->pvUnused4 || p == &pCardData->pfnCspGetDHAgreement || p == &pCardData->pfnCspUnpadData)
-      ) {
-      CMD_ERROR("pCardData has NULL entry point at offset %lld to pfnCardDeleteContext, check CardAcquireContext!\n", p - begin);
+  uintptr_t *begin = (uintptr_t *)&pCardData->pfnCardDeleteContext;
+  uintptr_t *end = (uintptr_t *)&pCardData->pfnCardCreateContainerEx;
+  for (uintptr_t *p = begin; p <= end; p++) {
+    if (*p == 0 && !(p == &pCardData->pvUnused3 || p == &pCardData->pvUnused4 ||
+                     p == &pCardData->pfnCspGetDHAgreement || p == &pCardData->pfnCspUnpadData)) {
+      CMD_ERROR("pCardData has NULL entry point at offset %lld to pfnCardDeleteContext, check CardAcquireContext!\n",
+                p - begin);
     }
   }
 
@@ -261,7 +255,6 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData,
 
   CMD_RET_OK;
 }
-
 
 /*
  * Function: CardDeleteContext
@@ -288,12 +281,9 @@ DWORD WINAPI CardDeleteContext(__inout PCARD_DATA pCardData) {
  *
  * Purpose: Get card properties.
  */
-DWORD WINAPI CardGetProperty(__in PCARD_DATA pCardData,
-                             __in LPCWSTR wszProperty,
-                             __out_bcount_part_opt(cbData, *pdwDataLen)
-                                 PBYTE pbData,
-                             __in DWORD cbData, __out PDWORD pdwDataLen,
-                             __in DWORD dwFlags) {
+DWORD WINAPI CardGetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty,
+                             __out_bcount_part_opt(cbData, *pdwDataLen) PBYTE pbData, __in DWORD cbData,
+                             __out PDWORD pdwDataLen, __in DWORD dwFlags) {
   CMD_DEBUG("CardGetProperty called with pCardData %p, wszProperty %S, pbData "
             "%p, cbData %d, pdwDataLen %p, dwFlags %x\n",
             pCardData, wszProperty, pbData, cbData, pdwDataLen, dwFlags);
@@ -312,9 +302,7 @@ DWORD WINAPI CardGetProperty(__in PCARD_DATA pCardData,
  *
  * Purpose: Set card properties.
  */
-DWORD WINAPI CardSetProperty(__in PCARD_DATA pCardData,
-                             __in LPCWSTR wszProperty,
-                             __in_bcount(cbData) PBYTE pbData,
+DWORD WINAPI CardSetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty, __in_bcount(cbData) PBYTE pbData,
                              __in DWORD cbData, __in DWORD dwFlags) {
   CMD_DEBUG("CardSetProperty called with pCardData %p, wszProperty %S, pbData "
             "%p, cbData %d, dwFlags %x\n",
@@ -332,11 +320,8 @@ DWORD WINAPI CardSetProperty(__in PCARD_DATA pCardData,
  *
  * Purpose: Authenticate the PIN.
  */
-DWORD WINAPI CardAuthenticatePin(__in PCARD_DATA pCardData,
-                                 __in LPWSTR pwszUserId,
-                                 __in_bcount(cbPin) PBYTE pbPin,
-                                 __in DWORD cbPin,
-                                 __out_opt PDWORD pcAttemptsRemaining) {
+DWORD WINAPI CardAuthenticatePin(__in PCARD_DATA pCardData, __in LPWSTR pwszUserId, __in_bcount(cbPin) PBYTE pbPin,
+                                 __in DWORD cbPin, __out_opt PDWORD pcAttemptsRemaining) {
   CMD_DEBUG("CardAuthenticatePin called with pCardData %p, pwszUserId %S, "
             "pbPin %p, cbPin %d, pcAttemptsRemaining %p\n",
             pCardData, pwszUserId, pbPin, cbPin, pcAttemptsRemaining);
@@ -353,11 +338,8 @@ DWORD WINAPI CardAuthenticatePin(__in PCARD_DATA pCardData,
  *
  * Purpose: Read a file from the card.
  */
-DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData,
-                          __in LPSTR pszDirectoryName, __in LPSTR pszFileName,
-                          __in DWORD dwFlags,
-                          __deref_out_bcount_opt(*pcbData) PBYTE *ppbData,
-                          __out PDWORD pcbData) {
+DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName, __in LPSTR pszFileName,
+                          __in DWORD dwFlags, __deref_out_bcount_opt(*pcbData) PBYTE *ppbData, __out PDWORD pcbData) {
   CMD_DEBUG("CardReadFile called with pCardData %p, pszDirectoryName %s, "
             "pszFileName %s, dwFlags %x\n",
             pCardData, pszDirectoryName, pszFileName, dwFlags);
@@ -374,9 +356,7 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData,
  *
  * Purpose: Get information about a file on the card.
  */
-DWORD WINAPI CardGetFileInfo(__in PCARD_DATA pCardData,
-                             __in LPSTR pszDirectoryName,
-                             __in LPSTR pszFileName,
+DWORD WINAPI CardGetFileInfo(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName, __in LPSTR pszFileName,
                              __in PCARD_FILE_INFO pCardFileInfo) {
   CMD_DEBUG("CardGetFileInfo called with pCardData %p, pszDirectoryName %s, "
             "pszFileName %s, pCardFileInfo %p\n",
@@ -394,11 +374,9 @@ DWORD WINAPI CardGetFileInfo(__in PCARD_DATA pCardData,
  *
  * Purpose: Enumerate files in a directory on the card.
  */
-DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData,
-                           __in_opt LPSTR pszDirectoryName,
-                           __deref_out_ecount(*pdwcbFileName)
-                               LPSTR *pmszFileNames,
-                           __out LPDWORD pdwcbFileName, __in DWORD dwFlags) {
+DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirectoryName,
+                           __deref_out_ecount(*pdwcbFileName) LPSTR *pmszFileNames, __out LPDWORD pdwcbFileName,
+                           __in DWORD dwFlags) {
   CMD_DEBUG("CardEnumFiles called with pCardData %p, pszDirectoryName %s, "
             "pmszFileNames %p, pdwcbFileName %p, dwFlags %x\n",
             pCardData, pszDirectoryName, pmszFileNames, pdwcbFileName, dwFlags);
@@ -415,9 +393,8 @@ DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData,
  *
  * Purpose: Query the free space on the card.
  */
-DWORD WINAPI
-CardQueryFreeSpace(__in PCARD_DATA pCardData, __in DWORD dwFlags,
-                   __inout PCARD_FREE_SPACE_INFO pCardFreeSpaceInfo) {
+DWORD WINAPI CardQueryFreeSpace(__in PCARD_DATA pCardData, __in DWORD dwFlags,
+                                __inout PCARD_FREE_SPACE_INFO pCardFreeSpaceInfo) {
   CMD_DEBUG("CardQueryFreeSpace called with pCardData %p, dwFlags %x, "
             "pCardFreeSpaceInfo %p\n",
             pCardData, dwFlags, pCardFreeSpaceInfo);
@@ -433,11 +410,8 @@ CardQueryFreeSpace(__in PCARD_DATA pCardData, __in DWORD dwFlags,
  *
  * Purpose: Query the capabilities of the card.
  */
-DWORD WINAPI CardQueryCapabilities(
-    __in PCARD_DATA pCardData, __inout PCARD_CAPABILITIES pCardCapabilities) {
-  CMD_DEBUG(
-      "CardQueryCapabilities called with pCardData %p, pCardCapabilities %p\n",
-      pCardData, pCardCapabilities);
+DWORD WINAPI CardQueryCapabilities(__in PCARD_DATA pCardData, __inout PCARD_CAPABILITIES pCardCapabilities) {
+  CMD_DEBUG("CardQueryCapabilities called with pCardData %p, pCardCapabilities %p\n", pCardData, pCardCapabilities);
 
   if (!pCardData || !pCardCapabilities) {
     return ERROR_INVALID_PARAMETER;
@@ -459,8 +433,7 @@ DWORD WINAPI CardQueryCapabilities(
  *
  * Purpose: Get information about a key container on the card.
  */
-DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData,
-                                  __in BYTE bContainerIndex, __in DWORD dwFlags,
+DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContainerIndex, __in DWORD dwFlags,
                                   __inout PCONTAINER_INFO pContainerInfo) {
   CMD_DEBUG("CardGetContainerInfo called with pCardData %p, bContainerIndex "
             "%d, dwFlags %x, pContainerInfo %p\n",
@@ -478,10 +451,8 @@ DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData,
  *
  * Purpose: Sign data using a key on the card.
  */
-DWORD WINAPI CardSignData(__in PCARD_DATA pCardData,
-                          __in PCARD_SIGNING_INFO pCardSigningInfo) {
-  CMD_DEBUG("CardSignData called with pCardData %p, pCardSigningInfo %p\n",
-            pCardData, pCardSigningInfo);
+DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCardSigningInfo) {
+  CMD_DEBUG("CardSignData called with pCardData %p, pCardSigningInfo %p\n", pCardData, pCardSigningInfo);
 
   if (!pCardData || !pCardSigningInfo) {
     return ERROR_INVALID_PARAMETER;
@@ -495,8 +466,7 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData,
  *
  * Purpose: Query the supported key sizes for a given algorithm.
  */
-DWORD WINAPI CardQueryKeySizes(__in PCARD_DATA pCardData, __in DWORD dwKeySpec,
-                               __in DWORD dwFlags,
+DWORD WINAPI CardQueryKeySizes(__in PCARD_DATA pCardData, __in DWORD dwKeySpec, __in DWORD dwFlags,
                                __inout PCARD_KEY_SIZES pKeySizes) {
   CMD_DEBUG("CardQueryKeySizes called with pCardData %p, dwKeySpec %x, dwFlags "
             "%x, pKeySizes %p\n",
@@ -514,11 +484,10 @@ DWORD WINAPI CardQueryKeySizes(__in PCARD_DATA pCardData, __in DWORD dwKeySpec,
  *
  * Purpose: Authenticate to the card with extended parameters.
  */
-DWORD WINAPI CardAuthenticateEx(
-    __in PCARD_DATA pCardData, __in PIN_ID PinId, __in DWORD dwFlags,
-    __in_bcount(cbPinData) PBYTE pbPinData, __in DWORD cbPinData,
-    __deref_opt_out_bcount(*pcbSessionPin) PBYTE *ppbSessionPin,
-    __out_opt PDWORD pcbSessionPin, __out_opt PDWORD pcAttemptsRemaining) {
+DWORD WINAPI CardAuthenticateEx(__in PCARD_DATA pCardData, __in PIN_ID PinId, __in DWORD dwFlags,
+                                __in_bcount(cbPinData) PBYTE pbPinData, __in DWORD cbPinData,
+                                __deref_opt_out_bcount(*pcbSessionPin) PBYTE *ppbSessionPin,
+                                __out_opt PDWORD pcbSessionPin, __out_opt PDWORD pcAttemptsRemaining) {
   CMD_DEBUG("CardAuthenticateEx called with pCardData %p, PinId %d, dwFlags "
             "%x, pbPinData %p, cbPinData %d\n",
             pCardData, PinId, dwFlags, pbPinData, cbPinData);
@@ -535,11 +504,8 @@ DWORD WINAPI CardAuthenticateEx(
  *
  * Purpose: Deauthenticate from the card with extended parameters.
  */
-DWORD WINAPI CardDeauthenticateEx(__in PCARD_DATA pCardData, __in PIN_SET PinId,
-                                  __in DWORD dwFlags) {
-  CMD_DEBUG(
-      "CardDeauthenticateEx called with pCardData %p, PinId %d, dwFlags %x\n",
-      pCardData, PinId, dwFlags);
+DWORD WINAPI CardDeauthenticateEx(__in PCARD_DATA pCardData, __in PIN_SET PinId, __in DWORD dwFlags) {
+  CMD_DEBUG("CardDeauthenticateEx called with pCardData %p, PinId %d, dwFlags %x\n", pCardData, PinId, dwFlags);
 
   if (!pCardData) {
     return ERROR_INVALID_PARAMETER;
@@ -553,11 +519,9 @@ DWORD WINAPI CardDeauthenticateEx(__in PCARD_DATA pCardData, __in PIN_SET PinId,
  *
  * Purpose: Get a property of a key container on the card.
  */
-DWORD WINAPI CardGetContainerProperty(
-    __in PCARD_DATA pCardData, __in BYTE bContainerIndex,
-    __in LPCWSTR wszProperty,
-    __out_bcount_part_opt(cbData, *pdwDataLen) PBYTE pbData, __in DWORD cbData,
-    __out PDWORD pdwDataLen, __in DWORD dwFlags) {
+DWORD WINAPI CardGetContainerProperty(__in PCARD_DATA pCardData, __in BYTE bContainerIndex, __in LPCWSTR wszProperty,
+                                      __out_bcount_part_opt(cbData, *pdwDataLen) PBYTE pbData, __in DWORD cbData,
+                                      __out PDWORD pdwDataLen, __in DWORD dwFlags) {
   CMD_DEBUG("CardGetContainerProperty called with pCardData %p, "
             "bContainerIndex %d, wszProperty %S, dwFlags %x\n",
             pCardData, bContainerIndex, wszProperty, dwFlags);
