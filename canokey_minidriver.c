@@ -13,7 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <Windows.h>
+#include <windows.h>
 #include <winscard.h>
 
 // Global function pointers for data caching mechanisms
@@ -237,6 +237,9 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData,
   pCardData->pfnCardCreateContainerEx = NULL; // No (opt)
 
   // fill in generated stubs
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wcompare-distinct-pointer-types"
+
 #define CMD_SET_CARD_DATA_PFN(NAME) pCardData->pfn##NAME = (void*) CMD_NO_IMPL_FUNC_NAME(NAME);
   INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
 #undef CMD_SET_CARD_DATA_PFN
@@ -247,12 +250,14 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData,
   uintptr_t* begin = (uintptr_t*) &pCardData->pfnCardDeleteContext;
   uintptr_t* end = (uintptr_t*) &pCardData->pfnCardCreateContainerEx;
   for (uintptr_t* p = begin; p <= end; p++) {
-    if (*p == NULL &&
+    if (*p == 0 &&
       !(p == &pCardData->pvUnused3 || p == &pCardData->pvUnused4 || p == &pCardData->pfnCspGetDHAgreement || p == &pCardData->pfnCspUnpadData)
       ) {
       CMD_ERROR("pCardData has NULL entry point at offset %lld to pfnCardDeleteContext, check CardAcquireContext!\n", p - begin);
     }
   }
+
+#pragma clang diagnostic pop
 
   CMD_RET_OK;
 }
