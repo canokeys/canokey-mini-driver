@@ -235,7 +235,7 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wcompare-distinct-pointer-types"
 
-// clang-format off
+  // clang-format off
 #define CMD_SET_CARD_DATA_PFN(NAME) do { \
   if (pCardData->pfn##NAME != NULL) { \
     CMD_ERROR("pCardData->pfn%s (set to %p) overridden by generated stub\n", #NAME, pCardData->pfn##NAME); \
@@ -245,7 +245,7 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
 INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
 #undef CMD_SET_CARD_DATA_PFN
 #undef CMD_NO_IMPL_FUNC_NAME
-// clang-format on
+  // clang-format on
 
   // check whether pCardData is fully filled
   uintptr_t *begin = (uintptr_t *)&pCardData->pfnCardDeleteContext;
@@ -293,17 +293,73 @@ DWORD WINAPI CardDeleteContext(__inout PCARD_DATA pCardData) {
 DWORD WINAPI CardGetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty,
                              __out_bcount_part_opt(cbData, *pdwDataLen) PBYTE pbData, __in DWORD cbData,
                              __out PDWORD pdwDataLen, __in DWORD dwFlags) {
-  CMD_DEBUG("CardGetProperty called with pCardData %p, wszProperty %S, pbData "
-            "%p, cbData %d, pdwDataLen %p, dwFlags %x\n",
+  CMD_DEBUG("CardGetProperty called with pCardData: %p, wszProperty: %S, pbData: %p, cbData: %d, pdwDataLen: %p, "
+            "dwFlags: %x\n",
             pCardData, wszProperty, pbData, cbData, pdwDataLen, dwFlags);
 
   if (!pCardData || !wszProperty || !pdwDataLen) {
-    return ERROR_INVALID_PARAMETER;
+    CMD_RETURN(ERROR_INVALID_PARAMETER, "pCardData, wszProperty, or pdwDataLen is NULL");
   }
 
-  // Implementation for specific properties would go here
-  // For now, return not supported
-  CMD_RET_UNIMPL;
+  // Handle different property requests
+  if (wcscmp(wszProperty, CP_CARD_GUID) == 0) {
+    // Card GUID - TODO should be the same as cardid, currently a placeholder
+    BYTE cardGuid[16] = {0};
+    *pdwDataLen = sizeof(cardGuid);
+    if (cbData < sizeof(cardGuid)) {
+      CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
+    }
+    memcpy(pbData, cardGuid, sizeof(cardGuid));
+    CMD_RET_OK;
+  } else if (wcscmp(wszProperty, CP_CARD_READ_ONLY) == 0) {
+    // Card read-only property
+    *pdwDataLen = sizeof(BOOL);
+    if (cbData < sizeof(BOOL)) {
+      CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
+    }
+    *(BOOL *)pbData = TRUE; // TODO
+    CMD_RET_OK;
+  } else if (wcscmp(wszProperty, CP_CARD_CACHE_MODE) == 0) {
+    // Card cache mode property
+    *pdwDataLen = sizeof(DWORD);
+    if (cbData < sizeof(DWORD)) {
+      CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
+    }
+    *(DWORD *)pbData = CP_CACHE_MODE_NO_CACHE;
+    CMD_RET_OK;
+  } else if (wcscmp(wszProperty, CP_SUPPORTS_WIN_X509_ENROLLMENT) == 0) {
+    // Support for Windows x.509 enrollment
+    *pdwDataLen = sizeof(BOOL);
+    if (cbData < sizeof(BOOL)) {
+      CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
+    }
+    *(BOOL *)pbData = FALSE;
+    CMD_RET_OK;
+  } else if (wcscmp(wszProperty, CP_CARD_PIN_INFO) == 0) {
+    // Card PIN info property
+    PPIN_INFO p = (PPIN_INFO)pbData;
+
+#ifdef CMD_VERBOSE
+    CMD_DEBUG("Card PIN info property requested with dwVersion: %X, PinType: %d, PinPurpose: %d, dwChangePermission: "
+              "%d, dwUnblockPermission: %d, PinCachePolicy: %d, dwFlags: %d\n",
+              p->dwVersion, p->PinType, p->PinPurpose, p->dwChangePermission, p->dwUnblockPermission, p->PinCachePolicy,
+              p->dwFlags);
+#endif
+
+    *pdwDataLen = sizeof(PIN_INFO);
+    if (cbData < sizeof(PIN_INFO)) {
+      CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
+    }
+
+    if (p->dwVersion != PIN_INFO_CURRENT_VERSION) {
+      CMD_RETURN(ERROR_REVISION_MISMATCH, "Invalid PIN_INFO version");
+    }
+
+    CMD_RET_OK;
+  }
+
+  // Property not supported
+  CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Property not supported");
 }
 
 /*
@@ -349,12 +405,28 @@ DWORD WINAPI CardAuthenticatePin(__in PCARD_DATA pCardData, __in LPWSTR pwszUser
  */
 DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName, __in LPSTR pszFileName,
                           __in DWORD dwFlags, __deref_out_bcount_opt(*pcbData) PBYTE *ppbData, __out PDWORD pcbData) {
-  CMD_DEBUG("CardReadFile called with pCardData %p, pszDirectoryName %s, "
-            "pszFileName %s, dwFlags %x\n",
-            pCardData, pszDirectoryName, pszFileName, dwFlags);
+  CMD_DEBUG("CardReadFile called with pCardData %p, pszDirectoryName %s, pszFileName %s, dwFlags %x\n", pCardData,
+            pszDirectoryName, pszFileName, dwFlags);
 
-  if (!pCardData || !pszDirectoryName || !pszFileName || !ppbData || !pcbData) {
-    return ERROR_INVALID_PARAMETER;
+  if (pszDirectoryName == NULL) { // Root directory
+    if (strcmp(pszFileName, szCACHE_FILE) == 0) {
+      // TODO: Return cached data
+      // now we return 6 bytes of zeros
+      *ppbData = (PBYTE)g_pfnCspAlloc(6);
+      if (*ppbData == NULL) {
+        CMD_RETURN(ERROR_OUTOFMEMORY, "Failed to allocate memory");
+      }
+      memset(*ppbData, 0, 6);
+      *pcbData = 6;
+      CMD_RET_OK;
+    }
+  } else if (strcmp(pszDirectoryName, szBASE_CSP_DIR) == 0) {
+    if (strcmp(pszFileName, szCONTAINER_MAP_FILE) == 0) {
+      // TODO: Return container map
+      *ppbData = NULL;
+      *pcbData = 0;
+      CMD_RET_OK;
+    }
   }
 
   CMD_RET_UNIMPL;
