@@ -25,6 +25,7 @@ extern int g_log_level;
 extern int cmd_init_logging(const char* log_file, const int log_level);
 extern int cmd_stop_logging();
 extern void cmd_fprintf(const int level, FILE* const out, const char* format, ...);
+extern void cmd_print_stack();
 
 #define CMD_PRINTLOGF(level, format, ...) cmd_fprintf(level, stderr, "%-20s(%-20s:%03d)[%-5s]: " format, __FUNCTION__, __FILE__, __LINE__, g_log_level_name[level], ##__VA_ARGS__);
 #define CMD_TRACE(format, ...) CMD_PRINTLOGF(CMD_LOG_LEVEL_TRACE, format, ##__VA_ARGS__)
