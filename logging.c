@@ -79,10 +79,6 @@ void cmd_print_stack() {
   DWORD pid = GetCurrentProcessId();
   DWORD tid = GetCurrentThreadId();
   CMD_DEBUG("Stack trace begin for process %d thread %d...\n", pid, tid);
-  if (!SymInitialize(process, NULL, TRUE)) {
-    fprintf(stderr, "SymInitialize returned error: 0x%lx\n", GetLastError());
-    return;
-  }
 
   void *stack[maxStackFrames];
   WORD frames = CaptureStackBackTrace(0, maxStackFrames, stack, NULL);
@@ -99,13 +95,13 @@ void cmd_print_stack() {
     // get module name
     char module[MAX_SYM_NAME];
     HMODULE hModule = NULL;
-    lstrcpyA(module, "");
+    lstrcpy(module, "");
     GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                       (LPCTSTR)address, &hModule);
     if (hModule != NULL) {
-      GetModuleFileNameA(hModule, module, MAX_SYM_NAME);
+      GetModuleFileName(hModule, module, MAX_SYM_NAME);
     } else {
-      lstrcpyA(module, "unknown module");
+      lstrcpy(module, "unknown module");
     }
 
     // get symbol name

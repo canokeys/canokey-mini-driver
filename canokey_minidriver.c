@@ -13,8 +13,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <windows.h>
+#include <Windows.h>
+#include <Psapi.h>
 #include <winscard.h>
+#include <DbgHelp.h>
 
 // RSA implementation includes
 #include "rsa/keys.h"
@@ -44,17 +46,26 @@ static void init_logging_file(int level) {
             (int32_t)GetCurrentProcessId());
   cmd_init_logging(log_file_name, level);
   CMD_INFO("Start logging to file %s...\n", log_file_name);
+#ifdef CMD_VERBOSE
+  HANDLE process = GetCurrentProcess();
+  char exe_name[MAX_PATH] = {'\0'};
+  GetModuleFileNameEx(process, NULL, exe_name, MAX_PATH);
+  if (!SymInitialize(process, exe_name, TRUE)) {
+    CMD_WARN("SymInitialize returned error: 0x%lx\n", GetLastError());
+  }
+#endif
 }
 
 // DllMain function
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
+  (void)lpvReserved;
   switch (fdwReason) {
   case DLL_PROCESS_ATTACH:
     // Initialize the DLL
     init_logging_file(CMD_LOG_LEVEL_DEBUG);
     CMD_INFO("CanoKey Smart Card Minidriver compiled at %s %s\n", __DATE__, __TIME__);
     CMD_INFO("DLL loaded with handle %p\n", hinstDLL);
-    FUNC_TRACE(DisableThreadLibraryCalls(hinstDLL));
+    DisableThreadLibraryCalls(hinstDLL);
     break;
   case DLL_PROCESS_DETACH:
     // Clean up resources
