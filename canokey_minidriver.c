@@ -779,15 +779,39 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
   memcpy(sk.prime_exponent2, key_e2, sizeof(key_e2));
   memcpy(sk.coefficient, key_c, sizeof(key_c));
 
+  // Construct new input with DigestInfo prefix + hash
+  BYTE digestInfoPrefix[] = {0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2B, 0x0E, 0x03, 0x02, 0x1A, 0x05, 0x00, 0x04, 0x14};
+  DWORD prefixLen = sizeof(digestInfoPrefix);
+  PBYTE combinedInput = (PBYTE)g_pfnCspAlloc(prefixLen + pCardSigningInfo->cbData);
+
+  if (combinedInput == NULL) {
+    CMD_DEBUG("Failed to allocate memory for combined input\n");
+    CMD_RETURN(SCARD_E_NO_MEMORY, "Failed to allocate memory");
+  }
+
+  // Copy prefix and hash data to combined input
+  memcpy(combinedInput, digestInfoPrefix, prefixLen);
+  memcpy(combinedInput + prefixLen, pCardSigningInfo->pbData, pCardSigningInfo->cbData);
+
   // Perform RSA private key encryption (signing)
   uint32_t output_len = 0;
-  int result = rsa_private_encrypt(pCardSigningInfo->pbSignedData, &output_len, pCardSigningInfo->pbData,
-                                   pCardSigningInfo->cbData, &sk);
+  int result = rsa_private_encrypt(pCardSigningInfo->pbSignedData, &output_len, combinedInput,
+                                   prefixLen + pCardSigningInfo->cbData, &sk);
+
+  // Free the combined input buffer
+  g_pfnCspFree(combinedInput);
 
   // Check if signing was successful
   if (result != 0) {
     CMD_DEBUG("RSA signing failed with error code %d\n", result);
     CMD_RETURN(SCARD_E_UNEXPECTED, "RSA signing operation failed");
+  }
+
+  // Reverse the data in pbSignedData in-place
+  for (DWORD i = 0; i < output_len / 2; i++) {
+    BYTE temp = pCardSigningInfo->pbSignedData[i];
+    pCardSigningInfo->pbSignedData[i] = pCardSigningInfo->pbSignedData[output_len - 1 - i];
+    pCardSigningInfo->pbSignedData[output_len - 1 - i] = temp;
   }
 
   // Update the signed data length
