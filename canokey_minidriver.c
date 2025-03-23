@@ -323,8 +323,6 @@ DWORD WINAPI CardGetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty
 
     *pdwDataLen = sizeof(CARD_CAPABILITIES);
 
-    DebugBreak();
-
     CMD_RET_OK;
   } else if (wcscmp(wszProperty, CP_CARD_KEYSIZES) == 0) {
     // Card key sizes property
@@ -512,7 +510,7 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
       CMD_RET_OK;
     } else if (strcmp(pszFileName, "ksc00") == 0) {
       // Return the hardcoded certificate for "ksc00"
-      *ppbData = (PBYTE)g_pfnCspAlloc(687);
+      *ppbData = (PBYTE)g_pfnCspAlloc(690);
       if (*ppbData == NULL) {
         CMD_RETURN(SCARD_E_NO_MEMORY, "Failed to allocate memory");
       }
