@@ -16,6 +16,10 @@
 #include <windows.h>
 #include <winscard.h>
 
+// RSA implementation includes
+#include "rsa/keys.h"
+#include "rsa/rsa.h"
+
 // Global function pointers for data caching mechanisms
 PFN_CSP_CACHE_ADD_FILE g_pfnCspCacheAddFile = NULL;
 PFN_CSP_CACHE_LOOKUP_FILE g_pfnCspCacheLookupFile = NULL;
@@ -326,16 +330,33 @@ DWORD WINAPI CardGetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty
     CMD_RET_OK;
   } else if (wcscmp(wszProperty, CP_CARD_KEYSIZES) == 0) {
     // Card key sizes property
-    CMD_RET_UNIMPL;
+
+    // TODO: check dwFlags
+    if (cbData < sizeof(CARD_KEY_SIZES)) {
+      CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
+    }
+
+    PCARD_KEY_SIZES pCardKeySizes = (PCARD_KEY_SIZES)pbData;
+    pCardKeySizes->dwVersion = CARD_KEY_SIZES_CURRENT_VERSION;
+    pCardKeySizes->dwMinimumBitlen = 2048;
+    pCardKeySizes->dwDefaultBitlen = 2048;
+    pCardKeySizes->dwMaximumBitlen = 4096;
+    pCardKeySizes->dwIncrementalBitlen = 1024;
+
+    *pdwDataLen = sizeof(CARD_KEY_SIZES);
+
+    CMD_RET_OK;
   } else if (wcscmp(wszProperty, CP_CARD_READ_ONLY) == 0) {
     // Card read-only property
     CMD_CHECK_DW_FLAGS;
 
-    *pdwDataLen = sizeof(BOOL);
     if (cbData < sizeof(BOOL)) {
       CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
     }
     *(BOOL *)pbData = TRUE; // TODO
+
+    *pdwDataLen = sizeof(BOOL);
+
     CMD_RET_OK;
   } else if (wcscmp(wszProperty, CP_CARD_CACHE_MODE) == 0) {
     // Card cache mode property
@@ -732,10 +753,48 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
   CMD_DEBUG("CardSignData called with pCardData %p, pCardSigningInfo %p\n", pCardData, pCardSigningInfo);
 
   if (!pCardData || !pCardSigningInfo) {
-    return ERROR_INVALID_PARAMETER;
+    CMD_RETURN(ERROR_INVALID_PARAMETER, "Invalid parameter");
   }
 
-  CMD_RET_UNIMPL;
+  CMD_DEBUG("CardSigningInfo: dwVersion %d, bContainerIndex %d, dwKeySpec %d, dwSigningFlags %d, aiHashAlg %d, cbData "
+            "%d, pbData %p, cbSignedData %d, pbSignedData %p, pPaddingInfo %p, dwPaddingType %d\n",
+            pCardSigningInfo->dwVersion, pCardSigningInfo->bContainerIndex, pCardSigningInfo->dwKeySpec,
+            pCardSigningInfo->dwSigningFlags, pCardSigningInfo->aiHashAlg, pCardSigningInfo->cbData,
+            pCardSigningInfo->pbData, pCardSigningInfo->cbSignedData, pCardSigningInfo->pbSignedData,
+            pCardSigningInfo->pPaddingInfo, pCardSigningInfo->dwPaddingType);
+
+  pCardSigningInfo->pbSignedData = (PBYTE)g_pfnCspAlloc(256);
+
+  // Initialize RSA private key structure
+  rsa_sk_t sk = {0};
+
+  // Set key bits
+  sk.bits = KEY_M_BITS;
+
+  // Copy key components from keys.h
+  memcpy(sk.modulus, key_m, sizeof(key_m));
+  memcpy(sk.prime1, key_p1, sizeof(key_p1));
+  memcpy(sk.prime2, key_p2, sizeof(key_p2));
+  memcpy(sk.prime_exponent1, key_e1, sizeof(key_e1));
+  memcpy(sk.prime_exponent2, key_e2, sizeof(key_e2));
+  memcpy(sk.coefficient, key_c, sizeof(key_c));
+
+  // Perform RSA private key encryption (signing)
+  uint32_t output_len = 0;
+  int result = rsa_private_encrypt(pCardSigningInfo->pbSignedData, &output_len, pCardSigningInfo->pbData,
+                                   pCardSigningInfo->cbData, &sk);
+
+  // Check if signing was successful
+  if (result != 0) {
+    CMD_DEBUG("RSA signing failed with error code %d\n", result);
+    CMD_RETURN(SCARD_E_UNEXPECTED, "RSA signing operation failed");
+  }
+
+  // Update the signed data length
+  pCardSigningInfo->cbSignedData = output_len;
+
+  CMD_DEBUG("RSA signing successful, output length: %d\n", output_len);
+  return SCARD_S_SUCCESS;
 }
 
 /*

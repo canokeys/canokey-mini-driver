@@ -10,8 +10,8 @@ project ("canokey-mini-driver" VERSION 1.0.0.0)
 set (CMAKE_VERBOSE_MAKEFILE OFF)
 set (CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
-file (GLOB SOURCES *.c *.cpp)
-file (GLOB HEADERS *.h)
+file (GLOB SOURCES *.c *.cpp rsa/*.c)
+file (GLOB HEADERS *.h rsa/*.h)
 
 set (CMD_DRIVERDATE "03/09/2025")
 set (CMD_DRIVERVER ${CMAKE_PROJECT_VERSION})
