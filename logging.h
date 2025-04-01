@@ -4,7 +4,7 @@
 
 #include <stdio.h>
 
-#include "third-party/dbg.h"
+#include "external/dbg.h"
 
 enum CMD_LOG_LEVEL {
 	CMD_LOG_LEVEL_TRACE = 0,
