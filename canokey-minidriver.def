@@ -1,0 +1,4 @@
+LIBRARY canokey-minidriver
+EXPORTS
+  DllMain
+  CardAcquireContext

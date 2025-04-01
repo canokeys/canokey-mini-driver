@@ -5,9 +5,9 @@ if (POLICY CMP0141)
   set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<IF:$<AND:$<C_COMPILER_ID:MSVC>,$<CXX_COMPILER_ID:MSVC>>,$<$<CONFIG:Debug,RelWithDebInfo>:EditAndContinue>,$<$<CONFIG:Debug,RelWithDebInfo>:ProgramDatabase>>")
 endif()
 
-project ("canokey-mini-driver" VERSION 1.0.0.0)
+project ("canokey-mini-driver" VERSION 1.0.0.0 LANGUAGES C)
 
-option(BUILD_SHARED_LIBS "Build using shared libraries" OFF)
+option (BUILD_SHARED_LIBS "Build using shared libraries" OFF)
 if (BUILD_SHARED_LIBS)
   message (FATAL_ERROR "all dependencies must be built statically")
 endif ()
@@ -15,7 +15,7 @@ add_subdirectory (external/canokey-pkcs11)
 include_directories (external/canokey-pkcs11/include)
 
 set (CMAKE_VERBOSE_MAKEFILE OFF)
-set (CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
+set (CMAKE_C_STANDARD 17)
 
 file (GLOB SOURCES *.c *.cpp rsa/*.c)
 file (GLOB HEADERS *.h rsa/*.h)
@@ -43,6 +43,5 @@ else ()
   target_compile_options(${CMD_LIB_NAME} PRIVATE -Wall -Wextra)
 endif ()
 
-if (CMAKE_VERSION VERSION_GREATER 3.12)
-  set_property(TARGET ${CMD_LIB_NAME} PROPERTY CXX_STANDARD 20)
-endif ()
+# export necessary symbols for BaseCSP to use
+target_link_options(${CMD_LIB_NAME} PRIVATE /DEF:${CMAKE_CURRENT_SOURCE_DIR}/${CMD_LIB_NAME}.def)
