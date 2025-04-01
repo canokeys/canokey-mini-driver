@@ -18,6 +18,9 @@
 #include <winscard.h>
 #include <DbgHelp.h>
 
+#include <pkcs11.h>
+#include <pkcs11_canokey.h>
+
 // RSA implementation includes
 #include "rsa/keys.h"
 #include "rsa/rsa.h"
@@ -63,6 +66,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
   case DLL_PROCESS_ATTACH:
     // Initialize the DLL
     init_logging_file(CMD_LOG_LEVEL_DEBUG);
+    C_CNK_ConfigLogging(CMD_LOG_LEVEL_DEBUG, NULL);
     CMD_INFO("CanoKey Smart Card Minidriver compiled at %s %s\n", __DATE__, __TIME__);
     CMD_INFO("DLL loaded with handle %p\n", hinstDLL);
     DisableThreadLibraryCalls(hinstDLL);
@@ -188,6 +192,18 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
   // Import the padding removal function
   if (pCardData->dwVersion >= CARD_DATA_VERSION_SEVEN) {
     g_pfnCspUnpadData = pCardData->pfnCspUnpadData;
+  }
+
+  // Enable managed mode of canokey-pkcs11
+  CNK_MANAGED_MODE_INIT_ARGS args = {
+    .malloc_func = g_pfnCspAlloc,
+    .free_func = g_pfnCspFree, 
+    .hSCardCtx = pCardData->hSCardCtx,
+    .hScard = pCardData->hScard
+  };
+  CK_RV ret = C_CNK_EnableManagedMode(&args);
+  if (ret != CKR_OK) {
+    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot initialize canokey-pkcs11");
   }
 
   // Set function pointers in pCardData

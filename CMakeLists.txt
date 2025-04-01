@@ -7,6 +7,13 @@ endif()
 
 project ("canokey-mini-driver" VERSION 1.0.0.0)
 
+option(BUILD_SHARED_LIBS "Build using shared libraries" OFF)
+if (BUILD_SHARED_LIBS)
+  message (FATAL_ERROR "all dependencies must be built statically")
+endif ()
+add_subdirectory (external/canokey-pkcs11)
+include_directories (external/canokey-pkcs11/include)
+
 set (CMAKE_VERBOSE_MAKEFILE OFF)
 set (CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
@@ -18,7 +25,7 @@ set (CMD_DRIVERVER ${CMAKE_PROJECT_VERSION})
 set (CMD_LIB_NAME "canokey-minidriver")
 
 add_library (${CMD_LIB_NAME} SHARED ${SOURCES} ${HEADERS})
-target_link_libraries (${CMD_LIB_NAME} PRIVATE "winscard.lib")
+target_link_libraries (${CMD_LIB_NAME} PRIVATE "winscard.lib" canokey_pkcs11)
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
   add_compile_definitions (CMD_VERBOSE DBG_NCOLOR)
