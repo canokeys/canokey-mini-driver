@@ -191,27 +191,6 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
     g_pfnCspUnpadData = pCardData->pfnCspUnpadData;
   }
 
-  // Enable managed mode of canokey-pkcs11
-  CNK_MANAGED_MODE_INIT_ARGS args = {.malloc_func = g_pfnCspAlloc,
-                                     .free_func = g_pfnCspFree,
-                                     .hSCardCtx = pCardData->hSCardCtx,
-                                     .hScard = pCardData->hScard};
-  CK_RV ret = C_CNK_EnableManagedMode(&args);
-  if (ret != CKR_OK) {
-    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot initialize canokey-pkcs11");
-  }
-
-  ret = C_Initialize(NULL);
-  if (ret != CKR_OK) {
-    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot initialize canokey-pkcs11");
-  }
-
-  CK_SESSION_HANDLE session;
-  ret = C_OpenSession(0, CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, &session);
-  if (ret != CKR_OK) {
-    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot open session");
-  }
-
   // Set function pointers in pCardData
   pCardData->pfnCardDeleteContext = CardDeleteContext;         // Yes
   pCardData->pfnCardQueryCapabilities = CardQueryCapabilities; // Yes
@@ -273,10 +252,10 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
 
   // clang-format off
 #define CMD_SET_CARD_DATA_PFN(NAME) do { \
-  if (pCardData->pfn##NAME != NULL) { \
-    CMD_ERROR("pCardData->pfn%s (set to %p) overridden by generated stub", #NAME, pCardData->pfn##NAME); \
+  if (pCardData->pfn## NAME != NULL) { \
+    CMD_ERROR("pCardData->pfn%s (set to %p) overridden by generated stub", #NAME, pCardData->pfn## NAME); \
   } \
-  pCardData->pfn##NAME = (void *) CMD_NO_IMPL_FUNC_NAME(NAME); \
+  pCardData->pfn## NAME = (void *) CMD_NO_IMPL_FUNC_NAME(NAME); \
 } while (0);
 INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
 #undef CMD_SET_CARD_DATA_PFN
@@ -295,6 +274,35 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
   }
 
 #pragma clang diagnostic pop
+
+  // Enable managed mode of canokey-pkcs11
+  CNK_MANAGED_MODE_INIT_ARGS args = {.malloc_func = g_pfnCspAlloc,
+                                     .free_func = g_pfnCspFree,
+                                     .hSCardCtx = pCardData->hSCardCtx,
+                                     .hScard = pCardData->hScard};
+  CK_RV ret = C_CNK_EnableManagedMode(&args);
+  if (ret != CKR_OK) {
+    if (ret == CKR_CRYPTOKI_ALREADY_INITIALIZED) {
+      CMD_DEBUG("already initialized canokey-pkcs11");
+    } else {
+      CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot initialize canokey-pkcs11");
+    }
+  }
+
+  ret = C_Initialize(NULL);
+  if (ret != CKR_OK) {
+    if (ret == CKR_CRYPTOKI_ALREADY_INITIALIZED) {
+      CMD_DEBUG("already initialized canokey-pkcs11");
+    } else {
+      CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot initialize canokey-pkcs11");
+    }
+  }
+
+  CK_SESSION_HANDLE session;
+  ret = C_OpenSession(0, CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, &session);
+  if (ret != CKR_OK) {
+    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot open session");
+  }
 
   CMD_RET_OK;
 }
