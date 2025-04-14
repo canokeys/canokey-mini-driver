@@ -14,6 +14,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "Build succeeded."
 
+exit 0
+
 # Step 2: Uninstall existing driver if present
 Write-Host "Step 2: Searching for existing driver..."
 $driverList = pnputil /enum-drivers
