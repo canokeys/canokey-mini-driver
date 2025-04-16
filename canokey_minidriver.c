@@ -136,14 +136,11 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_GEN_NO_IMPL_FUNC);
 DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags) {
   DWORD dwReturn = 0;
 
-  CMD_DEBUG("CardAcquireContext called with pCardData %p, dwFlags %x, thread id %u", pCardData, dwFlags,
-            GetCurrentThreadId());
+  CMD_LOG_FUNC("pCardData %p, dwFlags %x, thread id %u", pCardData, dwFlags, GetCurrentThreadId());
   // TODO: add function to print internal structure of CARD_DATA?
 
   // Check if pCardData is valid
-  if (!pCardData) {
-    CMD_RETURN(ERROR_INVALID_PARAMETER, "pCardData is NULL");
-  }
+  CMD_NONNULL_PARAM(pCardData);
 
   if (dwFlags & CARD_SECURE_KEY_INJECTION_NO_CARD_MODE) {
     // This flag is not supported
@@ -156,23 +153,20 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
   }
   CMD_DEBUG("dwVersion %d", pCardData->dwVersion);
 
-  if (!pCardData->hSCardCtx || !pCardData->hScard) {
-    CMD_RETURN(SCARD_E_INVALID_HANDLE, "No hSCardCtx or hScard");
-  }
-
+  CMD_ENSURE_NONNULL(pCardData->hSCardCtx, SCARD_E_INVALID_HANDLE);
+  CMD_ENSURE_NONNULL(pCardData->hScard, SCARD_E_INVALID_HANDLE);
   CMD_DEBUG("hScardCtx %p, hScard %p", pCardData->hSCardCtx, pCardData->hScard);
 
-  if (!pCardData->pfnCspAlloc || !pCardData->pfnCspReAlloc || !pCardData->pfnCspFree) {
-    CMD_RETURN(ERROR_INVALID_PARAMETER, "No pfnCsp* allocators");
-  }
+  CMD_NONNULL_PARAM(pCardData->pfnCspAlloc);
+  CMD_NONNULL_PARAM(pCardData->pfnCspReAlloc);
+  CMD_NONNULL_PARAM(pCardData->pfnCspFree);
 
   if (!pCardData->pbAtr || pCardData->cbAtr == 0) {
     CMD_RETURN(ERROR_INVALID_PARAMETER, "No pbAtr or cbAtr");
   }
 
-  if (!pCardData->pwszCardName) {
-    CMD_RETURN(ERROR_INVALID_PARAMETER, "No pwszCardName");
-  }
+  CMD_ENSURE_NONNULL(pCardData->pwszCardName, SCARD_E_INVALID_PARAMETER);
+  CMD_DEBUG("pwszCardName %S", pCardData->pwszCardName);
 
   // TODO: check pbAtr content
 
@@ -316,10 +310,9 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
  * Purpose: Free resources consumed by the CARD_DATA structure.
  */
 DWORD WINAPI CardDeleteContext(__inout PCARD_DATA pCardData) {
-  CMD_DEBUG("CardDeleteContext called with pCardData %p", pCardData);
-  if (!pCardData) {
-    CMD_RETURN(ERROR_INVALID_PARAMETER, "pCardData is NULL");
-  }
+  CMD_LOG_FUNC("pCardData %p", pCardData);
+  CMD_NONNULL_PARAM(pCardData);
+  CMD_NONNULL_PARAM(pCardData->hSCardCtx);
 
   // Free vendor specific data
   if (pCardData->pvVendorSpecific) {
@@ -345,9 +338,9 @@ DWORD WINAPI CardDeleteContext(__inout PCARD_DATA pCardData) {
 DWORD WINAPI CardGetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty,
                              __out_bcount_part_opt(cbData, *pdwDataLen) PBYTE pbData, __in DWORD cbData,
                              __out PDWORD pdwDataLen, __in DWORD dwFlags) {
-  CMD_DEBUG("CardGetProperty called with pCardData: %p, wszProperty: %S, pbData: %p, cbData: %d, pdwDataLen: %p, "
-            "dwFlags: %x",
-            pCardData, wszProperty, pbData, cbData, pdwDataLen, dwFlags);
+  CMD_LOG_FUNC("pCardData: %p, wszProperty: %S, pbData: %p, cbData: %d, pdwDataLen: %p, "
+               "dwFlags: %x",
+               pCardData, wszProperty, pbData, cbData, pdwDataLen, dwFlags);
 
   // TODO: Check pointers and maybe add locks
 
@@ -503,13 +496,12 @@ DWORD WINAPI CardGetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty
  */
 DWORD WINAPI CardSetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty, __in_bcount(cbData) PBYTE pbData,
                              __in DWORD cbData, __in DWORD dwFlags) {
-  CMD_DEBUG("CardSetProperty called with pCardData %p, wszProperty %S, pbData "
-            "%p, cbData %d, dwFlags %x",
-            pCardData, wszProperty, pbData, cbData, dwFlags);
+  CMD_LOG_FUNC("pCardData %p, wszProperty %S, pbData "
+               "%p, cbData %d, dwFlags %x",
+               pCardData, wszProperty, pbData, cbData, dwFlags);
 
-  if (!pCardData || !wszProperty) {
-    return ERROR_INVALID_PARAMETER;
-  }
+  CMD_NONNULL_PARAM(pCardData);
+  CMD_NONNULL_PARAM(wszProperty);
 
   CMD_RET_UNIMPL;
 }
@@ -521,13 +513,13 @@ DWORD WINAPI CardSetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty
  */
 DWORD WINAPI CardAuthenticatePin(__in PCARD_DATA pCardData, __in LPWSTR pwszUserId, __in_bcount(cbPin) PBYTE pbPin,
                                  __in DWORD cbPin, __out_opt PDWORD pcAttemptsRemaining) {
-  CMD_DEBUG("CardAuthenticatePin called with pCardData %p, pwszUserId %S, "
-            "pbPin %p, cbPin %d, pcAttemptsRemaining %p",
-            pCardData, pwszUserId, pbPin, cbPin, pcAttemptsRemaining);
+  CMD_LOG_FUNC("pCardData %p, pwszUserId %S, "
+               "pbPin %p, cbPin %d, pcAttemptsRemaining %p",
+               pCardData, pwszUserId, pbPin, cbPin, pcAttemptsRemaining);
 
-  if (!pCardData || !pwszUserId || !pbPin) {
-    return ERROR_INVALID_PARAMETER;
-  }
+  CMD_NONNULL_PARAM(pCardData);
+  CMD_NONNULL_PARAM(pwszUserId);
+  CMD_NONNULL_PARAM(pbPin);
 
   CMD_RET_UNIMPL;
 }
@@ -539,17 +531,18 @@ DWORD WINAPI CardAuthenticatePin(__in PCARD_DATA pCardData, __in LPWSTR pwszUser
  */
 DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName, __in LPSTR pszFileName,
                           __in DWORD dwFlags, __deref_out_bcount_opt(*pcbData) PBYTE *ppbData, __out PDWORD pcbData) {
-  CMD_DEBUG("CardReadFile called with pCardData %p, pszDirectoryName %s, pszFileName %s, dwFlags %x", pCardData,
-            pszDirectoryName, pszFileName, dwFlags);
+  CMD_LOG_FUNC("pCardData %p, pszDirectoryName %s, pszFileName %s, dwFlags %x", pCardData, pszDirectoryName,
+               pszFileName, dwFlags);
+
+  CMD_NONNULL_PARAM(pCardData);
+  CMD_NONNULL_PARAM(pszFileName);
 
   if (pszDirectoryName == NULL) { // Root directory
     if (strcmp(pszFileName, szCACHE_FILE) == 0) {
       // TODO: Return cached data
       // now we return 6 bytes of zeros
       *ppbData = (PBYTE)g_pfnCspAlloc(6);
-      if (*ppbData == NULL) {
-        CMD_RETURN(SCARD_E_NO_MEMORY, "Failed to allocate memory");
-      }
+      CMD_ENSURE_NONNULL(*ppbData, SCARD_E_NO_MEMORY);
       memset(*ppbData, 0, 6);
       *pcbData = 6;
       CMD_RET_OK;
@@ -562,9 +555,7 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
       // TODO: Return container map
 
       *ppbData = (PBYTE)g_pfnCspAlloc(sizeof(CONTAINER_MAP_RECORD));
-      if (*ppbData == NULL) {
-        CMD_RETURN(SCARD_E_NO_MEMORY, "Failed to allocate memory");
-      }
+      CMD_ENSURE_NONNULL(*ppbData, SCARD_E_NO_MEMORY);
 
       PCONTAINER_MAP_RECORD p = (PCONTAINER_MAP_RECORD)*ppbData;
       memset(p, 0, sizeof(CONTAINER_MAP_RECORD));
@@ -610,9 +601,7 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
       }
 
       *ppbData = (PBYTE)g_pfnCspAlloc(value[0].ulValueLen);
-      if (*ppbData == NULL) {
-        CMD_RETURN(SCARD_E_NO_MEMORY, "Failed to allocate memory");
-      }
+      CMD_ENSURE_NONNULL(*ppbData, SCARD_E_NO_MEMORY);
       rv = C_GetAttributeValue(*pSession, hObject, value, 1);
       if (rv != CKR_OK) {
         CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to get attribute value");
@@ -634,13 +623,14 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
  */
 DWORD WINAPI CardGetFileInfo(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName, __in LPSTR pszFileName,
                              __in PCARD_FILE_INFO pCardFileInfo) {
-  CMD_DEBUG("CardGetFileInfo called with pCardData %p, pszDirectoryName %s, "
-            "pszFileName %s, pCardFileInfo %p",
-            pCardData, pszDirectoryName, pszFileName, pCardFileInfo);
+  CMD_LOG_FUNC("pCardData %p, pszDirectoryName %s, "
+               "pszFileName %s, pCardFileInfo %p",
+               pCardData, pszDirectoryName, pszFileName, pCardFileInfo);
 
-  if (!pCardData || !pszDirectoryName || !pszFileName || !pCardFileInfo) {
-    return ERROR_INVALID_PARAMETER;
-  }
+  CMD_NONNULL_PARAM(pCardData);
+  CMD_NONNULL_PARAM(pszDirectoryName);
+  CMD_NONNULL_PARAM(pszFileName);
+  CMD_NONNULL_PARAM(pCardFileInfo);
 
   CMD_RET_UNIMPL;
 }
@@ -653,13 +643,12 @@ DWORD WINAPI CardGetFileInfo(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryN
 DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirectoryName,
                            __deref_out_ecount(*pdwcbFileName) LPSTR *pmszFileNames, __out LPDWORD pdwcbFileName,
                            __in DWORD dwFlags) {
-  CMD_DEBUG("CardEnumFiles called with pCardData %p, pszDirectoryName %s, "
-            "pmszFileNames %p, pdwcbFileName %p, dwFlags %x",
-            pCardData, pszDirectoryName, pmszFileNames, pdwcbFileName, dwFlags);
+  CMD_LOG_FUNC("pCardData %p, pszDirectoryName %s, "
+               "pmszFileNames %p, pdwcbFileName %p, dwFlags %x",
+               pCardData, pszDirectoryName, pmszFileNames, pdwcbFileName, dwFlags);
 
-  if (!pCardData || !pdwcbFileName) {
-    return ERROR_INVALID_PARAMETER;
-  }
+  CMD_NONNULL_PARAM(pCardData);
+  CMD_NONNULL_PARAM(pdwcbFileName);
 
   CMD_RET_UNIMPL;
 }
@@ -671,13 +660,12 @@ DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
  */
 DWORD WINAPI CardQueryFreeSpace(__in PCARD_DATA pCardData, __in DWORD dwFlags,
                                 __inout PCARD_FREE_SPACE_INFO pCardFreeSpaceInfo) {
-  CMD_DEBUG("CardQueryFreeSpace called with pCardData %p, dwFlags %x, "
-            "pCardFreeSpaceInfo %p",
-            pCardData, dwFlags, pCardFreeSpaceInfo);
+  CMD_LOG_FUNC("pCardData %p, dwFlags %x, "
+               "pCardFreeSpaceInfo %p",
+               pCardData, dwFlags, pCardFreeSpaceInfo);
 
-  if (!pCardData || !pCardFreeSpaceInfo) {
-    return ERROR_INVALID_PARAMETER;
-  }
+  CMD_NONNULL_PARAM(pCardData);
+  CMD_NONNULL_PARAM(pCardFreeSpaceInfo);
 
   CMD_RET_UNIMPL;
 }
@@ -687,11 +675,10 @@ DWORD WINAPI CardQueryFreeSpace(__in PCARD_DATA pCardData, __in DWORD dwFlags,
  * Purpose: Query the capabilities of the card.
  */
 DWORD WINAPI CardQueryCapabilities(__in PCARD_DATA pCardData, __inout PCARD_CAPABILITIES pCardCapabilities) {
-  CMD_DEBUG("CardQueryCapabilities called with pCardData %p, pCardCapabilities %p", pCardData, pCardCapabilities);
+  CMD_LOG_FUNC("pCardData %p, pCardCapabilities %p", pCardData, pCardCapabilities);
 
-  if (!pCardData || !pCardCapabilities) {
-    return ERROR_INVALID_PARAMETER;
-  }
+  CMD_NONNULL_PARAM(pCardData);
+  CMD_NONNULL_PARAM(pCardCapabilities);
 
   if (pCardCapabilities->dwVersion != CARD_CAPABILITIES_CURRENT_VERSION) {
     return ERROR_REVISION_MISMATCH;
@@ -716,12 +703,11 @@ typedef struct {
  */
 DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContainerIndex, __in DWORD dwFlags,
                                   __inout PCONTAINER_INFO pContainerInfo) {
-  CMD_DEBUG("CardGetContainerInfo called with pCardData %p, bContainerIndex %d, dwFlags %x, dwVersion %d", pCardData,
-            bContainerIndex, dwFlags, pContainerInfo->dwVersion);
+  CMD_LOG_FUNC("pCardData %p, bContainerIndex %d, dwFlags %x, dwVersion %d", pCardData, bContainerIndex, dwFlags,
+               pContainerInfo->dwVersion);
 
-  if (!pCardData || !pContainerInfo) {
-    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid parameter");
-  }
+  CMD_NONNULL_PARAM(pCardData);
+  CMD_NONNULL_PARAM(pContainerInfo);
 
   if (pContainerInfo->dwVersion > CONTAINER_INFO_CURRENT_VERSION) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid container info version");
@@ -740,9 +726,7 @@ DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContaine
   // Allocate memory for the complete key structure
   pContainerInfo->cbSigPublicKey = totalSize;
   pContainerInfo->pbSigPublicKey = (PBYTE)g_pfnCspAlloc(totalSize);
-  if (pContainerInfo->pbSigPublicKey == NULL) {
-    CMD_RETURN(SCARD_E_NO_MEMORY, "Failed to allocate memory for signature key");
-  }
+  CMD_ENSURE_NONNULL(pContainerInfo->pbSigPublicKey, SCARD_E_NO_MEMORY);
 
   // Initialize the key header
   keyHeader.publickeystruc.bType = PUBLICKEYBLOB;
@@ -790,11 +774,10 @@ DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContaine
  * Purpose: Sign data using a key on the card.
  */
 DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCardSigningInfo) {
-  CMD_DEBUG("CardSignData called with pCardData %p, pCardSigningInfo %p", pCardData, pCardSigningInfo);
+  CMD_LOG_FUNC("pCardData %p, pCardSigningInfo %p", pCardData, pCardSigningInfo);
 
-  if (!pCardData || !pCardSigningInfo) {
-    CMD_RETURN(ERROR_INVALID_PARAMETER, "Invalid parameter");
-  }
+  CMD_NONNULL_PARAM(pCardData);
+  CMD_NONNULL_PARAM(pCardSigningInfo);
 
   CMD_DEBUG("CardSigningInfo: dwVersion %d, bContainerIndex %d, dwKeySpec %d, dwSigningFlags %d, aiHashAlg %d, cbData "
             "%d, pbData %p, cbSignedData %d, pbSignedData %p, pPaddingInfo %p, dwPaddingType %d",
@@ -817,13 +800,12 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
  */
 DWORD WINAPI CardQueryKeySizes(__in PCARD_DATA pCardData, __in DWORD dwKeySpec, __in DWORD dwFlags,
                                __inout PCARD_KEY_SIZES pKeySizes) {
-  CMD_DEBUG("CardQueryKeySizes called with pCardData %p, dwKeySpec %x, dwFlags "
-            "%x, pKeySizes %p",
-            pCardData, dwKeySpec, dwFlags, pKeySizes);
+  CMD_LOG_FUNC("pCardData %p, dwKeySpec %x, dwFlags "
+               "%x, pKeySizes %p",
+               pCardData, dwKeySpec, dwFlags, pKeySizes);
 
-  if (!pCardData || !pKeySizes) {
-    return ERROR_INVALID_PARAMETER;
-  }
+  CMD_NONNULL_PARAM(pCardData);
+  CMD_NONNULL_PARAM(pKeySizes);
 
   CMD_RET_UNIMPL;
 }
@@ -837,13 +819,12 @@ DWORD WINAPI CardAuthenticateEx(__in PCARD_DATA pCardData, __in PIN_ID PinId, __
                                 __in_bcount(cbPinData) PBYTE pbPinData, __in DWORD cbPinData,
                                 __deref_opt_out_bcount(*pcbSessionPin) PBYTE *ppbSessionPin,
                                 __out_opt PDWORD pcbSessionPin, __out_opt PDWORD pcAttemptsRemaining) {
-  CMD_DEBUG("CardAuthenticateEx called with pCardData %p, PinId %d, dwFlags "
-            "%x, pbPinData %p, cbPinData %d",
-            pCardData, PinId, dwFlags, pbPinData, cbPinData);
+  CMD_LOG_FUNC("pCardData %p, PinId %d, dwFlags "
+               "%x, pbPinData %p, cbPinData %d",
+               pCardData, PinId, dwFlags, pbPinData, cbPinData);
 
-  if (!pCardData) {
-    return ERROR_INVALID_PARAMETER;
-  }
+  CMD_NONNULL_PARAM(pCardData);
+  CMD_NONNULL_PARAM(pbPinData);
 
   CMD_RET_UNIMPL;
 }
@@ -854,11 +835,9 @@ DWORD WINAPI CardAuthenticateEx(__in PCARD_DATA pCardData, __in PIN_ID PinId, __
  * Purpose: Deauthenticate from the card with extended parameters.
  */
 DWORD WINAPI CardDeauthenticateEx(__in PCARD_DATA pCardData, __in PIN_SET PinId, __in DWORD dwFlags) {
-  CMD_DEBUG("CardDeauthenticateEx called with pCardData %p, PinId %d, dwFlags %x", pCardData, PinId, dwFlags);
+  CMD_LOG_FUNC("pCardData %p, PinId %d, dwFlags %x", pCardData, PinId, dwFlags);
 
-  if (!pCardData) {
-    return ERROR_INVALID_PARAMETER;
-  }
+  CMD_NONNULL_PARAM(pCardData);
 
   CMD_RET_UNIMPL;
 }
@@ -871,8 +850,8 @@ DWORD WINAPI CardDeauthenticateEx(__in PCARD_DATA pCardData, __in PIN_SET PinId,
 DWORD WINAPI CardGetContainerProperty(__in PCARD_DATA pCardData, __in BYTE bContainerIndex, __in LPCWSTR wszProperty,
                                       __out_bcount_part_opt(cbData, *pdwDataLen) PBYTE pbData, __in DWORD cbData,
                                       __out PDWORD pdwDataLen, __in DWORD dwFlags) {
-  CMD_DEBUG("CardGetContainerProperty called with pCardData %p, bContainerIndex %d, wszProperty %S, dwFlags %x",
-            pCardData, bContainerIndex, wszProperty, dwFlags);
+  CMD_LOG_FUNC("pCardData %p, bContainerIndex %d, wszProperty %S, dwFlags %x", pCardData, bContainerIndex, wszProperty,
+               dwFlags);
 
   if (dwFlags != 0) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid dwFlags");

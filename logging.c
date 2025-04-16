@@ -53,16 +53,25 @@ int cmd_init_logging(const char *log_file, const int log_level) {
 
 int cmd_stop_logging() { fclose(stderr); }
 
-void cmd_fprintf(const int level, FILE *const out, const char *const format, ...) {
+static void print_time(FILE *out) {
+  struct timespec ts;
+  if (timespec_get(&ts, TIME_UTC) == TIME_UTC) {
+    char time[16];
+    strftime(time, sizeof(time), "%H:%M:%S", localtime(&ts.tv_sec));
+    sprintf(time + 8, ".%03ld", ts.tv_nsec / 1000000);
+    fprintf(out, "%s - ", time);
+  } else {
+    fprintf(out, "!!:!!:!!.!!! - ");
+  }
+}
+
+void cmd_fprintf(const int level, const bool prepend_date, FILE *const out, const char *const format, ...) {
   if (level < g_log_level) {
     return;
   }
-  // print current time at the beginning of the log line
-  char time[16];
-  SYSTEMTIME st;
-  GetLocalTime(&st);
-  sprintf_s(time, sizeof(time), "%02d:%02d:%02d.%03d", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
-  fprintf(out, "%s - ", time);
+  if (prepend_date) {
+    print_time(out);
+  }
   // print the log line
   va_list args;
   va_start(args, format);
