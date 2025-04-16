@@ -28,10 +28,17 @@ extern int cmd_stop_logging();
 extern void cmd_fprintf(const int level, const bool prepend_date, FILE *const out, const char *const format, ...);
 extern void cmd_print_stack();
 
-#define CMD_PRINTLOGF(level, format, ...)                                                                              \
+#define CMD_PRINTLOGF_IMPL(level, format, ...)                                                                         \
   cmd_fprintf(level, true, stderr, "%-20s(%-20s:L%03d)[%-5s]: ", __FUNCTION__, __FILE__, __LINE__,                     \
               g_log_level_name[level]);                                                                                \
   cmd_fprintf(level, false, stderr, format "\n", ##__VA_ARGS__);
+#define CMD_PRINTLOGF(level, format, ...)                                                                              \
+  do {                                                                                                                 \
+    if (__builtin_expect(level < g_log_level, true)) {                                                                 \
+      break;                                                                                                           \
+    }                                                                                                                  \
+    CMD_PRINTLOGF_IMPL(level, format, ##__VA_ARGS__);                                                                  \
+  } while (0)
 #define CMD_TRACE(format, ...) CMD_PRINTLOGF(CMD_LOG_LEVEL_TRACE, format, ##__VA_ARGS__)
 #define CMD_DEBUG(format, ...) CMD_PRINTLOGF(CMD_LOG_LEVEL_DEBUG, format, ##__VA_ARGS__)
 #define CMD_INFO(format, ...) CMD_PRINTLOGF(CMD_LOG_LEVEL_INFO, format, ##__VA_ARGS__)
@@ -46,11 +53,11 @@ extern void cmd_print_stack();
     CMD_DEBUG("Returning %s = %d: \"%s\"", NAME, (ARG), REASON);                                                       \
     return (ARG);                                                                                                      \
   } while (0)
-#define CMD_LOG_FUNC(name, ...) CNK_DEBUG("Called: ", __VA_ARGS__)
+#define CMD_LOG_FUNC(...) CMD_DEBUG("Called: " __VA_ARGS__)
 #else
 #define FUNC_TRACE(CALL) (CALL)
 #define CMD_RETURN_IMPL(ARG, ...) return (ARG);
-#define CMD_LOG_FUNC(name, ...)
+#define CMD_LOG_FUNC(...)
 #endif // CMD_VERBOSE
 
 #define CMD_RETURN(ARG, REASON) CMD_RETURN_IMPL(ARG, #ARG, REASON)
