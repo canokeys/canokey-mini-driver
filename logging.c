@@ -1,5 +1,7 @@
 #include "logging.h"
 
+#include <time.h>
+
 // clang-format off
 #include <Windows.h>
 #include <assert.h>
