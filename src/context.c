@@ -64,6 +64,12 @@ PFN_CSP_FREE g_pfnCspFree = NULL;
 // Global function pointer for padding removal
 PFN_CSP_UNPAD_DATA g_pfnCspUnpadData = NULL;
 
+/*
+ * Function: CardAcquireContext
+ *
+ * Purpose: Initialize the CARD_DATA structure which will be used by
+ *          the CSP to interact with a specific card.
+ */
 DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags) {
   CMD_LOG_FUNC("pCardData %p, dwFlags %x, thread id %u", pCardData, dwFlags, GetCurrentThreadId());
   CMD_NONNULL_PARAM(pCardData);
@@ -92,33 +98,107 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
   CMD_ENSURE_NONNULL(pCardData->pwszCardName, SCARD_E_INVALID_PARAMETER);
   CMD_DEBUG("pwszCardName %S", pCardData->pwszCardName);
 
-  // import function pointers
+  // TODO: check pbAtr content
+
+  // Import the data caching functions
   g_pfnCspCacheAddFile = pCardData->pfnCspCacheAddFile;
   g_pfnCspCacheLookupFile = pCardData->pfnCspCacheLookupFile;
   g_pfnCspCacheDeleteFile = pCardData->pfnCspCacheDeleteFile;
+
+  // Import the memory management functions
   g_pfnCspAlloc = pCardData->pfnCspAlloc;
   g_pfnCspReAlloc = pCardData->pfnCspReAlloc;
   g_pfnCspFree = pCardData->pfnCspFree;
+
+  // Import the padding removal function
   if (pCardData->dwVersion >= CARD_DATA_VERSION_SEVEN) {
     g_pfnCspUnpadData = pCardData->pfnCspUnpadData;
   }
 
-  // set callbacks
-  pCardData->pfnCardDeleteContext = CardDeleteContext;
-  pCardData->pfnCardQueryCapabilities = CardQueryCapabilities;
-  pCardData->pfnCardGetContainerInfo = CardGetContainerInfo;
-  pCardData->pfnCardAuthenticatePin = CardAuthenticatePin;
-  pCardData->pfnCardReadFile = CardReadFile;
-  pCardData->pfnCardEnumFiles = CardEnumFiles;
-  pCardData->pfnCardGetFileInfo = CardGetFileInfo;
-  pCardData->pfnCardQueryFreeSpace = CardQueryFreeSpace;
-  pCardData->pfnCardQueryKeySizes = CardQueryKeySizes;
-  pCardData->pfnCardSignData = CardSignData;
-  pCardData->pfnCardAuthenticateEx = CardAuthenticateEx;
-  pCardData->pfnCardDeauthenticateEx = CardDeauthenticateEx;
-  pCardData->pfnCardGetContainerProperty = CardGetContainerProperty;
-  pCardData->pfnCardGetProperty = CardGetProperty;
-  pCardData->pfnCardSetProperty = CardSetProperty;
+  // Set function pointers in pCardData
+  pCardData->pfnCardDeleteContext = CardDeleteContext;         // Yes
+  pCardData->pfnCardQueryCapabilities = CardQueryCapabilities; // Yes
+  pCardData->pfnCardDeleteContainer = NULL;                    // No
+  pCardData->pfnCardCreateContainer = NULL;                    // No
+  pCardData->pfnCardGetContainerInfo = CardGetContainerInfo;   // Yes
+  pCardData->pfnCardAuthenticatePin = CardAuthenticatePin;     // Yes
+  pCardData->pfnCardGetChallenge = NULL;                       // No (opt)
+  pCardData->pfnCardAuthenticateChallenge = NULL;              // No (opt)
+  pCardData->pfnCardUnblockPin = NULL;                         // No (opt)
+  pCardData->pfnCardChangeAuthenticator = NULL;                // No (opt)
+  pCardData->pfnCardDeauthenticate = NULL;                     // Yes (opt)
+  pCardData->pfnCardCreateDirectory = NULL;                    // No
+  pCardData->pfnCardDeleteDirectory = NULL;                    // No
+  pCardData->pfnCardCreateFile = NULL;                         // No
+  pCardData->pfnCardReadFile = CardReadFile;                   // Yes
+  pCardData->pfnCardWriteFile = NULL;                          // No
+  pCardData->pfnCardDeleteFile = NULL;                         // No
+  pCardData->pfnCardEnumFiles = CardEnumFiles;                 // Yes
+  pCardData->pfnCardGetFileInfo = CardGetFileInfo;             // Yes
+  pCardData->pfnCardQueryFreeSpace = CardQueryFreeSpace;       // Yes
+  pCardData->pfnCardQueryKeySizes = CardQueryKeySizes;         // Yes
+
+  pCardData->pfnCardSignData = CardSignData;     // Yes
+  pCardData->pfnCardRSADecrypt = NULL;           // Yes (opt)
+  pCardData->pfnCardConstructDHAgreement = NULL; // Yes (opt)
+
+  // New functions in version five.
+  pCardData->pfnCardDeriveKey = NULL;          // Yes (opt)
+  pCardData->pfnCardDestroyDHAgreement = NULL; // Yes (opt)
+  // pCardData->pfnCspGetDHAgreement;
+
+  // version 6 additions below here
+  pCardData->pfnCardGetChallengeEx = NULL;                           // No (opt)
+  pCardData->pfnCardAuthenticateEx = CardAuthenticateEx;             // Yes
+  pCardData->pfnCardChangeAuthenticatorEx = NULL;                    // No (opt)
+  pCardData->pfnCardDeauthenticateEx = CardDeauthenticateEx;         // Yes
+  pCardData->pfnCardGetContainerProperty = CardGetContainerProperty; // Yes
+  pCardData->pfnCardSetContainerProperty = NULL;                     // No
+  pCardData->pfnCardGetProperty = CardGetProperty;                   // Yes
+  pCardData->pfnCardSetProperty = CardSetProperty;                   // Yes
+
+  // version 7 additions below here
+  // pCardData->pfnCspUnpadData;
+  pCardData->pfnMDImportSessionKey = NULL;       // No (opt)
+  pCardData->pfnMDEncryptData = NULL;            // No (opt)
+  pCardData->pfnCardImportSessionKey = NULL;     // No (opt)
+  pCardData->pfnCardGetSharedKeyHandle = NULL;   // No (opt)
+  pCardData->pfnCardGetAlgorithmProperty = NULL; // No (opt)
+  pCardData->pfnCardGetKeyProperty = NULL;       // No (opt)
+  pCardData->pfnCardSetKeyProperty = NULL;       // No (opt)
+  pCardData->pfnCardDestroyKey = NULL;           // No (opt)
+  pCardData->pfnCardProcessEncryptedData = NULL; // No (opt)
+  pCardData->pfnCardCreateContainerEx = NULL;    // No (opt)
+
+  // fill in generated stubs
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wcompare-distinct-pointer-types"
+
+  // clang-format off
+#define CMD_SET_CARD_DATA_PFN(NAME) do { \
+  if (pCardData->pfn## NAME != NULL) { \
+    CMD_ERROR("pCardData->pfn%s (set to %p) overridden by generated stub\n", #NAME, pCardData->pfn## NAME); \
+  } \
+  pCardData->pfn## NAME = (void *) CMD_NO_IMPL_FUNC_NAME(NAME); \
+} while (0);
+INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
+#undef CMD_SET_CARD_DATA_PFN
+#undef CMD_NO_IMPL_FUNC_NAME
+  // clang-format on
+
+  // check whether pCardData is fully filled
+  uintptr_t *begin = (uintptr_t *)&pCardData->pfnCardDeleteContext;
+  uintptr_t *end = (uintptr_t *)&pCardData->pfnCardCreateContainerEx;
+  for (uintptr_t *p = begin; p <= end; p++) {
+    if (*p == 0 &&
+        !(p == (uintptr_t *)&pCardData->pvUnused3 || p == (uintptr_t *)&pCardData->pvUnused4 ||
+          p == (uintptr_t *)&pCardData->pfnCspGetDHAgreement || p == (uintptr_t *)&pCardData->pfnCspUnpadData)) {
+      CMD_ERROR("pCardData has NULL entry point at offset %lld to pfnCardDeleteContext, check CardAcquireContext!\n",
+                p - begin);
+    }
+  }
+
+#pragma clang diagnostic pop
 
   // initialize canokey-pkcs11
   CNK_MANAGED_MODE_INIT_ARGS args = {.malloc_func = (CNK_MALLOC_FUNC)g_pfnCspAlloc,

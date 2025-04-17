@@ -61,7 +61,7 @@ static void print_time(FILE *out) {
     char time[16];
     strftime(time, sizeof(time), "%H:%M:%S", localtime(&ts.tv_sec));
     sprintf(time + 8, ".%03ld", ts.tv_nsec / 1000000);
-    fprintf(out, "%s - ", time);
+    fprintf(out, "%s - %lu - ", time, GetCurrentThreadId());
   } else {
     fprintf(out, "!!:!!:!!.!!! - ");
   }
