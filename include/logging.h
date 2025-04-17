@@ -29,8 +29,10 @@ extern void cmd_fprintf(const int level, const bool prepend_date, FILE *const ou
 extern void cmd_print_stack();
 
 #define CMD_PRINTLOGF_IMPL(level, format, ...)                                                                         \
-  cmd_fprintf(level, true, stderr, "%-20s(%-20s:L%03d)[%-5s]: " format "\n", __FUNCTION__, __FILE__, __LINE__,         \
-              g_log_level_name[level], ##__VA_ARGS__)
+  cmd_fprintf(level, true, stderr, "%-20s(%-20s:L%03d)[%-5s]: ", __FUNCTION__, __FILE__, __LINE__,                     \
+              g_log_level_name[level]);                                                                                \
+  cmd_fprintf(level, false, stderr, format "\n", ##__VA_ARGS__)
+
 #define CMD_PRINTLOGF(level, format, ...)                                                                              \
   do {                                                                                                                 \
     if (__builtin_expect(level < g_log_level, true)) {                                                                 \
