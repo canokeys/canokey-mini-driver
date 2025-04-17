@@ -5,7 +5,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 
-#include "external/dbg.h"
+#include "../external/dbg.h"
 
 enum CMD_LOG_LEVEL {
   CMD_LOG_LEVEL_TRACE = 0,
@@ -29,9 +29,8 @@ extern void cmd_fprintf(const int level, const bool prepend_date, FILE *const ou
 extern void cmd_print_stack();
 
 #define CMD_PRINTLOGF_IMPL(level, format, ...)                                                                         \
-  cmd_fprintf(level, true, stderr, "%-20s(%-20s:L%03d)[%-5s]: ", __FUNCTION__, __FILE__, __LINE__,                     \
-              g_log_level_name[level]);                                                                                \
-  cmd_fprintf(level, false, stderr, format "\n", ##__VA_ARGS__);
+  cmd_fprintf(level, true, stderr, "%-20s(%-20s:L%03d)[%-5s]: " format "\n", __FUNCTION__, __FILE__, __LINE__,         \
+              g_log_level_name[level], ##__VA_ARGS__)
 #define CMD_PRINTLOGF(level, format, ...)                                                                              \
   do {                                                                                                                 \
     if (__builtin_expect(level < g_log_level, true)) {                                                                 \
@@ -61,17 +60,28 @@ extern void cmd_print_stack();
 #endif // CMD_VERBOSE
 
 #define CMD_RETURN(ARG, REASON) CMD_RETURN_IMPL(ARG, #ARG, REASON)
-#define CMD_RET_OK CMD_RETURN(SCARD_S_SUCCESS, "success");
-#define CMD_RET_UNIMPL CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "should be supported (not implemented now)");
+
+#define CMD_RET_OK CMD_RETURN(SCARD_S_SUCCESS, "success")
+
+#define CMD_RET_UNIMPL CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "should be supported (not implemented now)")
 
 #define CMD_ENSURE_NONNULL(PTR, ERR)                                                                                   \
   do {                                                                                                                 \
-    typeof((PTR)) _ptr = (PTR);                                                                                        \
+    __typeof__((PTR)) _ptr = (PTR);                                                                                    \
     if (_ptr == NULL) {                                                                                                \
       CMD_RETURN_IMPL(ERR, #ERR, #PTR " is NULL");                                                                     \
     }                                                                                                                  \
     __builtin_assume(_ptr != NULL);                                                                                    \
   } while (0)
+
+#define CMD_ENSURE_VALID_HANDLE(PTR, ERR)                                                                              \
+  do {                                                                                                                 \
+    __typeof__((PTR)) _ptr = (PTR);                                                                                    \
+    if (_ptr == 0) {                                                                                                   \
+      CMD_RETURN_IMPL(ERR, #ERR, #PTR " is NULL");                                                                     \
+    }                                                                                                                  \
+  } while (0)
+
 #define CMD_NONNULL_PARAM(PTR) CMD_ENSURE_NONNULL(PTR, SCARD_E_INVALID_PARAMETER)
 
 #define CMD_UNUSED(...)                                                                                                \

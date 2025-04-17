@@ -1,4 +1,4 @@
-#include "logging.h"
+#include "../include/logging.h"
 
 #include <time.h>
 
@@ -53,7 +53,7 @@ int cmd_init_logging(const char *log_file, const int log_level) {
   return 0;
 }
 
-int cmd_stop_logging() { fclose(stderr); }
+int cmd_stop_logging() { return fclose(stderr); }
 
 static void print_time(FILE *out) {
   struct timespec ts;

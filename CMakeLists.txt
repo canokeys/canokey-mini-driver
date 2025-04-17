@@ -12,18 +12,18 @@ if(BUILD_SHARED_LIBS)
   message(FATAL_ERROR "all dependencies must be built statically")
 endif()
 add_subdirectory(external/canokey-pkcs11)
-include_directories(external/canokey-pkcs11/include)
+include_directories(include external/canokey-pkcs11/include)
 
 set(CMAKE_VERBOSE_MAKEFILE OFF)
 set(CMAKE_C_STANDARD 17)
 
-file(GLOB SOURCES *.c *.cpp rsa/*.c)
-file(GLOB HEADERS *.h rsa/*.h)
+file(GLOB SOURCES src/*.c)
 
 set(CMD_DRIVERDATE "03/09/2025")
 set(CMD_DRIVERVER ${CMAKE_PROJECT_VERSION})
 set(CMD_LIB_NAME "canokey-minidriver")
 
+add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 add_library(${CMD_LIB_NAME} SHARED ${SOURCES} ${HEADERS})
 target_link_libraries(${CMD_LIB_NAME} PRIVATE "winscard.lib" canokey_pkcs11)
 
