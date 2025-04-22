@@ -9,6 +9,89 @@
     CMD_RETURN(ERROR_INVALID_PARAMETER, "dwFlags is not zero");                                                        \
   }
 
+static DWORD getCardFreeSpace(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen) { CMD_RET_UNIMPL; }
+
+static DWORD getCardCapabilities(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen) {
+  if (cbData < sizeof(CARD_CAPABILITIES)) {
+    CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
+  }
+  PCARD_CAPABILITIES p = (PCARD_CAPABILITIES)pbData;
+  p->dwVersion = CARD_CAPABILITIES_CURRENT_VERSION;
+  p->fCertificateCompression = TRUE;
+  p->fKeyGen = FALSE;
+  *pdwDataLen = sizeof(CARD_CAPABILITIES);
+  CMD_RET_OK;
+}
+
+static DWORD getCardKeysizes(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen, DWORD dwFlags) {
+  // TODO: check dwFlags
+  if (cbData < sizeof(CARD_KEY_SIZES)) {
+    CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
+  }
+  PCARD_KEY_SIZES p = (PCARD_KEY_SIZES)pbData;
+  p->dwVersion = CARD_KEY_SIZES_CURRENT_VERSION;
+  p->dwMinimumBitlen = 2048;
+  p->dwDefaultBitlen = 2048;
+  p->dwMaximumBitlen = 4096;
+  p->dwIncrementalBitlen = 1024;
+  *pdwDataLen = sizeof(CARD_KEY_SIZES);
+  CMD_RET_OK;
+}
+
+static DWORD getCardReadOnly(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen) {
+  if (cbData < sizeof(BOOL)) {
+    CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
+  }
+  *(BOOL *)pbData = TRUE;
+  *pdwDataLen = sizeof(BOOL);
+  CMD_RET_OK;
+}
+
+static DWORD getCardCacheMode(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen) {
+  if (cbData < sizeof(DWORD)) {
+    CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
+  }
+  *(DWORD *)pbData = CP_CACHE_MODE_NO_CACHE;
+  *pdwDataLen = sizeof(DWORD);
+  CMD_RET_OK;
+}
+
+static DWORD getCardSupportsWinX509Enrollment(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen) {
+  if (cbData < sizeof(BOOL)) {
+    CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
+  }
+  *(BOOL *)pbData = FALSE;
+  *pdwDataLen = sizeof(BOOL);
+  CMD_RET_OK;
+}
+
+static DWORD getCardGuid(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen) {
+  if (cbData < sizeof(GUID)) {
+    CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
+  }
+  *(GUID *)pbData = pCardData->guid;
+  *pdwDataLen = sizeof(GUID);
+  CMD_RET_OK;
+}
+
+static DWORD getCardPinInfo(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen, DWORD dwFlags) {
+  // TODO: check dwFlags
+  if (cbData < sizeof(PIN_INFO)) {
+    CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
+  }
+  PPIN_INFO p = (PPIN_INFO)pbData;
+  p->dwVersion = PIN_INFO_CURRENT_VERSION;
+  p->PinType = EmptyPinType;
+  p->PinPurpose = PrimaryCardPin;
+  p->dwChangePermission = PIN_SET_ALL_ROLES;
+  p->dwUnblockPermission = PIN_SET_ALL_ROLES;
+  p->PinCachePolicy.dwVersion = PIN_CACHE_POLICY_CURRENT_VERSION;
+  p->PinCachePolicy.PinCachePolicyType = PinCacheNormal;
+  p->PinCachePolicy.dwPinCachePolicyInfo = 0;
+  *pdwDataLen = sizeof(PIN_INFO);
+  CMD_RET_OK;
+}
+
 DWORD WINAPI CardGetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty,
                              __out_bcount_part_opt(cbData, *pdwDataLen) PBYTE pbData, __in DWORD cbData,
                              __out PDWORD pdwDataLen, __in DWORD dwFlags) {
@@ -17,63 +100,26 @@ DWORD WINAPI CardGetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty
 
   if (wcscmp(wszProperty, CP_CARD_FREE_SPACE) == 0) {
     CMD_CHECK_DW_FLAGS;
-    CMD_RET_UNIMPL;
+    return getCardFreeSpace(pCardData, pbData, cbData, pdwDataLen);
   } else if (wcscmp(wszProperty, CP_CARD_CAPABILITIES) == 0) {
     CMD_CHECK_DW_FLAGS;
-    if (cbData < sizeof(CARD_CAPABILITIES)) {
-      CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
-    }
-    PCARD_CAPABILITIES p = (PCARD_CAPABILITIES)pbData;
-    p->dwVersion = CARD_CAPABILITIES_CURRENT_VERSION;
-    p->fCertificateCompression = TRUE;
-    p->fKeyGen = FALSE;
-    *pdwDataLen = sizeof(CARD_CAPABILITIES);
-    CMD_RET_OK;
+    return getCardCapabilities(pCardData, pbData, cbData, pdwDataLen);
   } else if (wcscmp(wszProperty, CP_CARD_KEYSIZES) == 0) {
-    if (cbData < sizeof(CARD_KEY_SIZES)) {
-      CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
-    }
-    PCARD_KEY_SIZES p = (PCARD_KEY_SIZES)pbData;
-    p->dwVersion = CARD_KEY_SIZES_CURRENT_VERSION;
-    p->dwMinimumBitlen = 2048;
-    p->dwDefaultBitlen = 2048;
-    p->dwMaximumBitlen = 4096;
-    p->dwIncrementalBitlen = 1024;
-    *pdwDataLen = sizeof(CARD_KEY_SIZES);
-    CMD_RET_OK;
+    return getCardKeysizes(pCardData, pbData, cbData, pdwDataLen, dwFlags);
   } else if (wcscmp(wszProperty, CP_CARD_READ_ONLY) == 0) {
     CMD_CHECK_DW_FLAGS;
-    if (cbData < sizeof(BOOL)) {
-      CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
-    }
-    *(BOOL *)pbData = TRUE;
-    *pdwDataLen = sizeof(BOOL);
-    CMD_RET_OK;
+    return getCardReadOnly(pCardData, pbData, cbData, pdwDataLen);
   } else if (wcscmp(wszProperty, CP_CARD_CACHE_MODE) == 0) {
     CMD_CHECK_DW_FLAGS;
-    if (cbData < sizeof(DWORD)) {
-      CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
-    }
-    *(DWORD *)pbData = CP_CACHE_MODE_NO_CACHE;
-    *pdwDataLen = sizeof(DWORD);
-    CMD_RET_OK;
+    return getCardCacheMode(pCardData, pbData, cbData, pdwDataLen);
   } else if (wcscmp(wszProperty, CP_SUPPORTS_WIN_X509_ENROLLMENT) == 0) {
     CMD_CHECK_DW_FLAGS;
-    if (cbData < sizeof(BOOL)) {
-      CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
-    }
-    *(BOOL *)pbData = FALSE;
-    *pdwDataLen = sizeof(BOOL);
-    CMD_RET_OK;
+    return getCardSupportsWinX509Enrollment(pCardData, pbData, cbData, pdwDataLen);
   } else if (wcscmp(wszProperty, CP_CARD_GUID) == 0) {
     CMD_CHECK_DW_FLAGS;
-    BYTE guid[16] = {0};
-    if (cbData < sizeof(guid)) {
-      CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
-    }
-    memcpy(pbData, guid, sizeof(guid));
-    *pdwDataLen = sizeof(guid);
-    CMD_RET_OK;
+    return getCardGuid(pCardData, pbData, cbData, pdwDataLen);
+  } else if (wcscmp(wszProperty, CP_CARD_PIN_INFO) == 0) {
+    return getCardPinInfo(pCardData, pbData, cbData, pdwDataLen, dwFlags);
   } else {
     CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Property not supported");
   }

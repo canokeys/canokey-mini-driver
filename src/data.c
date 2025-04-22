@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
 
@@ -10,11 +11,9 @@
 #include "logging.h"
 #include "minidriver.h"
 
-/*
- * Function: CardReadFile
- *
- * Purpose: Read a file from the card.
- */
+static DWORD GenerateContainerMapFile(CK_SESSION_HANDLE_PTR pSession, PBYTE *ppbData, PDWORD pcbData);
+
+// The CardReadFile function reads the entire file at the specified location into the user-supplied buffer.
 DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName, __in LPSTR pszFileName,
                           __in DWORD dwFlags, __deref_out_bcount_opt(*pcbData) PBYTE *ppbData, __out PDWORD pcbData) {
   CMD_LOG_FUNC("pCardData %p, pszDirectoryName %s, pszFileName %s, dwFlags %x", pCardData, pszDirectoryName,
@@ -35,19 +34,18 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
     if (strcmp(pszFileName, szROOT_STORE_FILE) == 0) {
       *pcbData = 0;
       CMD_RET_OK;
-    } else if (strcmp(pszFileName, szCONTAINER_MAP_FILE) == 0) {
-      *ppbData = (PBYTE)g_pfnCspAlloc(sizeof(CONTAINER_MAP_RECORD));
-      CMD_ENSURE_NONNULL(*ppbData, SCARD_E_NO_MEMORY);
+    }
 
-      PCONTAINER_MAP_RECORD p = (PCONTAINER_MAP_RECORD)*ppbData;
-      memset(p, 0, sizeof(CONTAINER_MAP_RECORD));
-      wcscpy(p->wszGuid, L"22b5b6d5-4495-52c7-c8g9-6g4b8g58de94");
-      p->bFlags = CONTAINER_MAP_VALID_CONTAINER;
-      p->wSigKeySizeBits = 2048;
-
-      *pcbData = sizeof(CONTAINER_MAP_RECORD);
+    if (strcmp(pszFileName, szCONTAINER_MAP_FILE) == 0) {
+      CK_SESSION_HANDLE_PTR pSession = pCardData->pvVendorSpecific;
+      DWORD res = GenerateContainerMapFile(pSession, ppbData, pcbData);
+      if (res != SCARD_S_SUCCESS) {
+        CMD_RETURN(res, "Generate container map failed");
+      }
       CMD_RET_OK;
-    } else if (strcmp(pszFileName, "ksc00") == 0) {
+    }
+
+    if (strcmp(pszFileName, "ksc00") == 0) {
       CK_SESSION_HANDLE_PTR pSession = pCardData->pvVendorSpecific;
       CK_RV rv;
       CK_OBJECT_HANDLE hObject;
@@ -85,6 +83,88 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
   }
 
   CMD_RET_UNIMPL;
+}
+
+// Generate the container map file content by enumerating all private keys,
+// hashing public key data to produce a GUID, and marking CKA_ID==2 as default.
+static DWORD GenerateContainerMapFile(CK_SESSION_HANDLE_PTR pSession, PBYTE *ppbData, PDWORD pcbData) {
+  const CK_SESSION_HANDLE hSession = *pSession;
+  const CK_ULONG maxObjects = 64;
+
+  CK_ULONG foundCount = 0;
+  CK_OBJECT_HANDLE objects[64];
+
+  // Search for public key objects
+  CK_OBJECT_CLASS pubClass = CKO_PUBLIC_KEY;
+  CK_ATTRIBUTE searchTpl[] = {{CKA_CLASS, &pubClass, sizeof(pubClass)}};
+  CK_RV rv = C_FindObjectsInit(hSession, searchTpl, 1);
+  if (rv != CKR_OK)
+    return SCARD_F_INTERNAL_ERROR;
+  rv = C_FindObjects(hSession, objects, maxObjects, &foundCount);
+  C_FindObjectsFinal(hSession);
+  if (rv != CKR_OK)
+    return SCARD_F_INTERNAL_ERROR;
+
+  CMD_DEBUG("Found %d public keys", foundCount);
+
+  // Allocate output buffer for all records
+  const size_t total = foundCount * sizeof(CONTAINER_MAP_RECORD);
+  *ppbData = (PBYTE)g_pfnCspAlloc(total);
+  if (!*ppbData)
+    return SCARD_E_NO_MEMORY;
+  PCONTAINER_MAP_RECORD recs = (PCONTAINER_MAP_RECORD)*ppbData;
+  memset(recs, 0, total);
+
+  // Setup SHA-1 digest
+  CK_MECHANISM mech = {CKM_SHA_1, NULL, 0};
+  for (CK_ULONG i = 0; i < foundCount; i++) {
+    PCONTAINER_MAP_RECORD rec = &recs[i];
+    // Get public key modulus (assume RSA)
+    CK_ATTRIBUTE pubAttr = {CKA_MODULUS, NULL, 0};
+    rv = C_GetAttributeValue(hSession, objects[i], &pubAttr, 1);
+    if (rv != CKR_OK || pubAttr.ulValueLen == 0)
+      continue;
+    CK_BYTE *modulus = g_pfnCspAlloc(pubAttr.ulValueLen);
+    if (!modulus)
+      continue;
+    pubAttr.pValue = modulus;
+    rv = C_GetAttributeValue(hSession, objects[i], &pubAttr, 1);
+    if (rv != CKR_OK) {
+      g_pfnCspFree(modulus);
+      continue;
+    }
+
+    // Compute SHA-1 digest of modulus
+    CK_BYTE digest[20];
+    CK_ULONG digLen = sizeof(digest);
+    rv = C_DigestInit(hSession, &mech);
+    if (rv != CKR_OK) {
+      g_pfnCspFree(modulus);
+      continue;
+    }
+    rv = C_Digest(hSession, modulus, pubAttr.ulValueLen, digest, &digLen);
+    g_pfnCspFree(modulus);
+    if (rv != CKR_OK)
+      continue;
+
+    // Format first 16 bytes of digest as GUID XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+    unsigned char *b = digest;
+    swprintf_s(rec->wszGuid, MAX_CONTAINER_NAME_LEN + 1,
+               L"%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x", b[0], b[1], b[2], b[3], b[4],
+               b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]);
+
+    // Set flags
+    rec->bFlags = CONTAINER_MAP_VALID_CONTAINER;
+    // if (idAttr.ulValueLen == 1 && idBuf[0] == 2) {
+    //   rec->bFlags |= CONTAINER_MAP_DEFAULT_CONTAINER;
+    // }
+    // Set signature key size bits
+    rec->wSigKeySizeBits = (WORD)(pubAttr.ulValueLen * 8);
+
+    CMD_DEBUG("Container %d: %ls", i, rec->wszGuid);
+  }
+  *pcbData = (DWORD)total;
+  return SCARD_S_SUCCESS;
 }
 
 /*
