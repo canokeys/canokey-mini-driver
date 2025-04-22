@@ -14,6 +14,10 @@
 
 static DWORD GenerateContainerMapFile(CK_SESSION_HANDLE_PTR pSession, PBYTE *ppbData, PDWORD pcbData);
 
+static BOOL cmapCached = FALSE;
+static BYTE cmap[1024];
+static DWORD cmapSize = 0;
+
 // The CardReadFile function reads the entire file at the specified location into the user-supplied buffer.
 DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName, __in LPSTR pszFileName,
                           __in DWORD dwFlags, __deref_out_bcount_opt(*pcbData) PBYTE *ppbData, __out PDWORD pcbData) {
@@ -89,6 +93,19 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
 // Generate the container map file content by enumerating all private keys,
 // hashing public key data to produce a GUID, and marking CKA_ID==2 as default.
 static DWORD GenerateContainerMapFile(CK_SESSION_HANDLE_PTR pSession, PBYTE *ppbData, PDWORD pcbData) {
+  CMD_LOG_FUNC(" pSession %p, ppbData %p, pcbData %p", pSession, ppbData, pcbData);
+
+  if (cmapCached) {
+    CMD_DEBUG("cmap is cached");
+    *ppbData = (PBYTE)g_pfnCspAlloc(cmapSize);
+    if (!*ppbData)
+      return SCARD_E_NO_MEMORY;
+    memcpy(*ppbData, cmap, cmapSize);
+    *pcbData = cmapSize;
+    CMD_DEBUG("return cached container map, size: %d", cmapSize);
+    CMD_RET_OK;
+  }
+
   const CK_SESSION_HANDLE hSession = *pSession;
   const CK_ULONG maxObjects = 64;
 
@@ -165,7 +182,13 @@ static DWORD GenerateContainerMapFile(CK_SESSION_HANDLE_PTR pSession, PBYTE *ppb
     CMD_DEBUG("Container %d: %ls", i, rec->wszGuid);
   }
   *pcbData = (DWORD)total;
-  return SCARD_S_SUCCESS;
+
+  cmapCached = TRUE;
+  cmapSize = (DWORD)total;
+  memcpy(cmap, recs, total);
+  CMD_DEBUG("Container map generated, size: %d", total);
+
+  CMD_RET_OK;
 }
 
 /*
