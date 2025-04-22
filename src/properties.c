@@ -66,11 +66,12 @@ static DWORD getCardSupportsWinX509Enrollment(PCARD_DATA pCardData, PBYTE pbData
 }
 
 static DWORD getCardGuid(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen) {
-  if (cbData < sizeof(GUID)) {
+  BYTE guid[16] = {0};
+  if (cbData < sizeof(guid)) {
     CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
   }
-  *(GUID *)pbData = pCardData->guid;
-  *pdwDataLen = sizeof(GUID);
+  memcpy(pbData, guid, sizeof(guid));
+  *pdwDataLen = sizeof(guid);
   CMD_RET_OK;
 }
 
@@ -101,28 +102,34 @@ DWORD WINAPI CardGetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty
   if (wcscmp(wszProperty, CP_CARD_FREE_SPACE) == 0) {
     CMD_CHECK_DW_FLAGS;
     return getCardFreeSpace(pCardData, pbData, cbData, pdwDataLen);
-  } else if (wcscmp(wszProperty, CP_CARD_CAPABILITIES) == 0) {
+  }
+  if (wcscmp(wszProperty, CP_CARD_CAPABILITIES) == 0) {
     CMD_CHECK_DW_FLAGS;
     return getCardCapabilities(pCardData, pbData, cbData, pdwDataLen);
-  } else if (wcscmp(wszProperty, CP_CARD_KEYSIZES) == 0) {
+  }
+  if (wcscmp(wszProperty, CP_CARD_KEYSIZES) == 0) {
     return getCardKeysizes(pCardData, pbData, cbData, pdwDataLen, dwFlags);
-  } else if (wcscmp(wszProperty, CP_CARD_READ_ONLY) == 0) {
+  }
+  if (wcscmp(wszProperty, CP_CARD_READ_ONLY) == 0) {
     CMD_CHECK_DW_FLAGS;
     return getCardReadOnly(pCardData, pbData, cbData, pdwDataLen);
-  } else if (wcscmp(wszProperty, CP_CARD_CACHE_MODE) == 0) {
+  }
+  if (wcscmp(wszProperty, CP_CARD_CACHE_MODE) == 0) {
     CMD_CHECK_DW_FLAGS;
     return getCardCacheMode(pCardData, pbData, cbData, pdwDataLen);
-  } else if (wcscmp(wszProperty, CP_SUPPORTS_WIN_X509_ENROLLMENT) == 0) {
+  }
+  if (wcscmp(wszProperty, CP_SUPPORTS_WIN_X509_ENROLLMENT) == 0) {
     CMD_CHECK_DW_FLAGS;
     return getCardSupportsWinX509Enrollment(pCardData, pbData, cbData, pdwDataLen);
-  } else if (wcscmp(wszProperty, CP_CARD_GUID) == 0) {
+  }
+  if (wcscmp(wszProperty, CP_CARD_GUID) == 0) {
     CMD_CHECK_DW_FLAGS;
     return getCardGuid(pCardData, pbData, cbData, pdwDataLen);
-  } else if (wcscmp(wszProperty, CP_CARD_PIN_INFO) == 0) {
-    return getCardPinInfo(pCardData, pbData, cbData, pdwDataLen, dwFlags);
-  } else {
-    CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Property not supported");
   }
+  if (wcscmp(wszProperty, CP_CARD_PIN_INFO) == 0) {
+    return getCardPinInfo(pCardData, pbData, cbData, pdwDataLen, dwFlags);
+  }
+  CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Property not supported");
 }
 
 DWORD WINAPI CardSetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty, __in_bcount(cbData) PBYTE pbData,
