@@ -4,6 +4,8 @@
 
 #include "cardmod.h"
 #include "logging.h"
+#include "minidriver.h"
+#include "pkcs11.h"
 
 // clang-format off
 // This is the list of functions required by the spec
@@ -201,15 +203,8 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
 #pragma clang diagnostic pop
 
   // initialize canokey-pkcs11
-  CNK_MANAGED_MODE_INIT_ARGS args = {.malloc_func = (CNK_MALLOC_FUNC)g_pfnCspAlloc,
-                                     .free_func = g_pfnCspFree,
-                                     .hSCardCtx = pCardData->hSCardCtx,
-                                     .hScard = pCardData->hScard};
-  CK_RV ret = C_CNK_EnableManagedMode(&args);
-  if (ret != CKR_OK && ret != CKR_CRYPTOKI_ALREADY_INITIALIZED) {
-    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot initialize canokey-pkcs11");
-  }
-  ret = C_Initialize(NULL);
+  INJECT_HANDLES();
+  CK_RV ret = C_Initialize(NULL);
   if (ret != CKR_OK && ret != CKR_CRYPTOKI_ALREADY_INITIALIZED) {
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot initialize canokey-pkcs11");
   }

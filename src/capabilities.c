@@ -3,6 +3,7 @@
 
 #include "cardmod.h"
 #include "logging.h"
+#include "minidriver.h"
 
 /*
  * Function: CardQueryCapabilities
@@ -14,6 +15,8 @@ DWORD WINAPI CardQueryCapabilities(__in PCARD_DATA pCardData, __inout PCARD_CAPA
 
   CMD_NONNULL_PARAM(pCardData);
   CMD_NONNULL_PARAM(pCardCapabilities);
+
+  INJECT_HANDLES();
 
   if (pCardCapabilities->dwVersion != CARD_CAPABILITIES_CURRENT_VERSION) {
     return ERROR_REVISION_MISMATCH;

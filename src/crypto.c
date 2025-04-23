@@ -16,6 +16,8 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
   CMD_NONNULL_PARAM(pCardData);
   CMD_NONNULL_PARAM(pCardSigningInfo);
 
+  INJECT_HANDLES();
+
   CMD_DEBUG("CardSigningInfo: dwVersion %d, bContainerIndex %d, dwKeySpec %d, dwSigningFlags %d, aiHashAlg %d, cbData "
             "%d, pbData %p, cbSignedData %d, pbSignedData %p, pPaddingInfo %p, dwPaddingType %d",
             pCardSigningInfo->dwVersion, pCardSigningInfo->bContainerIndex, pCardSigningInfo->dwKeySpec,
@@ -43,6 +45,8 @@ DWORD WINAPI CardQueryKeySizes(__in PCARD_DATA pCardData, __in DWORD dwKeySpec, 
 
   CMD_NONNULL_PARAM(pCardData);
   CMD_NONNULL_PARAM(pKeySizes);
+
+  INJECT_HANDLES();
 
   CMD_RET_UNIMPL;
 }

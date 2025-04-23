@@ -16,4 +16,16 @@ extern PFN_CSP_FREE g_pfnCspFree;
 // Global function pointer for padding removal
 extern PFN_CSP_UNPAD_DATA g_pfnCspUnpadData;
 
-#endif //MINIDRIVER_H
+#define INJECT_HANDLES()                                                                                               \
+  do {                                                                                                                 \
+    CNK_MANAGED_MODE_INIT_ARGS args = {.malloc_func = (CNK_MALLOC_FUNC)g_pfnCspAlloc,                                  \
+                                       .free_func = g_pfnCspFree,                                                      \
+                                       .hSCardCtx = pCardData->hSCardCtx,                                              \
+                                       .hScard = pCardData->hScard};                                                   \
+    CK_RV ret = C_CNK_EnableManagedMode(&args);                                                                        \
+    if (ret != CKR_OK && ret != CKR_CRYPTOKI_ALREADY_INITIALIZED) {                                                    \
+      CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot enable managed mode");                                                \
+    }                                                                                                                  \
+  } while (0);
+
+#endif // MINIDRIVER_H

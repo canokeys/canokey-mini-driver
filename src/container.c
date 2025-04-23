@@ -23,6 +23,8 @@ DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContaine
   CMD_NONNULL_PARAM(pCardData);
   CMD_NONNULL_PARAM(pContainerInfo);
 
+  INJECT_HANDLES();
+
   if (pContainerInfo->dwVersion > CONTAINER_INFO_CURRENT_VERSION) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid container info version");
   }

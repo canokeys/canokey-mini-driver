@@ -3,6 +3,8 @@
 
 #include "cardmod.h"
 #include "logging.h"
+#include "minidriver.h"
+#include "pkcs11_canokey.h"
 
 #define CMD_CHECK_DW_FLAGS                                                                                             \
   if (dwFlags != 0) {                                                                                                  \
@@ -99,6 +101,8 @@ DWORD WINAPI CardGetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty
   CMD_LOG_FUNC("CardGetProperty pCardData %p, wszProperty %S, pbData %p, cbData %d, pdwDataLen %p, dwFlags %x",
                pCardData, wszProperty, pbData, cbData, pdwDataLen, dwFlags);
 
+  INJECT_HANDLES();
+
   if (wcscmp(wszProperty, CP_CARD_FREE_SPACE) == 0) {
     CMD_CHECK_DW_FLAGS;
     return getCardFreeSpace(pCardData, pbData, cbData, pdwDataLen);
@@ -138,6 +142,10 @@ DWORD WINAPI CardSetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty
                pbData, cbData, dwFlags);
   CMD_NONNULL_PARAM(pCardData);
   CMD_NONNULL_PARAM(wszProperty);
+  CMD_NONNULL_PARAM(pbData);
+
+  INJECT_HANDLES();
+
   CMD_RET_UNIMPL;
 }
 
@@ -146,6 +154,14 @@ DWORD WINAPI CardGetContainerProperty(__in PCARD_DATA pCardData, __in BYTE bCont
                                       __out PDWORD pdwDataLen, __in DWORD dwFlags) {
   CMD_LOG_FUNC("CardGetContainerProperty pCardData %p, bContainerIndex %d, wszProperty %S, dwFlags %x", pCardData,
                bContainerIndex, wszProperty, dwFlags);
+
+  CMD_NONNULL_PARAM(pCardData);
+  CMD_NONNULL_PARAM(wszProperty);
+  CMD_NONNULL_PARAM(pbData);
+  CMD_NONNULL_PARAM(pdwDataLen);
+
+  INJECT_HANDLES();
+
   if (dwFlags != 0) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid dwFlags");
   }

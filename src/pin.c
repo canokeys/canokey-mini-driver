@@ -3,6 +3,7 @@
 
 #include "cardmod.h"
 #include "logging.h"
+#include "minidriver.h"
 
 /*
  * Function: CardAuthenticatePin
@@ -18,6 +19,8 @@ DWORD WINAPI CardAuthenticatePin(__in PCARD_DATA pCardData, __in LPWSTR pwszUser
   CMD_NONNULL_PARAM(pCardData);
   CMD_NONNULL_PARAM(pwszUserId);
   CMD_NONNULL_PARAM(pbPin);
+
+  INJECT_HANDLES();
 
   CMD_RET_UNIMPL;
 }
@@ -38,6 +41,8 @@ DWORD WINAPI CardAuthenticateEx(__in PCARD_DATA pCardData, __in PIN_ID PinId, __
   CMD_NONNULL_PARAM(pCardData);
   CMD_NONNULL_PARAM(pbPinData);
 
+  INJECT_HANDLES();
+
   CMD_RET_UNIMPL;
 }
 
@@ -50,6 +55,8 @@ DWORD WINAPI CardDeauthenticateEx(__in PCARD_DATA pCardData, __in PIN_SET PinId,
   CMD_LOG_FUNC("pCardData %p, PinId %d, dwFlags %x", pCardData, PinId, dwFlags);
 
   CMD_NONNULL_PARAM(pCardData);
+
+  INJECT_HANDLES();
 
   CMD_RET_UNIMPL;
 }

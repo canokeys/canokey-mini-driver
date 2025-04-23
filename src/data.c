@@ -27,6 +27,8 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
   CMD_NONNULL_PARAM(pCardData);
   CMD_NONNULL_PARAM(pszFileName);
 
+  INJECT_HANDLES();
+
   if (pszDirectoryName == NULL) { // Root directory
     if (strcmp(pszFileName, szCACHE_FILE) == 0) {
       *ppbData = (PBYTE)g_pfnCspAlloc(6);
