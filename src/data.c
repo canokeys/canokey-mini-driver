@@ -167,9 +167,8 @@ static DWORD GenerateContainerMapFile(CK_SESSION_HANDLE_PTR pSession, PBYTE *ppb
 
     // Format first 16 bytes of digest as GUID XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
     unsigned char *b = digest;
-    swprintf_s(rec->wszGuid, MAX_CONTAINER_NAME_LEN + 1,
-               L"%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x", b[0], b[1], b[2], b[3], b[4],
-               b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]);
+    swprintf_s(rec->wszGuid, 37, L"%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x", b[0], b[1],
+               b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]);
 
     // Set flags
     rec->bFlags = CONTAINER_MAP_VALID_CONTAINER;
@@ -178,9 +177,9 @@ static DWORD GenerateContainerMapFile(CK_SESSION_HANDLE_PTR pSession, PBYTE *ppb
     // }
     // Set signature key size bits
     rec->wSigKeySizeBits = (WORD)(pubAttr.ulValueLen * 8);
-
-    CMD_DEBUG("Container %d: %ls", i, rec->wszGuid);
+    CMD_DEBUG("Container %d: %ls, wSigKeySizeBits: %d", i, rec->wszGuid, rec->wSigKeySizeBits);
   }
+  CMD_PRINT_HEX(recs, total);
   *pcbData = (DWORD)total;
 
   cmapCached = TRUE;

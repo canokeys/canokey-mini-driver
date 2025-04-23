@@ -26,6 +26,7 @@ extern int g_log_level;
 extern int cmd_init_logging(const char *log_file, const int log_level);
 extern int cmd_stop_logging();
 extern void cmd_fprintf(const int level, const bool prepend_date, FILE *const out, const char *const format, ...);
+extern void cmd_print_hex(const int level, FILE *const out, const void *data, size_t size);
 extern void cmd_print_stack();
 
 #define CMD_PRINTLOGF_IMPL(level, format, ...)                                                                         \
@@ -46,6 +47,7 @@ extern void cmd_print_stack();
 #define CMD_WARN(format, ...) CMD_PRINTLOGF(CMD_LOG_LEVEL_WARNING, format, ##__VA_ARGS__)
 #define CMD_ERROR(format, ...) CMD_PRINTLOGF(CMD_LOG_LEVEL_ERROR, format, ##__VA_ARGS__)
 #define CMD_FATAL(format, ...) CMD_PRINTLOGF(CMD_LOG_LEVEL_FATAL, format, ##__VA_ARGS__)
+#define CMD_PRINT_HEX(data, size) cmd_print_hex(CMD_LOG_LEVEL_DEBUG, stderr, (data), (size));
 
 #ifdef CMD_VERBOSE
 #define FUNC_TRACE(CALL) dbg(CALL)

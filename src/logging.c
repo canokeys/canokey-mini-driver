@@ -82,6 +82,19 @@ void cmd_fprintf(const int level, const bool prepend_date, FILE *const out, cons
   fflush(out);
 }
 
+void cmd_print_hex(const int level, FILE *const out, const void *data, size_t size) {
+  if (level < g_log_level) {
+    return;
+  }
+  for (size_t i = 0; i < size; i++) {
+    fprintf(out, "%02x ", ((const unsigned char *)data)[i]);
+    if (i % 16 == 15) {
+      fprintf(out, "\n");
+    }
+  }
+  fprintf(out, "\n");
+}
+
 void cmd_print_stack() {
 #ifdef CMD_VERBOSE
 

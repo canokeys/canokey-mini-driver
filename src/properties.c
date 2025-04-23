@@ -66,7 +66,7 @@ static DWORD getCardSupportsWinX509Enrollment(PCARD_DATA pCardData, PBYTE pbData
 }
 
 static DWORD getCardGuid(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen) {
-  BYTE guid[16] = {0};
+  BYTE guid[16] = {0, 1, 2, 3, 4, 5, 6, 7};
   if (cbData < sizeof(guid)) {
     CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
   }
