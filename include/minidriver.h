@@ -1,7 +1,8 @@
 #ifndef MINIDRIVER_H
 #define MINIDRIVER_H
 
-#include <cardmod.h>
+#include "cardmod.h"
+#include "pkcs11_canokey.h"
 
 // Global function pointers for data caching mechanisms
 extern PFN_CSP_CACHE_ADD_FILE g_pfnCspCacheAddFile;

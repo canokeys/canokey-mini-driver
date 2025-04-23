@@ -1,7 +1,5 @@
 #include <Windows.h>
 
-#include <pkcs11_canokey.h>
-
 #include "cardmod.h"
 #include "logging.h"
 #include "minidriver.h"

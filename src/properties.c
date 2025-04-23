@@ -4,7 +4,6 @@
 #include "cardmod.h"
 #include "logging.h"
 #include "minidriver.h"
-#include "pkcs11_canokey.h"
 
 #define CMD_CHECK_DW_FLAGS                                                                                             \
   if (dwFlags != 0) {                                                                                                  \
