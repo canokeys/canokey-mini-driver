@@ -13,10 +13,6 @@
 
 static DWORD GenerateContainerMapFile(CK_SESSION_HANDLE_PTR pSession, PBYTE *ppbData, PDWORD pcbData);
 
-static BOOL cmapCached = FALSE;
-static BYTE cmap[1024];
-static DWORD cmapSize = 0;
-
 // The CardReadFile function reads the entire file at the specified location into the user-supplied buffer.
 DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName, __in LPSTR pszFileName,
                           __in DWORD dwFlags, __deref_out_bcount_opt(*pcbData) PBYTE *ppbData, __out PDWORD pcbData) {
@@ -36,7 +32,10 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
       *pcbData = 6;
       CMD_RET_OK;
     }
-  } else if (strcmp(pszDirectoryName, szBASE_CSP_DIR) == 0) {
+    CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "File not found");
+  }
+
+  if (strcmp(pszDirectoryName, szBASE_CSP_DIR) == 0) {
     if (strcmp(pszFileName, szROOT_STORE_FILE) == 0) {
       *pcbData = 0;
       CMD_RET_OK;
@@ -53,43 +52,85 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
 
     if (strcmp(pszFileName, "ksc00") == 0) {
       CK_SESSION_HANDLE_PTR pSession = pCardData->pvVendorSpecific;
-      CK_RV rv;
       CK_OBJECT_HANDLE hObject;
+
       CK_BYTE key_id = 2;
       CK_OBJECT_CLASS keyClass = CKO_CERTIFICATE;
       CK_ATTRIBUTE templ[] = {{CKA_ID, &key_id, sizeof(key_id)}, {CKA_CLASS, &keyClass, sizeof(keyClass)}};
-      rv = C_FindObjectsInit(*pSession, templ, 2);
-      if (rv != CKR_OK) {
+      CK_RV rv = C_FindObjectsInit(*pSession, templ, 2);
+      if (rv != CKR_OK)
         CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to initialize search");
-      }
       CK_ULONG foundCount = 0;
       rv = C_FindObjects(*pSession, &hObject, 1, &foundCount);
-      if (rv != CKR_OK) {
+      if (rv != CKR_OK)
         CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to find object");
-      }
-      if (foundCount == 0) {
+      if (foundCount == 0)
         CMD_RETURN(SCARD_F_INTERNAL_ERROR, "find no objects");
-      }
-      CK_ATTRIBUTE value[] = {{CKA_VALUE, NULL, 0}};
-      rv = C_GetAttributeValue(*pSession, hObject, value, 1);
-      if (rv != CKR_OK) {
+      rv = C_FindObjectsFinal(*pSession);
+      if (rv != CKR_OK)
+        CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to finalize searching object");
+
+      CK_ATTRIBUTE value = {CKA_VALUE, NULL, 0};
+      rv = C_GetAttributeValue(*pSession, hObject, &value, 1);
+      if (rv != CKR_OK)
         CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to get attribute value");
-      }
-      *ppbData = (PBYTE)g_pfnCspAlloc(value[0].ulValueLen);
+      *ppbData = (PBYTE)g_pfnCspAlloc(value.ulValueLen);
       CMD_ENSURE_NONNULL(*ppbData, SCARD_E_NO_MEMORY);
-      rv = C_GetAttributeValue(*pSession, hObject, value, 1);
-      if (rv != CKR_OK) {
+      value.pValue = *ppbData;
+      rv = C_GetAttributeValue(*pSession, hObject, &value, 1);
+      if (rv != CKR_OK)
         CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to get attribute value");
-      }
-      memcpy(*ppbData, value[0].pValue, value[0].ulValueLen);
-      *pcbData = value[0].ulValueLen;
+      memcpy(*ppbData, value.pValue, value.ulValueLen);
+      *pcbData = value.ulValueLen;
 
       CMD_RET_OK;
     }
+
+    CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "File not found");
   }
 
+  CMD_RETURN(SCARD_E_DIR_NOT_FOUND, "Directory not found");
+}
+
+/*
+ * Function: CardGetFileInfo
+ *
+ * Purpose: Get information about a file on the card.
+ */
+DWORD WINAPI CardGetFileInfo(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName, __in LPSTR pszFileName,
+                             __in PCARD_FILE_INFO pCardFileInfo) {
+  CMD_LOG_FUNC("pCardData %p, pszDirectoryName %s, pszFileName %s, pCardFileInfo %p", pCardData, pszDirectoryName,
+               pszFileName, pCardFileInfo);
   CMD_RET_UNIMPL;
 }
+
+/*
+ * Function: CardEnumFiles
+ *
+ * Purpose: Enumerate files in a directory on the card.
+ */
+DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirectoryName,
+                           __deref_out_ecount(*pdwcbFileName) LPSTR *pmszFileNames, __out LPDWORD pdwcbFileName,
+                           __in DWORD dwFlags) {
+  CMD_LOG_FUNC("pCardData %p, pszDirectoryName %s, pmszFileNames %p, pdwcbFileName %p, dwFlags %x", pCardData,
+               pszDirectoryName, pmszFileNames, pdwcbFileName, dwFlags);
+  CMD_RET_UNIMPL;
+}
+
+/*
+ * Function: CardQueryFreeSpace
+ *
+ * Purpose: Query the free space on the card.
+ */
+DWORD WINAPI CardQueryFreeSpace(__in PCARD_DATA pCardData, __in DWORD dwFlags,
+                                __inout PCARD_FREE_SPACE_INFO pCardFreeSpaceInfo) {
+  CMD_LOG_FUNC("pCardData %p, dwFlags %x, pCardFreeSpaceInfo %p", pCardData, dwFlags, pCardFreeSpaceInfo);
+  CMD_RET_UNIMPL;
+}
+
+static BOOL cmapCached = FALSE;
+static BYTE cmap[1024];
+static DWORD cmapSize = 0;
 
 // Generate the container map file content by enumerating all private keys,
 // hashing public key data to produce a GUID, and marking CKA_ID==2 as default.
@@ -120,7 +161,9 @@ static DWORD GenerateContainerMapFile(CK_SESSION_HANDLE_PTR pSession, PBYTE *ppb
   if (rv != CKR_OK)
     return SCARD_F_INTERNAL_ERROR;
   rv = C_FindObjects(hSession, objects, maxObjects, &foundCount);
-  C_FindObjectsFinal(hSession);
+  if (rv != CKR_OK)
+    return SCARD_F_INTERNAL_ERROR;
+  rv = C_FindObjectsFinal(hSession);
   if (rv != CKR_OK)
     return SCARD_F_INTERNAL_ERROR;
 
@@ -189,40 +232,4 @@ static DWORD GenerateContainerMapFile(CK_SESSION_HANDLE_PTR pSession, PBYTE *ppb
   CMD_DEBUG("Container map generated, size: %d", total);
 
   CMD_RET_OK;
-}
-
-/*
- * Function: CardGetFileInfo
- *
- * Purpose: Get information about a file on the card.
- */
-DWORD WINAPI CardGetFileInfo(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName, __in LPSTR pszFileName,
-                             __in PCARD_FILE_INFO pCardFileInfo) {
-  CMD_LOG_FUNC("pCardData %p, pszDirectoryName %s, pszFileName %s, pCardFileInfo %p", pCardData, pszDirectoryName,
-               pszFileName, pCardFileInfo);
-  CMD_RET_UNIMPL;
-}
-
-/*
- * Function: CardEnumFiles
- *
- * Purpose: Enumerate files in a directory on the card.
- */
-DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirectoryName,
-                           __deref_out_ecount(*pdwcbFileName) LPSTR *pmszFileNames, __out LPDWORD pdwcbFileName,
-                           __in DWORD dwFlags) {
-  CMD_LOG_FUNC("pCardData %p, pszDirectoryName %s, pmszFileNames %p, pdwcbFileName %p, dwFlags %x", pCardData,
-               pszDirectoryName, pmszFileNames, pdwcbFileName, dwFlags);
-  CMD_RET_UNIMPL;
-}
-
-/*
- * Function: CardQueryFreeSpace
- *
- * Purpose: Query the free space on the card.
- */
-DWORD WINAPI CardQueryFreeSpace(__in PCARD_DATA pCardData, __in DWORD dwFlags,
-                                __inout PCARD_FREE_SPACE_INFO pCardFreeSpaceInfo) {
-  CMD_LOG_FUNC("pCardData %p, dwFlags %x, pCardFreeSpaceInfo %p", pCardData, dwFlags, pCardFreeSpaceInfo);
-  CMD_RET_UNIMPL;
 }
