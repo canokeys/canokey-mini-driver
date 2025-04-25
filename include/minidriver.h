@@ -17,6 +17,8 @@ extern PFN_CSP_FREE g_pfnCspFree;
 // Global function pointer for padding removal
 extern PFN_CSP_UNPAD_DATA g_pfnCspUnpadData;
 
+void reverse_bytes(const PBYTE data, const DWORD len);
+
 #define INJECT_HANDLES()                                                                                               \
   do {                                                                                                                 \
     CNK_MANAGED_MODE_INIT_ARGS args = {.malloc_func = (CNK_MALLOC_FUNC)g_pfnCspAlloc,                                  \
