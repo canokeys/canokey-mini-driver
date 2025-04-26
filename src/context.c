@@ -1,5 +1,6 @@
 #include <Windows.h>
 
+#include "canokey.h"
 #include "cardmod.h"
 #include "logging.h"
 #include "minidriver.h"
@@ -202,16 +203,19 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
 
   // initialize canokey-pkcs11
   INJECT_HANDLES();
+
   CK_RV ret = C_Initialize(NULL);
   if (ret != CKR_OK && ret != CKR_CRYPTOKI_ALREADY_INITIALIZED) {
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot initialize canokey-pkcs11");
   }
-  CK_SESSION_HANDLE_PTR session = g_pfnCspAlloc(sizeof(CK_SESSION_HANDLE));
-  ret = C_OpenSession(0, CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, session);
+  CMD_CONTEXT_PTR context = g_pfnCspAlloc(sizeof(CMD_CONTEXT));
+  ret = C_OpenSession(0, CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, &context->session);
   if (ret != CKR_OK) {
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot open session");
   }
-  pCardData->pvVendorSpecific = session;
+  pCardData->pvVendorSpecific = context;
+
+  read_canokey(context->session, &context->canokey);
 
   CMD_RET_OK;
 }

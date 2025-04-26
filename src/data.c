@@ -11,7 +11,7 @@
 #include "logging.h"
 #include "minidriver.h"
 
-static DWORD GenerateContainerMapFile(CK_SESSION_HANDLE_PTR pSession, PBYTE *ppbData, PDWORD pcbData);
+static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, PDWORD pcbData);
 
 // The CardReadFile function reads the entire file at the specified location into the user-supplied buffer.
 DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName, __in LPSTR pszFileName,
@@ -42,46 +42,29 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
     }
 
     if (strcmp(pszFileName, szCONTAINER_MAP_FILE) == 0) {
-      CK_SESSION_HANDLE_PTR pSession = pCardData->pvVendorSpecific;
-      DWORD res = GenerateContainerMapFile(pSession, ppbData, pcbData);
+      CMD_CONTEXT_PTR pContext = pCardData->pvVendorSpecific;
+      CMD_ENSURE_NONNULL(pContext, SCARD_E_INVALID_PARAMETER);
+      DWORD res = GenerateContainerMapFile(pContext, ppbData, pcbData);
       if (res != SCARD_S_SUCCESS) {
         CMD_RETURN(res, "Generate container map failed");
       }
       CMD_RET_OK;
     }
 
-    if (strcmp(pszFileName, "ksc00") == 0) {
-      CK_SESSION_HANDLE_PTR pSession = pCardData->pvVendorSpecific;
-      CK_OBJECT_HANDLE hObject;
+    if (strncmp(pszFileName, "ksc0", 4) == 0 || strncmp(pszFileName, "kxc0", 4) == 0) {
+      CMD_CONTEXT_PTR pContext = pCardData->pvVendorSpecific;
+      CMD_ENSURE_NONNULL(pContext, SCARD_E_INVALID_PARAMETER);
 
-      CK_BYTE key_id = 2;
-      CK_OBJECT_CLASS keyClass = CKO_CERTIFICATE;
-      CK_ATTRIBUTE templ[] = {{CKA_ID, &key_id, sizeof(key_id)}, {CKA_CLASS, &keyClass, sizeof(keyClass)}};
-      CK_RV rv = C_FindObjectsInit(*pSession, templ, 2);
-      if (rv != CKR_OK)
-        CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to initialize search");
-      CK_ULONG foundCount = 0;
-      rv = C_FindObjects(*pSession, &hObject, 1, &foundCount);
-      if (rv != CKR_OK)
-        CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to find object");
-      if (foundCount == 0)
-        CMD_RETURN(SCARD_F_INTERNAL_ERROR, "find no objects");
-      rv = C_FindObjectsFinal(*pSession);
-      if (rv != CKR_OK)
-        CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to finalize searching object");
+      BYTE slotIndex = pszFileName[4] - '0';
+      if (slotIndex >= pContext->canokey.slotCount)
+        CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "File not found");
+      SLOT *slot = &pContext->canokey.slots[slotIndex];
 
-      CK_ATTRIBUTE value = {CKA_VALUE, NULL, 0};
-      rv = C_GetAttributeValue(*pSession, hObject, &value, 1);
-      if (rv != CKR_OK)
-        CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to get attribute value");
-      *ppbData = (PBYTE)g_pfnCspAlloc(value.ulValueLen);
+      *ppbData = (PBYTE)g_pfnCspAlloc(slot->certLen);
       CMD_ENSURE_NONNULL(*ppbData, SCARD_E_NO_MEMORY);
-      value.pValue = *ppbData;
-      rv = C_GetAttributeValue(*pSession, hObject, &value, 1);
-      if (rv != CKR_OK)
-        CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to get attribute value");
-      memcpy(*ppbData, value.pValue, value.ulValueLen);
-      *pcbData = value.ulValueLen;
+
+      memcpy(*ppbData, slot->cert, slot->certLen);
+      *pcbData = slot->certLen;
 
       CMD_RET_OK;
     }
@@ -128,49 +111,13 @@ DWORD WINAPI CardQueryFreeSpace(__in PCARD_DATA pCardData, __in DWORD dwFlags,
   CMD_RET_UNIMPL;
 }
 
-static BOOL cmapCached = FALSE;
-static BYTE cmap[1024];
-static DWORD cmapSize = 0;
+static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, PDWORD pcbData) {
+  CMD_LOG_FUNC("pContext %p, ppbData %p, pcbData %p", pContext, ppbData, pcbData);
 
-// Generate the container map file content by enumerating all private keys,
-// hashing public key data to produce a GUID, and marking CKA_ID==2 as default.
-static DWORD GenerateContainerMapFile(CK_SESSION_HANDLE_PTR pSession, PBYTE *ppbData, PDWORD pcbData) {
-  CMD_LOG_FUNC(" pSession %p, ppbData %p, pcbData %p", pSession, ppbData, pcbData);
-
-  if (cmapCached) {
-    CMD_DEBUG("cmap is cached");
-    *ppbData = (PBYTE)g_pfnCspAlloc(cmapSize);
-    if (!*ppbData)
-      return SCARD_E_NO_MEMORY;
-    memcpy(*ppbData, cmap, cmapSize);
-    *pcbData = cmapSize;
-    CMD_DEBUG("return cached container map, size: %d", cmapSize);
-    CMD_RET_OK;
-  }
-
-  const CK_SESSION_HANDLE hSession = *pSession;
-  const CK_ULONG maxObjects = 64;
-
-  CK_ULONG foundCount = 0;
-  CK_OBJECT_HANDLE objects[64];
-
-  // Search for public key objects
-  CK_OBJECT_CLASS pubClass = CKO_PUBLIC_KEY;
-  CK_ATTRIBUTE searchTpl[] = {{CKA_CLASS, &pubClass, sizeof(pubClass)}};
-  CK_RV rv = C_FindObjectsInit(hSession, searchTpl, 1);
-  if (rv != CKR_OK)
-    return SCARD_F_INTERNAL_ERROR;
-  rv = C_FindObjects(hSession, objects, maxObjects, &foundCount);
-  if (rv != CKR_OK)
-    return SCARD_F_INTERNAL_ERROR;
-  rv = C_FindObjectsFinal(hSession);
-  if (rv != CKR_OK)
-    return SCARD_F_INTERNAL_ERROR;
-
-  CMD_DEBUG("Found %d public keys", foundCount);
+  CANOKEY *pCanokey = &pContext->canokey;
 
   // Allocate output buffer for all records
-  const size_t total = foundCount * sizeof(CONTAINER_MAP_RECORD);
+  const size_t total = pCanokey->slotCount * sizeof(CONTAINER_MAP_RECORD);
   *ppbData = (PBYTE)g_pfnCspAlloc(total);
   if (!*ppbData)
     return SCARD_E_NO_MEMORY;
@@ -179,33 +126,18 @@ static DWORD GenerateContainerMapFile(CK_SESSION_HANDLE_PTR pSession, PBYTE *ppb
 
   // Setup SHA-1 digest
   CK_MECHANISM mech = {CKM_SHA_1, NULL, 0};
-  for (CK_ULONG i = 0; i < foundCount; i++) {
+  for (CK_ULONG i = 0; i < pCanokey->slotCount; i++) {
+    SLOT *slot = &pCanokey->slots[i];
     PCONTAINER_MAP_RECORD rec = &recs[i];
-    // Get public key modulus (assume RSA)
-    CK_ATTRIBUTE pubAttr = {CKA_MODULUS, NULL, 0};
-    rv = C_GetAttributeValue(hSession, objects[i], &pubAttr, 1);
-    if (rv != CKR_OK || pubAttr.ulValueLen == 0)
-      continue;
-    CK_BYTE *modulus = g_pfnCspAlloc(pubAttr.ulValueLen);
-    if (!modulus)
-      continue;
-    pubAttr.pValue = modulus;
-    rv = C_GetAttributeValue(hSession, objects[i], &pubAttr, 1);
-    if (rv != CKR_OK) {
-      g_pfnCspFree(modulus);
-      continue;
-    }
 
     // Compute SHA-1 digest of modulus
     CK_BYTE digest[20];
     CK_ULONG digLen = sizeof(digest);
-    rv = C_DigestInit(hSession, &mech);
+    CK_RV rv = C_DigestInit(pContext->session, &mech);
     if (rv != CKR_OK) {
-      g_pfnCspFree(modulus);
       continue;
     }
-    rv = C_Digest(hSession, modulus, pubAttr.ulValueLen, digest, &digLen);
-    g_pfnCspFree(modulus);
+    rv = C_Digest(pContext->session, slot->rsa.modulus, slot->rsa.modulusBits / 8, digest, &digLen);
     if (rv != CKR_OK)
       continue;
 
@@ -216,20 +148,13 @@ static DWORD GenerateContainerMapFile(CK_SESSION_HANDLE_PTR pSession, PBYTE *ppb
 
     // Set flags
     rec->bFlags = CONTAINER_MAP_VALID_CONTAINER;
-    // if (idAttr.ulValueLen == 1 && idBuf[0] == 2) {
-    //   rec->bFlags |= CONTAINER_MAP_DEFAULT_CONTAINER;
-    // }
     // Set signature key size bits
-    rec->wSigKeySizeBits = (WORD)(pubAttr.ulValueLen * 8);
+    rec->wSigKeySizeBits = (WORD)(slot->rsa.modulusBits);
     CMD_DEBUG("Container %d: %ls, wSigKeySizeBits: %d", i, rec->wszGuid, rec->wSigKeySizeBits);
   }
-  CMD_PRINT_HEX(recs, total);
   *pcbData = (DWORD)total;
-
-  cmapCached = TRUE;
-  cmapSize = (DWORD)total;
-  memcpy(cmap, recs, total);
   CMD_DEBUG("Container map generated, size: %d", total);
+  CMD_PRINT_HEX(*ppbData, total);
 
   CMD_RET_OK;
 }

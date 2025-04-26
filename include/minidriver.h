@@ -1,7 +1,9 @@
 #ifndef MINIDRIVER_H
 #define MINIDRIVER_H
 
+#include "canokey.h"
 #include "cardmod.h"
+#include "pkcs11.h"
 #include "pkcs11_canokey.h"
 
 // Global function pointers for data caching mechanisms
@@ -17,8 +19,6 @@ extern PFN_CSP_FREE g_pfnCspFree;
 // Global function pointer for padding removal
 extern PFN_CSP_UNPAD_DATA g_pfnCspUnpadData;
 
-void reverse_bytes(const PBYTE data, const DWORD len);
-
 #define INJECT_HANDLES()                                                                                               \
   do {                                                                                                                 \
     CNK_MANAGED_MODE_INIT_ARGS args = {.malloc_func = (CNK_MALLOC_FUNC)g_pfnCspAlloc,                                  \
@@ -30,5 +30,12 @@ void reverse_bytes(const PBYTE data, const DWORD len);
       CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot enable managed mode");                                                \
     }                                                                                                                  \
   } while (0);
+
+typedef struct {
+  CK_SESSION_HANDLE session;
+  CANOKEY canokey;
+} CMD_CONTEXT;
+
+typedef CMD_CONTEXT *CMD_CONTEXT_PTR;
 
 #endif // MINIDRIVER_H
