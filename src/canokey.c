@@ -6,7 +6,7 @@
 
 extern CK_RV cnk_obj_id_to_piv_tag(CK_BYTE obj_id, CK_BYTE *piv_tag);
 
-static void reverse_bytes(CK_BYTE *data, const CK_ULONG len) {
+void reverse_bytes(CK_BYTE *data, CK_ULONG len) {
   for (CK_ULONG i = 0; i < len / 2; i++) {
     const CK_BYTE tmp = data[i];
     data[i] = data[len - 1 - i];
@@ -58,7 +58,7 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
     }
 
     SLOT *slot = &pCanokey->slots[pCanokey->slotCount];
-    slot->slotId = i;
+    slot->id = i;
     cnk_obj_id_to_piv_tag(i, &slot->pivId);
 
     CK_ATTRIBUTE attr[] = {

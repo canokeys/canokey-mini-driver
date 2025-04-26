@@ -4,6 +4,7 @@
 #include "cardmod.h"
 #include "logging.h"
 #include "minidriver.h"
+#include "pkcs11.h"
 
 /*
  * Function: CardSignData
@@ -25,9 +26,56 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
             pCardSigningInfo->pbData, pCardSigningInfo->cbSignedData, pCardSigningInfo->pbSignedData,
             pCardSigningInfo->pPaddingInfo, pCardSigningInfo->dwPaddingType);
 
-  pCardSigningInfo->pbSignedData = (PBYTE)g_pfnCspAlloc(256);
+  if (pCardSigningInfo->dwVersion < CARD_SIGNING_INFO_CURRENT_VERSION &&
+      pCardData->dwVersion == CARD_DATA_CURRENT_VERSION)
+    CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
 
-  // TODO
+  CMD_CONTEXT_PTR pContext = pCardData->pvVendorSpecific;
+  CMD_ENSURE_NONNULL(pContext, SCARD_E_INVALID_PARAMETER);
+  SLOT *slot = &pContext->canokey.slots[pCardSigningInfo->bContainerIndex];
+
+  if (pCardSigningInfo->dwSigningFlags & CARD_PADDING_INFO_PRESENT) {
+    if (pCardSigningInfo->dwVersion != CARD_SIGNING_INFO_CURRENT_VERSION)
+      CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
+
+    DWORD paddedLen = slot->rsa.modulusBits / 8;
+    DWORD ret = g_pfnCspPadData(pCardSigningInfo, paddedLen, &paddedLen, &pCardSigningInfo->pbSignedData);
+    if (ret != 0)
+      CMD_RETURN(ret, "padding failed");
+
+    // Windows stores raw data in small-endian, need to reverse
+    reverse_bytes(pCardSigningInfo->pbSignedData, paddedLen);
+
+    CMD_DEBUG("Padding data: %d bytes (@%p)", paddedLen, pCardSigningInfo->pbSignedData);
+    CMD_PRINT_HEX(pCardSigningInfo->pbSignedData, paddedLen);
+
+    // Login
+    CK_RV rv = C_Login(pContext->session, CKU_USER, "123456", 6);
+    if (rv != CKR_OK)
+      CMD_RETURN(rv, "C_Login failed");
+
+    // Sign
+    CK_MECHANISM mech = {CKM_RSA_X_509, NULL, 0};
+    CK_OBJECT_HANDLE hKey = (CKO_PRIVATE_KEY << 8) | slot->id;
+    rv = C_SignInit(pContext->session, &mech, hKey);
+    if (rv != CKR_OK)
+      CMD_RETURN(rv, "C_SignInit failed");
+
+    pCardSigningInfo->cbSignedData = paddedLen;
+    rv = C_Sign(pContext->session, pCardSigningInfo->pbSignedData, paddedLen, pCardSigningInfo->pbSignedData,
+                &pCardSigningInfo->cbSignedData);
+    if (rv != CKR_OK)
+      CMD_RETURN(rv, "C_Sign failed");
+
+    CMD_DEBUG("Signed data: %d bytes (@%p)", pCardSigningInfo->cbSignedData, pCardSigningInfo->pbSignedData);
+    CMD_PRINT_HEX(pCardSigningInfo->pbSignedData, pCardSigningInfo->cbSignedData);
+
+    // reverse the signature
+    reverse_bytes(pCardSigningInfo->pbSignedData, pCardSigningInfo->cbSignedData);
+  } else {
+    if (pCardSigningInfo->dwVersion != CARD_SIGNING_INFO_BASIC_VERSION)
+      CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
+  }
 
   CMD_RET_OK;
 }

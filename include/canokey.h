@@ -18,7 +18,7 @@ typedef struct {
 } ECC_PUB_KEY;
 
 typedef struct {
-  CK_BYTE slotId;
+  CK_BYTE id;
   CK_BYTE pivId;
   CK_KEY_TYPE keyType;
   union {
@@ -37,5 +37,6 @@ typedef struct {
 } CANOKEY;
 
 CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey);
+void reverse_bytes(CK_BYTE *data, CK_ULONG len);
 
 #endif // CANOKEY_H

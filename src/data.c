@@ -51,7 +51,8 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
       CMD_RET_OK;
     }
 
-    if (strncmp(pszFileName, "ksc0", 4) == 0 || strncmp(pszFileName, "kxc0", 4) == 0) {
+    if (strncmp(pszFileName, szUSER_SIGNATURE_CERT_PREFIX, 3) == 0 ||
+        strncmp(pszFileName, szUSER_KEYEXCHANGE_CERT_PREFIX, 3) == 0) {
       CMD_CONTEXT_PTR pContext = pCardData->pvVendorSpecific;
       CMD_ENSURE_NONNULL(pContext, SCARD_E_INVALID_PARAMETER);
 

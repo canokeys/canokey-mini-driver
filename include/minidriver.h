@@ -16,6 +16,9 @@ extern PFN_CSP_ALLOC g_pfnCspAlloc;
 extern PFN_CSP_REALLOC g_pfnCspReAlloc;
 extern PFN_CSP_FREE g_pfnCspFree;
 
+// Global function pointer for padding
+extern PFN_CSP_PAD_DATA g_pfnCspPadData;
+
 // Global function pointer for padding removal
 extern PFN_CSP_UNPAD_DATA g_pfnCspUnpadData;
 

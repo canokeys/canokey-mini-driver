@@ -1,6 +1,5 @@
 #include <Windows.h>
 
-#include "canokey.h"
 #include "cardmod.h"
 #include "logging.h"
 #include "minidriver.h"
@@ -62,6 +61,9 @@ PFN_CSP_ALLOC g_pfnCspAlloc = NULL;
 PFN_CSP_REALLOC g_pfnCspReAlloc = NULL;
 PFN_CSP_FREE g_pfnCspFree = NULL;
 
+// Global function pointer for padding
+PFN_CSP_PAD_DATA g_pfnCspPadData = NULL;
+
 // Global function pointer for padding removal
 PFN_CSP_UNPAD_DATA g_pfnCspUnpadData = NULL;
 
@@ -110,6 +112,9 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
   g_pfnCspAlloc = pCardData->pfnCspAlloc;
   g_pfnCspReAlloc = pCardData->pfnCspReAlloc;
   g_pfnCspFree = pCardData->pfnCspFree;
+
+  // Import the padding function
+  g_pfnCspPadData = pCardData->pfnCspPadData;
 
   // Import the padding removal function
   if (pCardData->dwVersion >= CARD_DATA_VERSION_SEVEN) {
