@@ -20,7 +20,7 @@ enum CMD_LOG_LEVEL {
 
 extern const char *g_log_level_name[CMD_LOG_LEVEL_SIZE];
 
-extern FILE *g_log_file;
+extern FILE *g_log_fp;
 extern int g_log_level;
 
 extern int cmd_init_logging(const char *log_file, const int log_level);
@@ -30,9 +30,9 @@ extern void cmd_print_hex(const int level, FILE *const out, const void *data, si
 extern void cmd_print_stack();
 
 #define CMD_PRINTLOGF_IMPL(level, format, ...)                                                                         \
-  cmd_fprintf(level, true, stderr, "%-20s(%-20s:L%03d)[%-5s]: ", __FUNCTION__, __FILE__, __LINE__,                     \
+  cmd_fprintf(level, true, g_log_fp, "%-20s(%-20s:L%03d)[%-5s]: ", __FUNCTION__, __FILE__, __LINE__,                   \
               g_log_level_name[level]);                                                                                \
-  cmd_fprintf(level, false, stderr, format "\n", ##__VA_ARGS__)
+  cmd_fprintf(level, false, g_log_fp, format "\n", ##__VA_ARGS__)
 
 #define CMD_PRINTLOGF(level, format, ...)                                                                              \
   do {                                                                                                                 \
@@ -47,7 +47,7 @@ extern void cmd_print_stack();
 #define CMD_WARN(format, ...) CMD_PRINTLOGF(CMD_LOG_LEVEL_WARNING, format, ##__VA_ARGS__)
 #define CMD_ERROR(format, ...) CMD_PRINTLOGF(CMD_LOG_LEVEL_ERROR, format, ##__VA_ARGS__)
 #define CMD_FATAL(format, ...) CMD_PRINTLOGF(CMD_LOG_LEVEL_FATAL, format, ##__VA_ARGS__)
-#define CMD_PRINT_HEX(data, size) cmd_print_hex(CMD_LOG_LEVEL_DEBUG, stderr, (data), (size));
+#define CMD_PRINT_HEX(data, size) cmd_print_hex(CMD_LOG_LEVEL_DEBUG, g_log_fp, (data), (size));
 
 #ifdef CMD_VERBOSE
 #define FUNC_TRACE(CALL) dbg(CALL)

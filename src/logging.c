@@ -17,6 +17,7 @@ const char *g_log_level_name[CMD_LOG_LEVEL_SIZE] = {
 
 // default values
 int g_log_level = CMD_LOG_LEVEL_NONE;
+FILE *g_log_fp = NULL;
 
 int cmd_init_logging(const char *log_file, const int log_level) {
   static bool is_initialized = false;
@@ -34,13 +35,18 @@ int cmd_init_logging(const char *log_file, const int log_level) {
   assert(hFile != INVALID_HANDLE_VALUE);
   log_fd = _open_osfhandle((intptr_t)hFile, _O_CREAT | _O_APPEND | _O_BINARY);
   assert(log_fd != -1);
+  FILE *fp = _fdopen(log_fd, "a");
+  assert(fp != NULL);
+  g_log_fp = fp;
 
+  /* DO NOT REDIRECT STDERR -- THIS DLL MIGHT BE LOADED BY OTHER PROCESSES
   // redirect stderr to log file
   FILE *old_stderr;
   // stderr might be already closed - open it first
   assert(freopen_s(&old_stderr, "NUL", "w", stderr) == 0);
   assert(_dup2(log_fd, _fileno(stderr)) != -1);
   assert(_close(log_fd) == 0);
+  */
 
   // set global log level
   if (log_level >= 0 && log_level < CMD_LOG_LEVEL_SIZE) {
@@ -53,7 +59,12 @@ int cmd_init_logging(const char *log_file, const int log_level) {
   return 0;
 }
 
-int cmd_stop_logging() { return fclose(stderr); }
+int cmd_stop_logging() {
+  int rc = fclose(g_log_fp);
+  g_log_fp = NULL;
+  g_log_level = CMD_LOG_LEVEL_NONE;
+  return rc;
+}
 
 static void print_time(FILE *out) {
   struct timespec ts;
@@ -102,7 +113,7 @@ void cmd_print_stack() {
   HANDLE process = GetCurrentProcess();
   DWORD pid = GetCurrentProcessId();
   DWORD tid = GetCurrentThreadId();
-  CMD_DEBUG("Stack trace begin for process %d thread %d...\n", pid, tid);
+  CMD_DEBUG("Stack trace begin for PID %d TID %d...\n", pid, tid);
 
   void *stack[maxStackFrames];
   WORD frames = CaptureStackBackTrace(0, maxStackFrames, stack, NULL);
@@ -113,7 +124,7 @@ void cmd_print_stack() {
     char buffer[sizeof(SYMBOL_INFO) + MAX_SYM_NAME * sizeof(TCHAR)];
 
     if (i >= 2 && address == (DWORD64)stack[i - 1]) {
-      fprintf(stderr, "\t[%02d] (repeated frame) @ %p\n", i, (PVOID)address);
+      fprintf(g_log_fp, "\t[%02d] (repeated frame) @ %p\n", i, (PVOID)address);
     }
 
     // get module name
@@ -135,12 +146,12 @@ void cmd_print_stack() {
     DWORD64 displacementSym = 0;
     BOOL symbolFound = SymFromAddr(process, address, &displacementSym, pSymbol);
     if (!symbolFound) {
-      fprintf(stderr, "\t[%02d] SymFromAddr64 returned error for %s!%p: error 0x%lx\n", i, module, (PVOID)address,
+      fprintf(g_log_fp, "\t[%02d] SymFromAddr64 returned error for %s!%p: error 0x%lx\n", i, module, (PVOID)address,
               GetLastError());
       continue;
     }
     DWORD64 offset = address - pSymbol->Address;
-    fprintf(stderr, "\t[%02d] at %s!%s+0x%llx @ %p, in ", i, module, pSymbol->Name, offset, (PVOID)address);
+    fprintf(g_log_fp, "\t[%02d] at %s!%s+0x%llx @ %p, in ", i, module, pSymbol->Name, offset, (PVOID)address);
 
     // get line info
     IMAGEHLP_LINE64 line;
@@ -148,9 +159,9 @@ void cmd_print_stack() {
     line.SizeOfStruct = sizeof(IMAGEHLP_LINE64);
     BOOL lineFound = SymGetLineFromAddr64(process, address, &displacementLine, &line);
     if (lineFound) {
-      fprintf(stderr, "%s:%lu\n", line.FileName, line.LineNumber);
+      fprintf(g_log_fp, "%s:%lu\n", line.FileName, line.LineNumber);
     } else {
-      fprintf(stderr, "unknown line\n");
+      fprintf(g_log_fp, "unknown line\n");
     }
   }
   CMD_DEBUG("Stack trace end.\n");

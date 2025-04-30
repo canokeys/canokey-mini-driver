@@ -76,6 +76,7 @@ PFN_CSP_UNPAD_DATA g_pfnCspUnpadData = NULL;
 DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags) {
   CMD_LOG_FUNC("pCardData %p, dwFlags %x, thread id %u", pCardData, dwFlags, GetCurrentThreadId());
   CMD_NONNULL_PARAM(pCardData);
+  cmd_print_stack();
 
   if (dwFlags & CARD_SECURE_KEY_INJECTION_NO_CARD_MODE) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "CARD_SECURE_KEY_INJECTION_NO_CARD_MODE");
