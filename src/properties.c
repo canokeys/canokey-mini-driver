@@ -77,18 +77,22 @@ static DWORD getCardGuid(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWOR
 }
 
 static DWORD getCardPinInfo(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen, DWORD dwFlags) {
-  // TODO: check dwFlags
+  if ((dwFlags & ROLE_USER) == 0) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "only ROLE_USER is supported");
+  }
   if (cbData < sizeof(PIN_INFO)) {
     CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
   }
   PPIN_INFO p = (PPIN_INFO)pbData;
-  p->dwVersion = PIN_INFO_CURRENT_VERSION;
-  p->PinType = EmptyPinType;
+  if (p->dwVersion != PIN_INFO_CURRENT_VERSION) {
+    CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
+  }
+  p->PinType = AlphaNumericPinType;
   p->PinPurpose = PrimaryCardPin;
-  p->dwChangePermission = PIN_SET_ALL_ROLES;
-  p->dwUnblockPermission = PIN_SET_ALL_ROLES;
+  p->dwChangePermission = ROLE_ADMIN; // TODO: check
+  p->dwUnblockPermission = ROLE_ADMIN; // TODO: check
   p->PinCachePolicy.dwVersion = PIN_CACHE_POLICY_CURRENT_VERSION;
-  p->PinCachePolicy.PinCachePolicyType = PinCacheNormal;
+  p->PinCachePolicy.PinCachePolicyType = PinCacheNormal; // TODO: DO NOT cache in pkcs11 layer
   p->PinCachePolicy.dwPinCachePolicyInfo = 0;
   *pdwDataLen = sizeof(PIN_INFO);
   CMD_RET_OK;
@@ -97,7 +101,7 @@ static DWORD getCardPinInfo(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PD
 DWORD WINAPI CardGetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty,
                              __out_bcount_part_opt(cbData, *pdwDataLen) PBYTE pbData, __in DWORD cbData,
                              __out PDWORD pdwDataLen, __in DWORD dwFlags) {
-  CMD_LOG_FUNC("CardGetProperty pCardData %p, wszProperty %S, pbData %p, cbData %d, pdwDataLen %p, dwFlags %x",
+  CMD_LOG_FUNC("CardGetProperty pCardData %p, wszProperty \"%S\", pbData %p, cbData %d, pdwDataLen %p, dwFlags %x",
                pCardData, wszProperty, pbData, cbData, pdwDataLen, dwFlags);
 
   INJECT_HANDLES();
@@ -132,6 +136,17 @@ DWORD WINAPI CardGetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty
   if (wcscmp(wszProperty, CP_CARD_PIN_INFO) == 0) {
     return getCardPinInfo(pCardData, pbData, cbData, pdwDataLen, dwFlags);
   }
+  if (wcscmp(wszProperty, CP_CARD_PIN_STRENGTH_VERIFY) == 0) {
+    if ((dwFlags & ROLE_USER) == 0) {
+      CMD_RETURN(SCARD_E_INVALID_PARAMETER, "only ROLE_USER is supported");
+    }
+    if (cbData < sizeof(DWORD)) {
+      CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
+    }
+    // we do not support session PIN
+    *(DWORD *)pbData = CARD_PIN_STRENGTH_PLAINTEXT;
+    CMD_RET_OK;
+  }
   CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Property not supported");
 }
 
@@ -151,7 +166,7 @@ DWORD WINAPI CardSetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty
 DWORD WINAPI CardGetContainerProperty(__in PCARD_DATA pCardData, __in BYTE bContainerIndex, __in LPCWSTR wszProperty,
                                       __out_bcount_part_opt(cbData, *pdwDataLen) PBYTE pbData, __in DWORD cbData,
                                       __out PDWORD pdwDataLen, __in DWORD dwFlags) {
-  CMD_LOG_FUNC("CardGetContainerProperty pCardData %p, bContainerIndex %d, wszProperty %S, dwFlags %x", pCardData,
+  CMD_LOG_FUNC("CardGetContainerProperty pCardData %p, bContainerIndex %d, wszProperty \"%S\", dwFlags %x", pCardData,
                bContainerIndex, wszProperty, dwFlags);
 
   CMD_NONNULL_PARAM(pCardData);
@@ -168,7 +183,7 @@ DWORD WINAPI CardGetContainerProperty(__in PCARD_DATA pCardData, __in BYTE bCont
     if (cbData < sizeof(PIN_ID)) {
       CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
     }
-    *(PIN_ID *)pbData = ROLE_EVERYONE;
+    *(PIN_ID *)pbData = ROLE_USER;
     *pdwDataLen = sizeof(PIN_ID);
     CMD_RET_OK;
   }

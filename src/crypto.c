@@ -30,8 +30,7 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
       pCardData->dwVersion == CARD_DATA_CURRENT_VERSION)
     CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
 
-  CMD_CONTEXT_PTR pContext = pCardData->pvVendorSpecific;
-  CMD_ENSURE_NONNULL(pContext, SCARD_E_INVALID_PARAMETER);
+  CMD_GET_CTX(pCardData, pContext);
   SLOT *slot = &pContext->canokey.slots[pCardSigningInfo->bContainerIndex];
 
   if (pCardSigningInfo->dwSigningFlags & CARD_PADDING_INFO_PRESENT) {

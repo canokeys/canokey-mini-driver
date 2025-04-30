@@ -24,6 +24,8 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
 
   INJECT_HANDLES();
 
+  CMD_GET_CTX(pCardData, pContext);
+
   if (pszDirectoryName == NULL) { // Root directory
     if (strcmp(pszFileName, szCACHE_FILE) == 0) {
       *ppbData = (PBYTE)g_pfnCspAlloc(6);
@@ -42,8 +44,6 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
     }
 
     if (strcmp(pszFileName, szCONTAINER_MAP_FILE) == 0) {
-      CMD_CONTEXT_PTR pContext = pCardData->pvVendorSpecific;
-      CMD_ENSURE_NONNULL(pContext, SCARD_E_INVALID_PARAMETER);
       DWORD res = GenerateContainerMapFile(pContext, ppbData, pcbData);
       if (res != SCARD_S_SUCCESS) {
         CMD_RETURN(res, "Generate container map failed");
@@ -53,8 +53,6 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
 
     if (strncmp(pszFileName, szUSER_SIGNATURE_CERT_PREFIX, 3) == 0 ||
         strncmp(pszFileName, szUSER_KEYEXCHANGE_CERT_PREFIX, 3) == 0) {
-      CMD_CONTEXT_PTR pContext = pCardData->pvVendorSpecific;
-      CMD_ENSURE_NONNULL(pContext, SCARD_E_INVALID_PARAMETER);
 
       BYTE slotIndex = pszFileName[4] - '0';
       if (slotIndex >= pContext->canokey.slotCount)

@@ -1,6 +1,8 @@
 #include <string.h>
 #include <wchar.h>
 
+#include <pkcs11_canokey.h>
+
 #include "cardmod.h"
 #include "logging.h"
 #include "minidriver.h"
@@ -8,7 +10,7 @@
 /*
  * Function: CardAuthenticatePin
  *
- * Purpose: Authenticate the PIN.
+ * Purpose: Authenticate the PIN. Deprecated by CardAuthenticateEx.
  */
 DWORD WINAPI CardAuthenticatePin(__in PCARD_DATA pCardData, __in LPWSTR pwszUserId, __in_bcount(cbPin) PBYTE pbPin,
                                  __in DWORD cbPin, __out_opt PDWORD pcAttemptsRemaining) {
@@ -22,7 +24,11 @@ DWORD WINAPI CardAuthenticatePin(__in PCARD_DATA pCardData, __in LPWSTR pwszUser
 
   INJECT_HANDLES();
 
-  CMD_RET_UNIMPL;
+  if (wcscmp(pwszUserId, wszCARD_USER_USER) != 0) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid user id");
+  }
+
+  return CardAuthenticateEx(pCardData, ROLE_USER, 0, pbPin, cbPin, NULL, NULL, pcAttemptsRemaining);
 }
 
 /*
@@ -40,10 +46,47 @@ DWORD WINAPI CardAuthenticateEx(__in PCARD_DATA pCardData, __in PIN_ID PinId, __
 
   CMD_NONNULL_PARAM(pCardData);
   CMD_NONNULL_PARAM(pbPinData);
+  CMD_GET_CTX(pCardData, pContext);
 
   INJECT_HANDLES();
 
-  CMD_RET_UNIMPL;
+  // The allowed values for PinId are ROLE_USER, ROLE_ADMIN or 3 through 7
+  // TODO: currently we only support ROLE_USER
+  if (PinId != ROLE_USER) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid PinId");
+  }
+
+  if (dwFlags & CARD_AUTHENTICATE_GENERATE_SESSION_PIN) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Session PIN not supported");
+  }
+
+  //if (cbPinData < sizeof(PIN_INFO)) {
+  //  CMD_RETURN(SCARD_E_INVALID_PARAMETER, "cbPinData is too small");
+  //}
+
+  //PPIN_INFO pPinInfo = (PPIN_INFO)pbPinData;
+
+  BYTE pinTries = 0;
+  CK_RV rv = C_CNK_Login(pContext->session, CKU_USER, pbPinData, cbPinData, &pinTries);
+  CMD_DEBUG("Remaining pinTries: %d", pinTries);
+
+  if (rv == CKR_USER_ALREADY_LOGGED_IN) {
+    CMD_RET_OK;
+  }
+
+  // TODO: For all attempts beyond the allowed number,
+  // the function returns SCARD_W_CHV_BLOCKED and the pcAttemptsRemaining parameter returns zero.
+  if (pcAttemptsRemaining) {
+    *pcAttemptsRemaining = pinTries;
+  }
+
+  if (rv != CKR_OK) {
+    // If the card minidriver returns a nonzero value from this function,
+    // the Base CSP/KSP resets the card
+    CMD_RETURN(pinTries > 0 ? SCARD_W_WRONG_CHV : SCARD_W_CHV_BLOCKED, "C_Login failed");
+  } else {
+    CMD_RET_OK;
+  }
 }
 
 /*
@@ -55,8 +98,17 @@ DWORD WINAPI CardDeauthenticateEx(__in PCARD_DATA pCardData, __in PIN_SET PinId,
   CMD_LOG_FUNC("pCardData %p, PinId %d, dwFlags %x", pCardData, PinId, dwFlags);
 
   CMD_NONNULL_PARAM(pCardData);
+  CMD_GET_CTX(pCardData, pContext);
 
   INJECT_HANDLES();
 
-  CMD_RET_UNIMPL;
+  // TODO: PinId is not used
+  CK_RV rv = C_Logout(pContext->session);
+  if (rv != CKR_OK) {
+    // If the card minidriver returns a nonzero value from this function,
+    // the Base CSP/KSP resets the card
+    CMD_RETURN(rv, "C_Logout failed");
+  } else {
+    CMD_RET_OK;
+  }
 }

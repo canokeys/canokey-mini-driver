@@ -93,4 +93,8 @@ extern void cmd_print_stack();
     ((void)(__VA_ARGS__))                                                                                              \
   } while (0)
 
+#define CMD_GET_CTX(PCARD, CTX)                                                                                        \
+    CMD_CONTEXT_PTR CTX = (CMD_CONTEXT_PTR) (PCARD)->pvVendorSpecific;                                                 \
+    CMD_NONNULL_PARAM(CTX)
+
 #endif // __LOGGING__H__

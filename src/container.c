@@ -28,14 +28,13 @@ DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContaine
   if (pContainerInfo->dwVersion > CONTAINER_INFO_CURRENT_VERSION)
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid container info version");
 
-  CMD_CONTEXT_PTR context = pCardData->pvVendorSpecific;
-  CMD_ENSURE_NONNULL(context, SCARD_E_INVALID_PARAMETER);
+  CMD_GET_CTX(pCardData, pContext);
 
-  if (bContainerIndex >= context->canokey.slotCount) {
+  if (bContainerIndex >= pContext->canokey.slotCount) {
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
   }
 
-  SLOT *slot = &context->canokey.slots[bContainerIndex];
+  SLOT *slot = &pContext->canokey.slots[bContainerIndex];
 
   // Create a properly formatted RSA public key structure
   PUBRSAKEYSTRUCT_BASE keyHeader;
