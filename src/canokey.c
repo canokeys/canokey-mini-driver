@@ -1,10 +1,11 @@
 #include "canokey.h"
 #include "logging.h"
+#include "pkcs11.h"
+
+#include <pkcs11_canokey.h>
 
 #include <stdio.h>
 #include <string.h>
-
-extern CK_RV cnk_obj_id_to_piv_tag(CK_BYTE obj_id, CK_BYTE *piv_tag);
 
 void reverse_bytes(CK_BYTE *data, CK_ULONG len) {
   for (CK_ULONG i = 0; i < len / 2; i++) {
@@ -59,19 +60,28 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
 
     SLOT *slot = &pCanokey->slots[pCanokey->slotCount];
     slot->id = i;
-    cnk_obj_id_to_piv_tag(i, &slot->pivId);
+    C_CNK_ObjIdToPivTag(i, &slot->pivId);
 
     CK_ATTRIBUTE attr[] = {
         {CKA_KEY_TYPE, &slot->keyType, sizeof(slot->keyType)},
         {CKA_MODULUS, slot->rsa.modulus, sizeof(slot->rsa.modulus)},
         {CKA_MODULUS_BITS, &slot->rsa.modulusBits, sizeof(slot->rsa.modulusBits)},
+        {CKA_EC_POINT, slot->ecc.x, sizeof(slot->ecc.x)},
     };
-    rv = C_GetAttributeValue(session, hObject, attr, 3);
-    if (rv != CKR_OK)
+    rv = C_GetAttributeValue(session, hObject, attr, 4);
+    if (rv != CKR_OK && rv != CKR_ATTRIBUTE_TYPE_INVALID)
       CMD_RETURN(rv, "C_GetAttributeValue failed");
 
-    // RSA modulus is stored in big-endian, need to reverse
-    reverse_bytes(slot->rsa.modulus, slot->rsa.modulusBits / 8);
+    if (slot->keyType == CKK_RSA) {
+      // RSA modulus is stored in big-endian, need to reverse
+      reverse_bytes(slot->rsa.modulus, slot->rsa.modulusBits / 8);
+    } else if (slot->keyType == CKK_EC) {
+      slot->ecc.cbPrivate = attr[3].ulValueLen;
+      memcpy(slot->ecc.y, slot->ecc.x + slot->ecc.cbPrivate, slot->ecc.cbPrivate);
+      // EC point is stored in big-endian, need to reverse
+      reverse_bytes(slot->ecc.x, slot->ecc.cbPrivate);
+      reverse_bytes(slot->ecc.y, slot->ecc.cbPrivate);
+    }
 
     objectClass = CKO_CERTIFICATE;
     rv = C_FindObjectsInit(session, templates, 2);

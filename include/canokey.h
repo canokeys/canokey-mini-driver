@@ -15,6 +15,7 @@ typedef struct {
 typedef struct {
   CK_BYTE x[66];
   CK_BYTE y[66];
+  CK_ULONG cbPrivate;
 } ECC_PUB_KEY;
 
 typedef struct {
