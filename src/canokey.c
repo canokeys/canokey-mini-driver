@@ -66,7 +66,7 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
         {CKA_KEY_TYPE, &slot->keyType, sizeof(slot->keyType)},
         {CKA_MODULUS, slot->rsa.modulus, sizeof(slot->rsa.modulus)},
         {CKA_MODULUS_BITS, &slot->rsa.modulusBits, sizeof(slot->rsa.modulusBits)},
-        {CKA_EC_POINT, slot->ecc.x, sizeof(slot->ecc.x)},
+        {CKA_EC_POINT, &slot->ecc, sizeof(slot->ecc)},
     };
     rv = C_GetAttributeValue(session, hObject, attr, 4);
     if (rv != CKR_OK && rv != CKR_ATTRIBUTE_TYPE_INVALID)
@@ -75,12 +75,17 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
     if (slot->keyType == CKK_RSA) {
       // RSA modulus is stored in big-endian, need to reverse
       reverse_bytes(slot->rsa.modulus, slot->rsa.modulusBits / 8);
+      CMD_DEBUG("Slot %d: keyType = CKK_RSA, modulusBits = %d", i, slot->rsa.modulusBits);
     } else if (slot->keyType == CKK_EC) {
-      slot->ecc.cbPrivate = attr[3].ulValueLen;
+      slot->ecc.cbPrivate = (attr[3].ulValueLen - 1) / 2;
       memcpy(slot->ecc.y, slot->ecc.x + slot->ecc.cbPrivate, slot->ecc.cbPrivate);
       // EC point is stored in big-endian, need to reverse
       reverse_bytes(slot->ecc.x, slot->ecc.cbPrivate);
       reverse_bytes(slot->ecc.y, slot->ecc.cbPrivate);
+      CMD_DEBUG("Point:");
+      CMD_PRINT_HEX(slot->ecc.x, slot->ecc.cbPrivate);
+      CMD_PRINT_HEX(slot->ecc.y, slot->ecc.cbPrivate);
+      CMD_DEBUG("Slot %d: keyType = CKK_EC, cbPrivate = %d", i, slot->ecc.cbPrivate);
     }
 
     objectClass = CKO_CERTIFICATE;

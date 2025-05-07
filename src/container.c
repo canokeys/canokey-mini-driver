@@ -36,40 +36,67 @@ DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContaine
 
   SLOT *slot = &pContext->canokey.slots[bContainerIndex];
 
-  // Create a properly formatted RSA public key structure
-  PUBRSAKEYSTRUCT_BASE keyHeader;
-  DWORD modulusSize = slot->rsa.modulusBits / 8;
-  DWORD totalSize = sizeof(PUBRSAKEYSTRUCT_BASE) + modulusSize;
+  if (slot->keyType == CKK_RSA) {
+    // Create a properly formatted RSA public key structure
+    PUBRSAKEYSTRUCT_BASE keyHeader;
+    DWORD modulusSize = slot->rsa.modulusBits / 8;
+    DWORD totalSize = sizeof(PUBRSAKEYSTRUCT_BASE) + modulusSize;
 
-  // Allocate memory for the complete key structure
-  pContainerInfo->cbSigPublicKey = totalSize;
-  pContainerInfo->pbSigPublicKey = (PBYTE)g_pfnCspAlloc(totalSize);
-  CMD_ENSURE_NONNULL(pContainerInfo->pbSigPublicKey, SCARD_E_NO_MEMORY);
-  pContainerInfo->cbKeyExPublicKey = totalSize;
-  pContainerInfo->pbKeyExPublicKey = (PBYTE)g_pfnCspAlloc(totalSize);
-  CMD_ENSURE_NONNULL(pContainerInfo->pbKeyExPublicKey, SCARD_E_NO_MEMORY);
+    // Allocate memory for the complete key structure
+    pContainerInfo->cbSigPublicKey = totalSize;
+    pContainerInfo->pbSigPublicKey = (PBYTE)g_pfnCspAlloc(totalSize);
+    CMD_ENSURE_NONNULL(pContainerInfo->pbSigPublicKey, SCARD_E_NO_MEMORY);
+    pContainerInfo->cbKeyExPublicKey = totalSize;
+    pContainerInfo->pbKeyExPublicKey = (PBYTE)g_pfnCspAlloc(totalSize);
+    CMD_ENSURE_NONNULL(pContainerInfo->pbKeyExPublicKey, SCARD_E_NO_MEMORY);
 
-  // Initialize the key header
-  keyHeader.publickeystruc.bType = PUBLICKEYBLOB;
-  keyHeader.publickeystruc.bVersion = CUR_BLOB_VERSION;
-  keyHeader.publickeystruc.reserved = 0;
-  keyHeader.publickeystruc.aiKeyAlg = CALG_RSA_SIGN;
+    // Initialize the key header
+    keyHeader.publickeystruc.bType = PUBLICKEYBLOB;
+    keyHeader.publickeystruc.bVersion = CUR_BLOB_VERSION;
+    keyHeader.publickeystruc.reserved = 0;
+    keyHeader.publickeystruc.aiKeyAlg = CALG_RSA_SIGN;
 
-  keyHeader.rsapubkey.magic = 0x31415352;             // RSA1 in little-endian
-  keyHeader.rsapubkey.bitlen = slot->rsa.modulusBits; // Key size in bits
-  keyHeader.rsapubkey.pubexp = 65537;                 // Standard RSA exponent (0x10001)
+    keyHeader.rsapubkey.magic = 0x31415352;             // RSA1 in little-endian
+    keyHeader.rsapubkey.bitlen = slot->rsa.modulusBits; // Key size in bits
+    keyHeader.rsapubkey.pubexp = 65537;                 // Standard RSA exponent (0x10001)
 
-  // Copy the key header to the allocated memory
-  memcpy(pContainerInfo->pbSigPublicKey, &keyHeader, sizeof(PUBRSAKEYSTRUCT_BASE));
-  memcpy(pContainerInfo->pbSigPublicKey + sizeof(PUBRSAKEYSTRUCT_BASE), slot->rsa.modulus, modulusSize);
+    // Copy the key header to the allocated memory
+    memcpy(pContainerInfo->pbSigPublicKey, &keyHeader, sizeof(PUBRSAKEYSTRUCT_BASE));
+    memcpy(pContainerInfo->pbSigPublicKey + sizeof(PUBRSAKEYSTRUCT_BASE), slot->rsa.modulus, modulusSize);
 
-  // Key exchange key is the same as signature key
-  memcpy(pContainerInfo->pbKeyExPublicKey, &keyHeader, sizeof(PUBRSAKEYSTRUCT_BASE));
-  memcpy(pContainerInfo->pbKeyExPublicKey + sizeof(PUBRSAKEYSTRUCT_BASE), slot->rsa.modulus, modulusSize);
+    // Key exchange key is the same as signature key
+    memcpy(pContainerInfo->pbKeyExPublicKey, &keyHeader, sizeof(PUBRSAKEYSTRUCT_BASE));
+    memcpy(pContainerInfo->pbKeyExPublicKey + sizeof(PUBRSAKEYSTRUCT_BASE), slot->rsa.modulus, modulusSize);
 
-  CMD_DEBUG("pContainerInfo:");
-  CMD_PRINT_HEX(pContainerInfo, sizeof(CONTAINER_INFO));
-  CMD_PRINT_HEX(pContainerInfo->pbSigPublicKey, sizeof(PUBRSAKEYSTRUCT_BASE) + modulusSize);
+    CMD_DEBUG("pContainerInfo:");
+    CMD_PRINT_HEX(pContainerInfo, sizeof(CONTAINER_INFO));
+    CMD_PRINT_HEX(pContainerInfo->pbSigPublicKey, sizeof(PUBRSAKEYSTRUCT_BASE) + modulusSize);
+  } else if (slot->keyType == CKK_EC) {
+    DWORD totalSize = sizeof(BCRYPT_ECCKEY_BLOB) + slot->ecc.cbPrivate * 2;
+
+    // Allocate memory for the complete key structure
+    pContainerInfo->cbSigPublicKey = totalSize;
+    pContainerInfo->pbSigPublicKey = (PBYTE)g_pfnCspAlloc(totalSize);
+    CMD_ENSURE_NONNULL(pContainerInfo->pbSigPublicKey, SCARD_E_NO_MEMORY);
+    pContainerInfo->cbKeyExPublicKey = totalSize;
+    pContainerInfo->pbKeyExPublicKey = (PBYTE)g_pfnCspAlloc(totalSize);
+    CMD_ENSURE_NONNULL(pContainerInfo->pbKeyExPublicKey, SCARD_E_NO_MEMORY);
+
+    // Initialize the key header
+    BCRYPT_ECCKEY_BLOB *keyHeader = (BCRYPT_ECCKEY_BLOB *)pContainerInfo->pbSigPublicKey;
+    keyHeader->dwMagic = BCRYPT_ECDSA_PUBLIC_P256_MAGIC;
+    keyHeader->cbKey = slot->ecc.cbPrivate * 2;
+    memcpy(pContainerInfo->pbSigPublicKey + sizeof(BCRYPT_ECCKEY_BLOB), slot->ecc.x, slot->ecc.cbPrivate);
+    memcpy(pContainerInfo->pbSigPublicKey + sizeof(BCRYPT_ECCKEY_BLOB) + slot->ecc.cbPrivate, slot->ecc.y,
+           slot->ecc.cbPrivate);
+
+    // Key exchange key is the same as signature key
+    memcpy(pContainerInfo->pbKeyExPublicKey, pContainerInfo->pbSigPublicKey, totalSize);
+
+    CMD_DEBUG("pContainerInfo:");
+    CMD_PRINT_HEX(pContainerInfo, sizeof(CONTAINER_INFO));
+    CMD_PRINT_HEX(pContainerInfo->pbSigPublicKey, totalSize);
+  }
 
   CMD_RET_OK;
 }

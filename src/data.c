@@ -136,7 +136,11 @@ static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, 
     if (rv != CKR_OK) {
       continue;
     }
-    rv = C_Digest(pContext->session, slot->rsa.modulus, slot->rsa.modulusBits / 8, digest, &digLen);
+    if (slot->keyType == CKK_RSA) {
+      rv = C_Digest(pContext->session, slot->rsa.modulus, slot->rsa.modulusBits / 8, digest, &digLen);
+    } else if (slot->keyType == CKK_EC) {
+      rv = C_Digest(pContext->session, slot->ecc.x, slot->ecc.cbPrivate * 2, digest, &digLen);
+    }
     if (rv != CKR_OK)
       continue;
 
@@ -148,7 +152,7 @@ static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, 
     // Set flags
     rec->bFlags = CONTAINER_MAP_VALID_CONTAINER;
     // Set signature key size bits
-    rec->wSigKeySizeBits = (WORD)(slot->rsa.modulusBits);
+    rec->wSigKeySizeBits = (WORD)(slot->keyType == CKK_RSA ? slot->rsa.modulusBits : slot->ecc.cbPrivate * 8);
     CMD_DEBUG("Container %d: %ls, wSigKeySizeBits: %d", i, rec->wszGuid, rec->wSigKeySizeBits);
   }
   *pcbData = (DWORD)total;

@@ -6,6 +6,7 @@
 
 #define MAX_SLOT_ID 6
 
+#pragma pack(push, 1)
 typedef struct {
   CK_BYTE modulus[512];
   CK_BYTE exponent[4];
@@ -13,6 +14,7 @@ typedef struct {
 } RSA_PUB_KEY;
 
 typedef struct {
+  CK_BYTE _dummy;
   CK_BYTE x[66];
   CK_BYTE y[66];
   CK_ULONG cbPrivate;
@@ -36,6 +38,7 @@ typedef struct {
   SLOT slots[MAX_SLOT_ID];
   CK_ULONG slotCount;
 } CANOKEY;
+#pragma pack(pop)
 
 CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey);
 void reverse_bytes(CK_BYTE *data, CK_ULONG len);
