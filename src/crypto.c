@@ -50,7 +50,7 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
 
     // Login
     CK_RV rv = C_Login(pContext->session, CKU_USER, "123456", 6);
-    if (rv != CKR_OK)
+    if (rv != CKR_OK && rv != CKR_USER_ALREADY_LOGGED_IN)
       CMD_RETURN(rv, "C_Login failed");
 
     // Sign
@@ -72,8 +72,31 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
     // reverse the signature
     reverse_bytes(pCardSigningInfo->pbSignedData, pCardSigningInfo->cbSignedData);
   } else {
-    if (pCardSigningInfo->dwVersion != CARD_SIGNING_INFO_BASIC_VERSION)
-      CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
+    // if (pCardSigningInfo->dwVersion != CARD_SIGNING_INFO_BASIC_VERSION)
+    //   CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
+    // Login
+    CK_RV rv = C_Login(pContext->session, CKU_USER, "123456", 6);
+    if (rv != CKR_OK && rv != CKR_USER_ALREADY_LOGGED_IN)
+      CMD_RETURN(rv, "C_Login failed");
+
+    // Sign
+    CK_MECHANISM mech = {CKM_ECDSA, NULL, 0};
+    CK_OBJECT_HANDLE hKey = (CKO_PRIVATE_KEY << 8) | slot->id;
+    rv = C_SignInit(pContext->session, &mech, hKey);
+    if (rv != CKR_OK)
+      CMD_RETURN(rv, "C_SignInit failed");
+
+    pCardSigningInfo->cbSignedData = 64;
+    pCardSigningInfo->pbSignedData = (PBYTE)g_pfnCspAlloc(pCardSigningInfo->cbSignedData);
+    CMD_ENSURE_NONNULL(pCardSigningInfo->pbSignedData, SCARD_E_NO_MEMORY);
+
+    rv = C_Sign(pContext->session, pCardSigningInfo->pbData, pCardSigningInfo->cbData, pCardSigningInfo->pbSignedData,
+                &pCardSigningInfo->cbSignedData);
+    if (rv != CKR_OK)
+      CMD_RETURN(rv, "C_Sign failed");
+
+    CMD_DEBUG("Signed data: %d bytes (@%p)", pCardSigningInfo->cbSignedData, pCardSigningInfo->pbSignedData);
+    CMD_PRINT_HEX(pCardSigningInfo->pbSignedData, pCardSigningInfo->cbSignedData);
   }
 
   CMD_RET_OK;
