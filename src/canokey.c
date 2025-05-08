@@ -79,9 +79,6 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
     } else if (slot->keyType == CKK_EC) {
       slot->ecc.cbPrivate = (attr[3].ulValueLen - 1) / 2;
       memcpy(slot->ecc.y, slot->ecc.x + slot->ecc.cbPrivate, slot->ecc.cbPrivate);
-      // EC point is stored in big-endian, need to reverse
-      reverse_bytes(slot->ecc.x, slot->ecc.cbPrivate);
-      reverse_bytes(slot->ecc.y, slot->ecc.cbPrivate);
       CMD_DEBUG("Point:");
       CMD_PRINT_HEX(slot->ecc.x, slot->ecc.cbPrivate);
       CMD_PRINT_HEX(slot->ecc.y, slot->ecc.cbPrivate);

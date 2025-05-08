@@ -85,7 +85,7 @@ DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContaine
     // Initialize the key header
     BCRYPT_ECCKEY_BLOB *keyHeader = (BCRYPT_ECCKEY_BLOB *)pContainerInfo->pbSigPublicKey;
     keyHeader->dwMagic = BCRYPT_ECDSA_PUBLIC_P256_MAGIC;
-    keyHeader->cbKey = slot->ecc.cbPrivate * 2;
+    keyHeader->cbKey = slot->ecc.cbPrivate;
     memcpy(pContainerInfo->pbSigPublicKey + sizeof(BCRYPT_ECCKEY_BLOB), slot->ecc.x, slot->ecc.cbPrivate);
     memcpy(pContainerInfo->pbSigPublicKey + sizeof(BCRYPT_ECCKEY_BLOB) + slot->ecc.cbPrivate, slot->ecc.y,
            slot->ecc.cbPrivate);
