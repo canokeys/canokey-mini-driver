@@ -86,7 +86,7 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
     if (rv != CKR_OK)
       CMD_RETURN(rv, "C_SignInit failed");
 
-    pCardSigningInfo->cbSignedData = 64;
+    pCardSigningInfo->cbSignedData = slot->ecc.cbPrivate * 2;
     pCardSigningInfo->pbSignedData = (PBYTE)g_pfnCspAlloc(pCardSigningInfo->cbSignedData);
     CMD_ENSURE_NONNULL(pCardSigningInfo->pbSignedData, SCARD_E_NO_MEMORY);
 

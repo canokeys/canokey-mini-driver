@@ -84,7 +84,16 @@ DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContaine
 
     // Initialize the key header
     BCRYPT_ECCKEY_BLOB *keyHeader = (BCRYPT_ECCKEY_BLOB *)pContainerInfo->pbSigPublicKey;
-    keyHeader->dwMagic = BCRYPT_ECDSA_PUBLIC_P256_MAGIC;
+    switch (slot->ecc.cbPrivate) {
+    case 32:
+      keyHeader->dwMagic = BCRYPT_ECDSA_PUBLIC_P256_MAGIC;
+      break;
+    case 48:
+      keyHeader->dwMagic = BCRYPT_ECDSA_PUBLIC_P384_MAGIC;
+      break;
+    default:
+      CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
+    }
     keyHeader->cbKey = slot->ecc.cbPrivate;
     memcpy(pContainerInfo->pbSigPublicKey + sizeof(BCRYPT_ECCKEY_BLOB), slot->ecc.x, slot->ecc.cbPrivate);
     memcpy(pContainerInfo->pbSigPublicKey + sizeof(BCRYPT_ECCKEY_BLOB) + slot->ecc.cbPrivate, slot->ecc.y,
