@@ -41,25 +41,90 @@ CK_BBOOL canokey_slot_can_derive(const SLOT *slot) {
   return slot != NULL && (slot->capabilities & CANOKEY_SLOT_CAP_DERIVE) != 0 && slot->keyType == CKK_EC;
 }
 
+static CK_BBOOL is_supported_ec_coordinate_len(CK_ULONG coordinate_len) {
+  switch (coordinate_len) {
+  case 32:
+  case 48:
+  case 66:
+    return CK_TRUE;
+  default:
+    return CK_FALSE;
+  }
+}
+
+static CK_BBOOL decode_der_octet_string(const CK_BYTE *value, CK_ULONG value_len, const CK_BYTE **content,
+                                        CK_ULONG *content_len) {
+  if (value_len < 2 || value[0] != 0x04) {
+    return CK_FALSE;
+  }
+
+  CK_BYTE length_byte = value[1];
+  CK_ULONG length_size = 1;
+  CK_ULONG payload_len = 0;
+  if ((length_byte & 0x80) == 0) {
+    payload_len = length_byte;
+  } else {
+    CK_ULONG encoded_length_size = length_byte & 0x7f;
+    if (encoded_length_size == 0 || encoded_length_size > sizeof(CK_ULONG) || value_len < 2 + encoded_length_size) {
+      return CK_FALSE;
+    }
+    length_size += encoded_length_size;
+    for (CK_ULONG i = 0; i < encoded_length_size; i++) {
+      payload_len = (payload_len << 8) | value[2 + i];
+    }
+  }
+
+  if (value_len != 1 + length_size + payload_len) {
+    return CK_FALSE;
+  }
+
+  *content = value + 1 + length_size;
+  *content_len = payload_len;
+  return CK_TRUE;
+}
+
+static CK_RV copy_uncompressed_ec_point(SLOT *slot, const CK_BYTE *point, CK_ULONG point_len) {
+  if (point_len < 3 || point[0] != 0x04) {
+    return CKR_ATTRIBUTE_VALUE_INVALID;
+  }
+
+  CK_ULONG coordinate_bytes = point_len - 1;
+  if (coordinate_bytes % 2 != 0) {
+    return CKR_ATTRIBUTE_VALUE_INVALID;
+  }
+
+  CK_ULONG coordinate_len = coordinate_bytes / 2;
+  if (!is_supported_ec_coordinate_len(coordinate_len) || coordinate_len > sizeof(slot->ecc.x)) {
+    return CKR_ATTRIBUTE_VALUE_INVALID;
+  }
+
+  slot->ecc.cbPrivate = coordinate_len;
+  memcpy(slot->ecc.x, point + 1, slot->ecc.cbPrivate);
+  memcpy(slot->ecc.y, point + 1 + slot->ecc.cbPrivate, slot->ecc.cbPrivate);
+  return CKR_OK;
+}
+
 static CK_RV unpack_ec_point(SLOT *slot, CK_ULONG value_len) {
   if (value_len == CK_UNAVAILABLE_INFORMATION || value_len < 3 || value_len > sizeof(ECC_PUB_KEY)) {
     CMD_RETURN(CKR_ATTRIBUTE_VALUE_INVALID, "Invalid EC point length");
   }
 
-  CK_ULONG coordinate_len = value_len - 1;
-  if (coordinate_len % 2 != 0 || coordinate_len / 2 > sizeof(slot->ecc.x)) {
-    CMD_RETURN(CKR_ATTRIBUTE_VALUE_INVALID, "Invalid EC coordinate length");
+  CK_BYTE value[sizeof(ECC_PUB_KEY)];
+  memcpy(value, &slot->ecc, value_len);
+
+  const CK_BYTE *point = NULL;
+  CK_ULONG point_len = 0;
+  if (decode_der_octet_string(value, value_len, &point, &point_len)) {
+    CK_RV rv = copy_uncompressed_ec_point(slot, point, point_len);
+    if (rv == CKR_OK) {
+      return rv;
+    }
   }
 
-  CK_BYTE point[sizeof(ECC_PUB_KEY)];
-  memcpy(point, &slot->ecc, value_len);
-  if (point[0] != 0x04) {
-    CMD_RETURN(CKR_ATTRIBUTE_VALUE_INVALID, "Only uncompressed EC points are supported");
+  CK_RV rv = copy_uncompressed_ec_point(slot, value, value_len);
+  if (rv != CKR_OK) {
+    CMD_RETURN(rv, "Invalid EC point encoding");
   }
-
-  slot->ecc.cbPrivate = coordinate_len / 2;
-  memcpy(slot->ecc.x, point + 1, slot->ecc.cbPrivate);
-  memcpy(slot->ecc.y, point + 1 + slot->ecc.cbPrivate, slot->ecc.cbPrivate);
   return CKR_OK;
 }
 
