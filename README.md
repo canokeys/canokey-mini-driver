@@ -6,9 +6,9 @@ Windows smart card minidriver for CanoKey, built on top of
 **Status:** this project is still WIP, but the development loop is usable.
 Windows can load the DLL through a Calais smart card registry mapping without
 installing the generated INF. Current local testing can enumerate the CanoKey
-PIV certificates and run CSP/KSP signing tests against the development card.
-Release packaging, INF installation, and the full PIV key mapping are still in
-progress.
+PIV certificates and run CSP/KSP signing and RSA decryption tests against the
+development card. Release packaging, INF installation, and broader PIV slot
+coverage are still in progress.
 
 ## Current State
 
@@ -18,15 +18,12 @@ progress.
 - `certutil -scinfo` can see the card and current certificates.
 - `scripts\sign-test.ps1` exercises the minidriver through Windows CAPI/CNG
   APIs instead of parsing command output.
-- The current development card has been tested with 9A RSA-2048 signing and
-  9C EC P-256 signing. The minidriver now exposes 9D as key exchange/decrypt
-  when RSA key material and a certificate are provisioned in that PIV slot.
+- The current development card has been tested with 9A RSA-2048 signing, 9C
+  EC P-256 signing, and 9D RSA-2048 signing plus key exchange/decryption.
 
 Known gaps:
 
 - Full YubiKey-style PIV slot mapping still needs broader card coverage.
-- 9D key exchange/decryption is wired through the minidriver and PKCS#11, but
-  still needs hardware validation with a card that has 9D RSA material.
 - INF installation is kept for later release validation.
 - The test matrix depends on which keys and certificates are provisioned on the
   attached CanoKey.
@@ -81,7 +78,7 @@ Useful local checks:
 
 ```powershell
 .\scripts\smoke-scinfo.ps1
-.\scripts\sign-test.ps1 -Install -ResetCard
+.\scripts\sign-test.ps1
 ```
 
 `smoke-scinfo.ps1` drives `certutil -silent -pin ... -scinfo` against the

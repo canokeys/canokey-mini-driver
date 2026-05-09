@@ -87,6 +87,7 @@ namespace CanokeyMinidriver {
     public sealed class SignResult {
         public string Provider { get; set; }
         public string Container { get; set; }
+        public int LegacyKeySpec { get; set; }
         public string Algorithm { get; set; }
         public string Padding { get; set; }
         public int OutputLength { get; set; }
@@ -250,6 +251,7 @@ namespace CanokeyMinidriver {
                 return new SignResult {
                     Provider = BaseSmartCardCsp,
                     Container = openedContainer,
+                    LegacyKeySpec = (int)AT_SIGNATURE,
                     Algorithm = hashAlgorithm,
                     Padding = "PKCS1",
                     SignatureLength = (int)cbSignature,
@@ -333,14 +335,14 @@ namespace CanokeyMinidriver {
             }
         }
 
-        public static SignResult CngSign(string container, string pin, string mode) {
+        public static SignResult CngSign(string container, string pin, string mode, int legacyKeySpec) {
             IntPtr hProvider = IntPtr.Zero;
             IntPtr hKey = IntPtr.Zero;
             IntPtr pPaddingInfo = IntPtr.Zero;
             Type paddingType = null;
             try {
                 CheckStatus(NCryptOpenStorageProvider(out hProvider, SmartCardKsp, 0), "NCryptOpenStorageProvider");
-                CheckStatus(NCryptOpenKey(hProvider, out hKey, container, 0, NCRYPT_SILENT_FLAG), "NCryptOpenKey");
+                CheckStatus(NCryptOpenKey(hProvider, out hKey, container, legacyKeySpec, NCRYPT_SILENT_FLAG), "NCryptOpenKey");
                 if (!String.IsNullOrEmpty(pin)) {
                     byte[] pinBytes = Encoding.Unicode.GetBytes(pin + "\0");
                     CheckStatus(NCryptSetProperty(hKey, "SmartCardPin", pinBytes, pinBytes.Length, NCRYPT_SILENT_FLAG), "NCryptSetProperty(SmartCardPin)");
@@ -382,6 +384,7 @@ namespace CanokeyMinidriver {
                 return new SignResult {
                     Provider = SmartCardKsp,
                     Container = container,
+                    LegacyKeySpec = legacyKeySpec,
                     Algorithm = mode,
                     Padding = padding,
                     SignatureLength = cbSignature,
@@ -397,14 +400,14 @@ namespace CanokeyMinidriver {
             }
         }
 
-        public static SignResult CngDecrypt(string container, string pin, string mode) {
+        public static SignResult CngDecrypt(string container, string pin, string mode, int legacyKeySpec) {
             IntPtr hProvider = IntPtr.Zero;
             IntPtr hKey = IntPtr.Zero;
             IntPtr pPaddingInfo = IntPtr.Zero;
             Type paddingType = null;
             try {
                 CheckStatus(NCryptOpenStorageProvider(out hProvider, SmartCardKsp, 0), "NCryptOpenStorageProvider");
-                CheckStatus(NCryptOpenKey(hProvider, out hKey, container, 0, NCRYPT_SILENT_FLAG), "NCryptOpenKey");
+                CheckStatus(NCryptOpenKey(hProvider, out hKey, container, legacyKeySpec, NCRYPT_SILENT_FLAG), "NCryptOpenKey");
                 if (!String.IsNullOrEmpty(pin)) {
                     byte[] pinBytes = Encoding.Unicode.GetBytes(pin + "\0");
                     CheckStatus(NCryptSetProperty(hKey, "SmartCardPin", pinBytes, pinBytes.Length, NCRYPT_SILENT_FLAG), "NCryptSetProperty(SmartCardPin)");
@@ -447,13 +450,16 @@ namespace CanokeyMinidriver {
                 }
                 for (int i = 0; i < DecryptTestData.Length; i++) {
                     if (plaintext[i] != DecryptTestData[i]) {
-                        throw new InvalidOperationException("Decrypt output mismatch at byte " + i);
+                        throw new InvalidOperationException("Decrypt output mismatch at byte " + i +
+                            "; expected " + Hex(DecryptTestData, DecryptTestData.Length) +
+                            "; actual " + Hex(plaintext, cbPlaintext));
                     }
                 }
 
                 return new SignResult {
                     Provider = SmartCardKsp,
                     Container = container,
+                    LegacyKeySpec = legacyKeySpec,
                     Algorithm = mode,
                     Padding = padding,
                     SignatureLength = cbPlaintext,
@@ -545,6 +551,15 @@ namespace CanokeyMinidriver {
         private static string FormatWin32(int error) {
             return "0x" + error.ToString("X8") + " (" + new Win32Exception(error).Message + ")";
         }
+
+        private static string Hex(byte[] data, int length) {
+            StringBuilder sb = new StringBuilder(length * 3);
+            for (int i = 0; i < length; i++) {
+                if (i != 0) sb.Append(' ');
+                sb.Append(data[i].ToString("x2"));
+            }
+            return sb.ToString();
+        }
     }
 }
 '@
@@ -564,6 +579,7 @@ function Invoke-SignCase {
             Status = "PASS"
             Provider = $result.Provider
             Container = $result.Container
+            LegacyKeySpec = $result.LegacyKeySpec
             Algorithm = $result.Algorithm
             Padding = $result.Padding
             OutputBytes = $result.OutputLength
@@ -579,6 +595,7 @@ function Invoke-SignCase {
             Status = "FAIL"
             Provider = $null
             Container = $null
+            LegacyKeySpec = $null
             Algorithm = $null
             Padding = $null
             OutputBytes = $null
@@ -623,6 +640,12 @@ try {
     $rsaKspNames = @($kspInfo |
         Where-Object { $_.AlgorithmGroup -match "RSA" } |
         Select-Object -ExpandProperty Container -Unique)
+    $rsaKspSignKeys = @($kspInfo |
+        Where-Object { $_.AlgorithmGroup -match "RSA" -and $_.LegacyKeySpec -eq 2 } |
+        Sort-Object Container -Unique)
+    $rsaKspDecryptKeys = @($kspInfo |
+        Where-Object { $_.AlgorithmGroup -match "RSA" -and $_.LegacyKeySpec -eq 1 } |
+        Sort-Object Container -Unique)
 
     $selectedBaseCspContainers = @()
     if ($BaseCspContainer) {
@@ -642,7 +665,7 @@ try {
     if ($RsaKspContainer) {
         $selectedRsaKspContainers = @($RsaKspContainer)
     } else {
-        $selectedRsaKspContainers = @($rsaKspNames)
+        $selectedRsaKspContainers = @($rsaKspSignKeys | Select-Object -ExpandProperty Container -Unique)
     }
     $selectedEccKspContainers = @()
     if ($EccKspContainer) {
@@ -656,9 +679,7 @@ try {
     if ($DecryptKspContainer) {
         $selectedDecryptKspContainers = @($DecryptKspContainer)
     } else {
-        $selectedDecryptKspContainers = @($kspInfo |
-            Where-Object { $_.AlgorithmGroup -match "RSA" -and (($_.Flags -band [uint32]1) -ne 0 -or $_.LegacyKeySpec -eq 1) } |
-            Select-Object -ExpandProperty Container -Unique)
+        $selectedDecryptKspContainers = @($rsaKspDecryptKeys | Select-Object -ExpandProperty Container -Unique)
     }
 
     Write-Host ""
@@ -710,23 +731,23 @@ try {
     }
     foreach ($container in $selectedRsaKspContainers) {
         $results += Invoke-SignCase "CNG RSA/SHA256 PKCS1 [$container]" {
-            [CanokeyMinidriver.SignTestNative]::CngSign($container, $pinArg, "RSA_PKCS1_SHA256")
+            [CanokeyMinidriver.SignTestNative]::CngSign($container, $pinArg, "RSA_PKCS1_SHA256", 2)
         }
         $results += Invoke-SignCase "CNG RSA/SHA256 PSS [$container]" {
-            [CanokeyMinidriver.SignTestNative]::CngSign($container, $pinArg, "RSA_PSS_SHA256")
+            [CanokeyMinidriver.SignTestNative]::CngSign($container, $pinArg, "RSA_PSS_SHA256", 2)
         }
     }
     foreach ($container in $selectedEccKspContainers) {
         $results += Invoke-SignCase "CNG ECDSA P-256/SHA256 [$container]" {
-            [CanokeyMinidriver.SignTestNative]::CngSign($container, $pinArg, "ECDSA_SHA256")
+            [CanokeyMinidriver.SignTestNative]::CngSign($container, $pinArg, "ECDSA_SHA256", 0)
         }
     }
     foreach ($container in $selectedDecryptKspContainers) {
         $results += Invoke-SignCase "CNG RSA decrypt PKCS1 [$container]" {
-            [CanokeyMinidriver.SignTestNative]::CngDecrypt($container, $pinArg, "RSA_PKCS1")
+            [CanokeyMinidriver.SignTestNative]::CngDecrypt($container, $pinArg, "RSA_PKCS1", 1)
         }
         $results += Invoke-SignCase "CNG RSA decrypt OAEP-SHA256 [$container]" {
-            [CanokeyMinidriver.SignTestNative]::CngDecrypt($container, $pinArg, "RSA_OAEP_SHA256")
+            [CanokeyMinidriver.SignTestNative]::CngDecrypt($container, $pinArg, "RSA_OAEP_SHA256", 1)
         }
     }
 

@@ -164,15 +164,16 @@ Start-Sleep -Seconds 6
 
   It uses `CryptGetProvParam(PP_ENUMCONTAINERS)` and `NCryptEnumKeys` for API
   discovery, then signs/verifies CAPI RSA/SHA1 PKCS#1, CAPI RSA/SHA256 PKCS#1,
-  CNG RSA/SHA256 PKCS#1, CNG RSA/SHA256 PSS, and CNG ECDSA P-256/SHA256. Use
-  `-SkipBuild -SkipInstall -SkipReset` for fast reruns. When a decrypt-capable
-  RSA KSP container is discovered, the script also tests CNG RSA PKCS#1 and
-  OAEP-SHA256 decrypt.
+  CNG RSA/SHA256 PKCS#1, CNG RSA/SHA256 PSS, and CNG ECDSA P-256/SHA256. When
+  a key-exchange RSA KSP container is discovered, the script also tests CNG RSA
+  PKCS#1 and OAEP-SHA256 decrypt. Use `-SkipBuild -SkipInstall -SkipReset` for
+  fast reruns.
 - The current development card has useful PIV material in:
 
 ```text
 ID 01 -> PIV 9A -> RSA-2048 key and certificate
 ID 02 -> PIV 9C -> EC P-256 key and certificate
+ID 03 -> PIV 9D -> RSA-2048 key and certificate
 ```
 
 - The minidriver keeps explicit per-slot capabilities in `SLOT.capabilities`.
@@ -185,10 +186,9 @@ ID 02 -> PIV 9C -> EC P-256 key and certificate
 
 - `scripts\sign-test.ps1` should exercise every discovered signing container.
   CAPI coverage is for RSA containers; CNG coverage is split by RSA and ECDSA
-  algorithm group. Decrypt coverage is selected from RSA KSP keys whose
-  `NCryptEnumKeys` flags include decrypt capability or whose legacy key spec
-  is `AT_KEYEXCHANGE`; use `-DecryptKspContainer` when Windows reports unusual
-  key metadata.
+  algorithm group. Open CNG signing keys with `LegacyKeySpec = AT_SIGNATURE`
+  and CNG decrypt keys with `LegacyKeySpec = AT_KEYEXCHANGE`; opening a
+  dual-use container with legacy key spec `0` can fail with `NTE_BAD_KEYSET`.
 - Do not hardcode the development PIN in minidriver code. Authentication must
   enter through `CardAuthenticateEx`; signing should use the authenticated
   PKCS#11 session state.
@@ -207,3 +207,7 @@ ID 02 -> PIV 9C -> EC P-256 key and certificate
   that session in `CardDeleteContext` before finalizing PKCS#11; otherwise
   repeated Windows probes can exhaust the session table and fail later
   acquisitions with `CKR_HOST_MEMORY` / "No free session slots available".
+- `CardRSADecrypt` receives and returns RSA buffers in Windows little-endian
+  order. Reverse ciphertext before calling PKCS#11 and reverse the plaintext
+  before returning to Windows, including PKCS#1/OAEP paths where PKCS#11 has
+  already removed padding.

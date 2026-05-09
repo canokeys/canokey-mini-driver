@@ -123,16 +123,18 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
     C_FindObjectsFinal(session);
     if (ulObjectCount == 0) {
       CMD_DEBUG("No certificate found for slot %d", i);
-      continue;
+      if (!canokey_slot_can_decrypt(slot)) {
+        continue;
+      }
+    } else {
+      attr[0].type = CKA_VALUE;
+      attr[0].pValue = slot->cert;
+      attr[0].ulValueLen = sizeof(slot->cert);
+      rv = C_GetAttributeValue(session, hObject, attr, 1);
+      if (rv != CKR_OK)
+        CMD_RETURN(rv, "C_GetAttributeValue failed");
+      slot->certLen = attr[0].ulValueLen;
     }
-
-    attr[0].type = CKA_VALUE;
-    attr[0].pValue = slot->cert;
-    attr[0].ulValueLen = sizeof(slot->cert);
-    rv = C_GetAttributeValue(session, hObject, attr, 1);
-    if (rv != CKR_OK)
-      CMD_RETURN(rv, "C_GetAttributeValue failed");
-    slot->certLen = attr[0].ulValueLen;
 
     CMD_DEBUG("Slot %d: PIV 0x%02x, keyType = %d, certLen = %d, capabilities = 0x%02x", i, slot->pivId, slot->keyType,
               slot->certLen, slot->capabilities);

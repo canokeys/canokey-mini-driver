@@ -143,11 +143,19 @@ The signing test uses Windows CryptoAPI/CNG APIs directly instead of parsing
 - CNG RSA/SHA256 PKCS#1 through Microsoft Smart Card Key Storage Provider
 - CNG RSA/SHA256 PSS through Microsoft Smart Card Key Storage Provider
 - CNG ECDSA P-256/SHA256 through Microsoft Smart Card Key Storage Provider
+- CNG RSA PKCS#1 decrypt for discovered key-exchange RSA containers
+- CNG RSA OAEP-SHA256 decrypt for discovered key-exchange RSA containers
 
 Like the smoke wrapper, it defaults to building x64 Debug, running the debug
 install target, resetting the board on `COM3`, and passing the local test PIN.
 Use `-SkipBuild -SkipInstall -SkipReset` for a fast rerun against the currently
 loaded DLL, and `-DiscoverOnly` to list containers without signing.
+
+For the current development card, the full matrix passes with 9A RSA-2048
+signing, 9C EC P-256 signing, and 9D RSA-2048 signing plus key exchange. The
+script opens CNG signature keys with `LegacyKeySpec = AT_SIGNATURE` and
+decryption keys with `LegacyKeySpec = AT_KEYEXCHANGE`; using `0` for a container
+that appears as both key specs can fail with `NTE_BAD_KEYSET`.
 
 ## INF Installation
 

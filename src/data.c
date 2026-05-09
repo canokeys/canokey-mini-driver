@@ -80,6 +80,9 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
       if (!canokey_slot_can_decrypt(slot)) {
         CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Key exchange certificate not found");
       }
+      if (slot->certLen == 0) {
+        CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Key exchange certificate is absent");
+      }
 
       *ppbData = (PBYTE)g_pfnCspAlloc(slot->certLen);
       CMD_ENSURE_NONNULL(*ppbData, SCARD_E_NO_MEMORY);
@@ -97,6 +100,9 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
       SLOT *slot = &pContext->canokey.slots[slotIndex];
       if (!canokey_slot_can_sign(slot)) {
         CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Signature certificate not found");
+      }
+      if (slot->certLen == 0) {
+        CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Signature certificate is absent");
       }
 
       *ppbData = (PBYTE)g_pfnCspAlloc(slot->certLen);

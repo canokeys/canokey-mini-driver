@@ -241,9 +241,9 @@ DWORD WINAPI CardRSADecrypt(__in PCARD_DATA pCardData, __inout PCARD_RSA_DECRYPT
     CMD_RETURN(map_pkcs11_crypto_error(rv), "C_Decrypt failed");
   }
 
-  if (mech.mechanism == CKM_RSA_X_509) {
-    reverse_bytes(pInfo->pbData, cbPlain);
-  }
+  // CardRSADecrypt returns RSA data to Windows in little-endian order, even
+  // when the PKCS#11 layer has already removed PKCS#1/OAEP padding.
+  reverse_bytes(pInfo->pbData, cbPlain);
   pInfo->cbData = (DWORD)cbPlain;
 
   CMD_DEBUG("Decrypted data: %d bytes (@%p)", pInfo->cbData, pInfo->pbData);
