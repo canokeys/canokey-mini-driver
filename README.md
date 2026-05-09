@@ -20,6 +20,9 @@ installation, and broader PIV slot coverage are still in progress.
 - New key creation can pass CanoKey/YubiKey-style PIN and touch policies to
   the PKCS#11 layer. By default, generated keys use touch policy never; 9E uses
   PIN policy never and other supported PIV key slots use PIN policy once.
+- Runtime sign/decrypt/ECDH operations honor the stored PIV PIN policy through
+  `canokey-pkcs11`: PIN-never keys can operate without a user PIN, while
+  PIN-once and PIN-always keys still require PIN login.
 - Smart Card KSP creation through Windows still needs more validation. Direct
   minidriver creation works; KSP creation probes `cardcf` and `cmapfile` before
   selecting a container, then needs a management-key path for PIV key writes.

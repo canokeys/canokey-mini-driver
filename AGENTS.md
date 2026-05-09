@@ -232,6 +232,11 @@ EC keys in those slots       -> also ECDH-capable
   `NewKeyPinPolicy` is absent, generated keys use the PIV defaults: 9E never,
   all other supported key slots once. `PinCacheTimeout` is reported through
   `CP_CARD_PIN_INFO`.
+- Runtime private-key operations defer PIN policy enforcement to
+  `canokey-pkcs11`. Do not add minidriver-side checks that always require
+  `ROLE_USER`; PIN-never keys must be able to sign, decrypt, or derive without
+  a user PIN, while PIN-once/PIN-always keys should return the PKCS#11
+  login-required error path when no PIN is cached.
 - Microsoft Smart Card KSP key creation chooses a minidriver container index
   from `mscp/cmapfile`; public KSP properties select provider/reader, not a
   PIV slot directly. Keep container indexes stable: `0..5` map to PIV object
@@ -282,10 +287,10 @@ EC keys in those slots       -> also ECDH-capable
   minidriver can recover an on-card PIN-protected management key and use it for
   PIV management operations. Without an equivalent CanoKey mechanism, keep any
   registry-stored management key limited to development/debug workflows.
-- Certificate files (`kscN`/`kxcN`) are everyone-read/admin-write. Report
-  `EveryoneReadAdminWriteAc` for existing cert files, reject certificate
-  `CardCreateFile` calls that request user-write access, and require
-  `ROLE_ADMIN` before `CardWriteFile` writes certificates through PKCS#11.
+- Certificate files (`kscN`/`kxcN`) must remain Windows-friendly for
+  enumeration: report `EveryoneReadUserWriteAc` for file info. The actual PIV
+  certificate write is still a management operation, so require `ROLE_ADMIN`
+  before `CardWriteFile` writes certificates through PKCS#11.
 - On `ERROR_INSUFFICIENT_BUFFER`, set the returned length before failing so
   Windows callers can retry with the right buffer size.
 - Logging must be best-effort. Failure to open the log file, or calling shutdown

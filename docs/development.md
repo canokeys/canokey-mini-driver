@@ -128,6 +128,13 @@ Supported values:
 - `PinCacheTimeout` (`REG_DWORD`): number of seconds reported to Base CSP in
   `CP_CARD_PIN_INFO` as a timed PIN cache recommendation.
 
+Runtime private-key operations honor the stored PIV PIN policy in
+`canokey-pkcs11`: keys with PIN policy never can sign, decrypt, or derive
+without a `CKU_USER` login; keys with PIN policy once or always require a
+cached user PIN. The test scripts' `-NoPin` switch is therefore useful for
+checking PIN-never keys, but existing 9A/9C/9D/82/83 keys with the default
+PIN-once policy should still fail without a PIN.
+
 Debug builds define `CMD_VERBOSE`. When `LogPath` enables logging, the
 minidriver creates one log file per host process from `DllMain` and passes the
 same `FILE *`, level, and sensitive-data flag to `canokey-pkcs11` through
@@ -264,12 +271,12 @@ configuration such as an explicit management-key registry value, before normal
 Windows KSP enrollment can generate/import PIV keys without a separate
 provisioning tool.
 
-Certificate files (`kscN` and `kxcN`) are different from key generation:
-they are exposed as everyone-read/admin-write files. `CardCreateFile` rejects
-certificate creation unless the requested access condition is
-`EveryoneReadAdminWriteAc`, and `CardWriteFile` requires `ROLE_ADMIN`
-authentication before passing the certificate to PKCS#11. This matches the PIV
-requirement that certificate objects are card-management writes.
+Certificate files (`kscN` and `kxcN`) are different from key generation.
+Windows expects user certificate files to behave like everyone-read/user-write
+files for enumeration and enrollment plumbing, so `CardGetFileInfo` reports
+`EveryoneReadUserWriteAc` for them. The actual PIV certificate write is still a
+card-management operation: `CardWriteFile` requires `ROLE_ADMIN`
+authentication before passing the certificate to PKCS#11.
 
 ## INF Installation
 

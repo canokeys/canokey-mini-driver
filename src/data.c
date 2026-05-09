@@ -281,9 +281,6 @@ DWORD WINAPI CardCreateFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirecto
   if (AccessCondition != EveryoneReadUserWriteAc && AccessCondition != EveryoneReadAdminWriteAc) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported file access condition");
   }
-  if (IsCertificateFileName(pszFileName) && AccessCondition != EveryoneReadAdminWriteAc) {
-    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Certificate files require admin write access");
-  }
   if (cbInitialCreationSize == 0) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid initial file size");
   }
@@ -415,7 +412,6 @@ DWORD WINAPI CardGetFileInfo(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryN
         CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Key exchange certificate not found");
       }
       pCardFileInfo->cbFileSize = (DWORD)slot->certLen;
-      pCardFileInfo->AccessCondition = EveryoneReadAdminWriteAc;
       CMD_RET_OK;
     }
     if (strncmp(pszFileName, szUSER_SIGNATURE_CERT_PREFIX, 3) == 0) {
@@ -428,7 +424,6 @@ DWORD WINAPI CardGetFileInfo(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryN
         CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Signature certificate not found");
       }
       pCardFileInfo->cbFileSize = (DWORD)slot->certLen;
-      pCardFileInfo->AccessCondition = EveryoneReadAdminWriteAc;
       CMD_RET_OK;
     }
     CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "File not found");
