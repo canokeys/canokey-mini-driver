@@ -13,6 +13,31 @@
 
 static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, PDWORD pcbData);
 
+static DWORD map_pkcs11_write_error(CK_RV rv) {
+  switch (rv) {
+  case CKR_OK:
+    return SCARD_S_SUCCESS;
+  case CKR_USER_NOT_LOGGED_IN:
+    return SCARD_W_SECURITY_VIOLATION;
+  case CKR_SESSION_READ_ONLY:
+  case CKR_ATTRIBUTE_VALUE_INVALID:
+  case CKR_DATA_LEN_RANGE:
+  case CKR_TEMPLATE_INCONSISTENT:
+    return SCARD_E_INVALID_PARAMETER;
+  case CKR_PIN_INCORRECT:
+  case CKR_PIN_INVALID:
+  case CKR_PIN_LEN_RANGE:
+  case CKR_PIN_EXPIRED:
+    return SCARD_W_WRONG_CHV;
+  case CKR_PIN_LOCKED:
+    return SCARD_W_CHV_BLOCKED;
+  case CKR_HOST_MEMORY:
+    return SCARD_E_NO_MEMORY;
+  default:
+    return SCARD_F_INTERNAL_ERROR;
+  }
+}
+
 void FillCardFreeSpaceInfo(PCARD_FREE_SPACE_INFO pCardFreeSpaceInfo) {
   pCardFreeSpaceInfo->dwBytesAvailable = CARD_DATA_VALUE_UNKNOWN;
   pCardFreeSpaceInfo->dwKeyContainersAvailable = CARD_DATA_VALUE_UNKNOWN;
@@ -36,6 +61,9 @@ static DWORD AllocCopy(const void *data, DWORD cbData, PBYTE *ppbData, PDWORD pc
 }
 
 static CK_RV DigestUpdateSlotPublicKey(CK_SESSION_HANDLE session, const SLOT *slot) {
+  if (!canokey_slot_has_key(slot)) {
+    return CKR_OK;
+  }
   if (slot->keyType == CKK_RSA) {
     return C_DigestUpdate(session, (CK_BYTE_PTR)slot->rsa.modulus, slot->rsa.modulusBits / 8);
   }
@@ -97,6 +125,54 @@ static BYTE GetFileContainerIndex(LPCSTR pszFileName) {
   return (BYTE)value;
 }
 
+static CK_BYTE ContainerIndexToObjectId(BYTE containerIndex) { return (CK_BYTE)(containerIndex + 1); }
+
+static DWORD GetCertificateFileSlot(CMD_CONTEXT_PTR pContext, LPCSTR pszFileName, BOOL forWrite, SLOT **ppSlot) {
+  CMD_ENSURE_NONNULL(pContext, SCARD_E_INVALID_PARAMETER);
+  CMD_ENSURE_NONNULL(pszFileName, SCARD_E_INVALID_PARAMETER);
+  CMD_ENSURE_NONNULL(ppSlot, SCARD_E_INVALID_PARAMETER);
+
+  BOOL keyExchangeCert = strncmp(pszFileName, szUSER_KEYEXCHANGE_CERT_PREFIX, 3) == 0;
+  BOOL signatureCert = strncmp(pszFileName, szUSER_SIGNATURE_CERT_PREFIX, 3) == 0;
+  if (!keyExchangeCert && !signatureCert) {
+    CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "File not found");
+  }
+
+  BYTE slotIndex = GetFileContainerIndex(pszFileName);
+  if (slotIndex >= pContext->canokey.slotCount) {
+    CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "File not found");
+  }
+  if (forWrite && slotIndex >= MAX_SLOT_ID) {
+    CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
+  }
+
+  SLOT *slot = &pContext->canokey.slots[slotIndex];
+  if (!canokey_slot_has_key(slot)) {
+    CMD_RETURN(forWrite ? SCARD_E_NO_KEY_CONTAINER : SCARD_E_FILE_NOT_FOUND, "Container has no key");
+  }
+  if (keyExchangeCert && !canokey_slot_can_decrypt(slot) && !canokey_slot_can_derive(slot)) {
+    CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Key exchange certificate not found");
+  }
+  if (signatureCert && !canokey_slot_can_sign(slot)) {
+    CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Signature certificate not found");
+  }
+
+  *ppSlot = slot;
+  CMD_RET_OK;
+}
+
+static DWORD RefreshCardMetadata(CMD_CONTEXT_PTR pContext) {
+  CK_RV rv = read_canokey(pContext->session, &pContext->canokey);
+  if (rv != CKR_OK) {
+    CMD_RETURN(map_pkcs11_write_error(rv), "Failed to refresh CanoKey metadata");
+  }
+  DWORD ret = GenerateCardIdentifier(pContext);
+  if (ret != SCARD_S_SUCCESS) {
+    CMD_RETURN(ret, "Failed to refresh card identifier");
+  }
+  CMD_RET_OK;
+}
+
 // The CardReadFile function reads the entire file at the specified location into the user-supplied buffer.
 DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName, __in LPSTR pszFileName,
                           __in DWORD dwFlags, __deref_out_bcount_opt(*pcbData) PBYTE *ppbData, __out PDWORD pcbData) {
@@ -145,12 +221,10 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
     }
 
     if (strncmp(pszFileName, szUSER_KEYEXCHANGE_CERT_PREFIX, 3) == 0) {
-      BYTE slotIndex = GetFileContainerIndex(pszFileName);
-      if (slotIndex >= pContext->canokey.slotCount)
-        CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "File not found");
-      SLOT *slot = &pContext->canokey.slots[slotIndex];
-      if (!canokey_slot_can_decrypt(slot) && !canokey_slot_can_derive(slot)) {
-        CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Key exchange certificate not found");
+      SLOT *slot = NULL;
+      DWORD ret = GetCertificateFileSlot(pContext, pszFileName, FALSE, &slot);
+      if (ret != SCARD_S_SUCCESS) {
+        return ret;
       }
       if (slot->certLen == 0) {
         CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Key exchange certificate is absent");
@@ -160,12 +234,10 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
     }
 
     if (strncmp(pszFileName, szUSER_SIGNATURE_CERT_PREFIX, 3) == 0) {
-      BYTE slotIndex = GetFileContainerIndex(pszFileName);
-      if (slotIndex >= pContext->canokey.slotCount)
-        CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "File not found");
-      SLOT *slot = &pContext->canokey.slots[slotIndex];
-      if (!canokey_slot_can_sign(slot)) {
-        CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Signature certificate not found");
+      SLOT *slot = NULL;
+      DWORD ret = GetCertificateFileSlot(pContext, pszFileName, FALSE, &slot);
+      if (ret != SCARD_S_SUCCESS) {
+        return ret;
       }
       if (slot->certLen == 0) {
         CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Signature certificate is absent");
@@ -178,6 +250,79 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
   }
 
   CMD_RETURN(SCARD_E_DIR_NOT_FOUND, "Directory not found");
+}
+
+DWORD WINAPI CardCreateFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirectoryName, __in LPSTR pszFileName,
+                            __in DWORD cbInitialCreationSize, __in CARD_FILE_ACCESS_CONDITION AccessCondition) {
+  CMD_LOG_FUNC("pCardData %p, pszDirectoryName %s, pszFileName %s, cbInitialCreationSize %lu, AccessCondition %d",
+               pCardData, pszDirectoryName, pszFileName, cbInitialCreationSize, AccessCondition);
+
+  CMD_NONNULL_PARAM(pCardData);
+  CMD_NONNULL_PARAM(pszFileName);
+
+  INJECT_HANDLES();
+  CMD_GET_CTX(pCardData, pContext);
+
+  if (pszDirectoryName == NULL || strcmp(pszDirectoryName, szBASE_CSP_DIR) != 0) {
+    CMD_RETURN(SCARD_E_DIR_NOT_FOUND, "Directory not found");
+  }
+  if (AccessCondition != EveryoneReadUserWriteAc && AccessCondition != EveryoneReadAdminWriteAc) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported file access condition");
+  }
+  if (cbInitialCreationSize == 0) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid initial file size");
+  }
+
+  SLOT *slot = NULL;
+  return GetCertificateFileSlot(pContext, pszFileName, TRUE, &slot);
+}
+
+DWORD WINAPI CardWriteFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirectoryName, __in LPSTR pszFileName,
+                           __in DWORD dwFlags, __in_bcount(cbData) PBYTE pbData, __in DWORD cbData) {
+  CMD_LOG_FUNC("pCardData %p, pszDirectoryName %s, pszFileName %s, dwFlags %x, pbData %p, cbData %lu", pCardData,
+               pszDirectoryName, pszFileName, dwFlags, pbData, cbData);
+
+  CMD_NONNULL_PARAM(pCardData);
+  CMD_NONNULL_PARAM(pszFileName);
+  CMD_NONNULL_PARAM(pbData);
+
+  CMD_CHECK_DW_FLAGS;
+  if (cbData == 0) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Empty certificate data");
+  }
+
+  INJECT_HANDLES();
+  CMD_GET_CTX(pCardData, pContext);
+
+  if (pszDirectoryName == NULL || strcmp(pszDirectoryName, szBASE_CSP_DIR) != 0) {
+    CMD_RETURN(SCARD_E_DIR_NOT_FOUND, "Directory not found");
+  }
+
+  SLOT *slot = NULL;
+  DWORD ret = GetCertificateFileSlot(pContext, pszFileName, TRUE, &slot);
+  if (ret != SCARD_S_SUCCESS) {
+    return ret;
+  }
+
+  CK_OBJECT_CLASS objectClass = CKO_CERTIFICATE;
+  CK_CERTIFICATE_TYPE certType = CKC_X_509;
+  CK_BYTE objectId = slot->id != 0 ? slot->id : ContainerIndexToObjectId(GetFileContainerIndex(pszFileName));
+  CK_BBOOL token = CK_TRUE;
+  CK_OBJECT_HANDLE objectHandle = CK_INVALID_HANDLE;
+  CK_ATTRIBUTE templ[] = {
+      {CKA_CLASS, &objectClass, sizeof(objectClass)},
+      {CKA_CERTIFICATE_TYPE, &certType, sizeof(certType)},
+      {CKA_ID, &objectId, sizeof(objectId)},
+      {CKA_TOKEN, &token, sizeof(token)},
+      {CKA_VALUE, pbData, cbData},
+  };
+
+  CK_RV rv = C_CreateObject(pContext->session, templ, ARRAYSIZE(templ), &objectHandle);
+  if (rv != CKR_OK) {
+    CMD_RETURN(map_pkcs11_write_error(rv), "C_CreateObject certificate failed");
+  }
+
+  return RefreshCardMetadata(pContext);
 }
 
 /*
@@ -226,24 +371,24 @@ DWORD WINAPI CardGetFileInfo(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryN
       CMD_RET_OK;
     }
     if (strncmp(pszFileName, szUSER_KEYEXCHANGE_CERT_PREFIX, 3) == 0) {
-      BYTE slotIndex = GetFileContainerIndex(pszFileName);
-      if (slotIndex >= pContext->canokey.slotCount) {
-        CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "File not found");
+      SLOT *slot = NULL;
+      DWORD ret = GetCertificateFileSlot(pContext, pszFileName, FALSE, &slot);
+      if (ret != SCARD_S_SUCCESS) {
+        return ret;
       }
-      SLOT *slot = &pContext->canokey.slots[slotIndex];
-      if ((!canokey_slot_can_decrypt(slot) && !canokey_slot_can_derive(slot)) || slot->certLen == 0) {
+      if (slot->certLen == 0) {
         CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Key exchange certificate not found");
       }
       pCardFileInfo->cbFileSize = (DWORD)slot->certLen;
       CMD_RET_OK;
     }
     if (strncmp(pszFileName, szUSER_SIGNATURE_CERT_PREFIX, 3) == 0) {
-      BYTE slotIndex = GetFileContainerIndex(pszFileName);
-      if (slotIndex >= pContext->canokey.slotCount) {
-        CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "File not found");
+      SLOT *slot = NULL;
+      DWORD ret = GetCertificateFileSlot(pContext, pszFileName, FALSE, &slot);
+      if (ret != SCARD_S_SUCCESS) {
+        return ret;
       }
-      SLOT *slot = &pContext->canokey.slots[slotIndex];
-      if (!canokey_slot_can_sign(slot) || slot->certLen == 0) {
+      if (slot->certLen == 0) {
         CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Signature certificate not found");
       }
       pCardFileInfo->cbFileSize = (DWORD)slot->certLen;
@@ -289,6 +434,9 @@ DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
   DWORD total = sizeof(szROOT_STORE_FILE) + sizeof(szCONTAINER_MAP_FILE);
   for (CK_ULONG i = 0; i < pContext->canokey.slotCount; i++) {
     SLOT *slot = &pContext->canokey.slots[i];
+    if (!canokey_slot_has_key(slot)) {
+      continue;
+    }
     if (slot->certLen == 0) {
       continue;
     }
@@ -300,6 +448,9 @@ DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
     }
   }
   total += 1;
+  if (total > INT_MAX) {
+    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "File list is too large");
+  }
 
   LPSTR files = (LPSTR)g_pfnCspAlloc(total);
   CMD_ENSURE_NONNULL(files, SCARD_E_NO_MEMORY);
@@ -307,24 +458,39 @@ DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
   DWORD remaining = total;
 
   int written = snprintf(cursor, remaining, "%s", szROOT_STORE_FILE);
+  if (written < 0 || written >= (int)remaining) {
+    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to format root store file name");
+  }
   cursor += written + 1;
   remaining -= (DWORD)written + 1;
   written = snprintf(cursor, remaining, "%s", szCONTAINER_MAP_FILE);
+  if (written < 0 || written >= (int)remaining) {
+    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to format container map file name");
+  }
   cursor += written + 1;
   remaining -= (DWORD)written + 1;
 
   for (CK_ULONG i = 0; i < pContext->canokey.slotCount; i++) {
     SLOT *slot = &pContext->canokey.slots[i];
+    if (!canokey_slot_has_key(slot)) {
+      continue;
+    }
     if (slot->certLen == 0) {
       continue;
     }
     if (canokey_slot_can_sign(slot)) {
       written = snprintf(cursor, remaining, "%s%lu", szUSER_SIGNATURE_CERT_PREFIX, (unsigned long)i);
+      if (written < 0 || written >= (int)remaining) {
+        CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to format signature cert file name");
+      }
       cursor += written + 1;
       remaining -= (DWORD)written + 1;
     }
     if (canokey_slot_can_decrypt(slot) || canokey_slot_can_derive(slot)) {
       written = snprintf(cursor, remaining, "%s%lu", szUSER_KEYEXCHANGE_CERT_PREFIX, (unsigned long)i);
+      if (written < 0 || written >= (int)remaining) {
+        CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to format key exchange cert file name");
+      }
       cursor += written + 1;
       remaining -= (DWORD)written + 1;
     }
@@ -373,9 +539,13 @@ static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, 
 
   // Setup SHA-1 digest
   CK_MECHANISM mech = {CKM_SHA_1, NULL, 0};
+  BOOL defaultAssigned = FALSE;
   for (CK_ULONG i = 0; i < pCanokey->slotCount; i++) {
     SLOT *slot = &pCanokey->slots[i];
     PCONTAINER_MAP_RECORD rec = &recs[i];
+    if (!canokey_slot_has_key(slot)) {
+      continue;
+    }
 
     // Compute SHA-1 digest of modulus
     CK_BYTE digest[20];
@@ -399,8 +569,9 @@ static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, 
 
     // Set flags
     rec->bFlags = CONTAINER_MAP_VALID_CONTAINER;
-    if (i == 0) {
+    if (!defaultAssigned) {
       rec->bFlags |= CONTAINER_MAP_DEFAULT_CONTAINER;
+      defaultAssigned = TRUE;
     }
     // Set signature key size bits
     if (canokey_slot_can_sign(slot)) {

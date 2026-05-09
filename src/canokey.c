@@ -30,16 +30,18 @@ static CK_BYTE capabilities_for_piv_slot(CK_BYTE pivId) {
 }
 
 CK_BBOOL canokey_slot_can_sign(const SLOT *slot) {
-  return slot != NULL && (slot->capabilities & CANOKEY_SLOT_CAP_SIGN) != 0;
+  return canokey_slot_has_key(slot) && (slot->capabilities & CANOKEY_SLOT_CAP_SIGN) != 0;
 }
 
 CK_BBOOL canokey_slot_can_decrypt(const SLOT *slot) {
-  return slot != NULL && (slot->capabilities & CANOKEY_SLOT_CAP_DECRYPT) != 0;
+  return canokey_slot_has_key(slot) && (slot->capabilities & CANOKEY_SLOT_CAP_DECRYPT) != 0;
 }
 
 CK_BBOOL canokey_slot_can_derive(const SLOT *slot) {
-  return slot != NULL && (slot->capabilities & CANOKEY_SLOT_CAP_DERIVE) != 0 && slot->keyType == CKK_EC;
+  return canokey_slot_has_key(slot) && (slot->capabilities & CANOKEY_SLOT_CAP_DERIVE) != 0 && slot->keyType == CKK_EC;
 }
+
+CK_BBOOL canokey_slot_has_key(const SLOT *slot) { return slot != NULL && slot->present; }
 
 static CK_BBOOL is_supported_ec_coordinate_len(CK_ULONG coordinate_len) {
   switch (coordinate_len) {
@@ -146,10 +148,15 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
 
   // Initialize the CANOKEY structure
   memset(pCanokey, 0, sizeof(CANOKEY));
-  pCanokey->slotCount = 0;
+  pCanokey->slotCount = MAX_SLOT_ID;
 
   for (CK_BYTE i = 1; i <= MAX_SLOT_ID; i++) {
     CMD_DEBUG("Reading slot %d", i);
+
+    SLOT *slot = &pCanokey->slots[i - 1];
+    slot->id = i;
+    C_CNK_ObjIdToPivTag(i, &slot->pivId);
+    slot->capabilities = capabilities_for_piv_slot(slot->pivId);
 
     CK_OBJECT_CLASS objectClass = CKO_PUBLIC_KEY;
     CK_ATTRIBUTE templates[] = {
@@ -166,19 +173,15 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
     if (rv != CKR_OK)
       CMD_RETURN(rv, "C_FindObjects failed");
     C_FindObjectsFinal(session);
+    if ((slot->capabilities & (CANOKEY_SLOT_CAP_SIGN | CANOKEY_SLOT_CAP_DECRYPT | CANOKEY_SLOT_CAP_DERIVE)) == 0) {
+      CMD_DEBUG("Slot %d: PIV 0x%02x has no minidriver capability, skipping", i, slot->pivId);
+      continue;
+    }
     if (ulObjectCount == 0) {
       CMD_DEBUG("No public key found for slot %d", i);
       continue;
     }
-
-    SLOT *slot = &pCanokey->slots[pCanokey->slotCount];
-    slot->id = i;
-    C_CNK_ObjIdToPivTag(i, &slot->pivId);
-    slot->capabilities = capabilities_for_piv_slot(slot->pivId);
-    if (!canokey_slot_can_sign(slot) && !canokey_slot_can_decrypt(slot) && !canokey_slot_can_derive(slot)) {
-      CMD_DEBUG("Slot %d: PIV 0x%02x has no minidriver capability, skipping", i, slot->pivId);
-      continue;
-    }
+    slot->present = CK_TRUE;
 
     CK_ATTRIBUTE attr[] = {
         {CKA_KEY_TYPE, &slot->keyType, sizeof(slot->keyType)},
@@ -215,9 +218,6 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
     C_FindObjectsFinal(session);
     if (ulObjectCount == 0) {
       CMD_DEBUG("No certificate found for slot %d", i);
-      if (!canokey_slot_can_decrypt(slot)) {
-        continue;
-      }
     } else {
       attr[0].type = CKA_VALUE;
       attr[0].pValue = slot->cert;
@@ -230,8 +230,6 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
 
     CMD_DEBUG("Slot %d: PIV 0x%02x, keyType = %d, certLen = %d, capabilities = 0x%02x", i, slot->pivId, slot->keyType,
               slot->certLen, slot->capabilities);
-
-    pCanokey->slotCount++;
   }
 
   return CKR_OK;

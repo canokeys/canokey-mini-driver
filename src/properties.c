@@ -77,7 +77,7 @@ static DWORD getCardSupportsWinX509Enrollment(PCARD_DATA pCardData, PBYTE pbData
   if (cbData < sizeof(BOOL)) {
     CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
   }
-  *(BOOL *)pbData = FALSE;
+  *(BOOL *)pbData = TRUE;
   CMD_RET_OK;
 }
 

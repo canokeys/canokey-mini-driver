@@ -20,8 +20,6 @@ X(CardUnblockPin) \
 X(CardChangeAuthenticator) \
 X(CardCreateDirectory) \
 X(CardDeleteDirectory) \
-X(CardCreateFile) \
-X(CardWriteFile) \
 X(CardDeleteFile) \
 X(CardSetContainerProperty) \
 X(CardGetChallengeEx) \
@@ -130,9 +128,9 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
   pCardData->pfnCardDeauthenticate = NULL;                     // No (opt, NULL means Base CSP may reset the card)
   pCardData->pfnCardCreateDirectory = NULL;                    // No
   pCardData->pfnCardDeleteDirectory = NULL;                    // No
-  pCardData->pfnCardCreateFile = NULL;                         // No
+  pCardData->pfnCardCreateFile = CardCreateFile;               // Yes
   pCardData->pfnCardReadFile = CardReadFile;                   // Yes
-  pCardData->pfnCardWriteFile = NULL;                          // No
+  pCardData->pfnCardWriteFile = CardWriteFile;                 // Yes
   pCardData->pfnCardDeleteFile = NULL;                         // No
   pCardData->pfnCardEnumFiles = CardEnumFiles;                 // Yes
   pCardData->pfnCardGetFileInfo = CardGetFileInfo;             // Yes

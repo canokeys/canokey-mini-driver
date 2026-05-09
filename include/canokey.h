@@ -24,6 +24,7 @@ typedef struct {
 } ECC_PUB_KEY;
 
 typedef struct {
+  CK_BBOOL present;
   CK_BYTE id;
   CK_BYTE pivId;
   CK_BYTE capabilities;
@@ -45,6 +46,7 @@ typedef struct {
 #pragma pack(pop)
 
 CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey);
+CK_BBOOL canokey_slot_has_key(const SLOT *slot);
 CK_BBOOL canokey_slot_can_sign(const SLOT *slot);
 CK_BBOOL canokey_slot_can_decrypt(const SLOT *slot);
 CK_BBOOL canokey_slot_can_derive(const SLOT *slot);

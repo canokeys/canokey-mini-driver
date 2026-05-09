@@ -2,12 +2,8 @@
 #include <wchar.h>
 
 #include "cardmod.h"
-#include "config.h"
 #include "logging.h"
 #include "minidriver.h"
-
-#define CMD_PIV_OBJECT_ID_MIN 1
-#define CMD_PIV_OBJECT_ID_MAX MAX_SLOT_ID
 
 typedef struct {
   PUBLICKEYSTRUC publickeystruc;
@@ -43,6 +39,11 @@ static DWORD map_pkcs11_container_error(CK_RV rv) {
 
 static CK_BYTE container_index_to_object_id(BYTE bContainerIndex) { return (CK_BYTE)(bContainerIndex + 1); }
 
+static BOOL container_index_is_piv_9d(BYTE bContainerIndex) {
+  CK_BYTE pivTag = 0;
+  return C_CNK_ObjIdToPivTag(container_index_to_object_id(bContainerIndex), &pivTag) == CKR_OK && pivTag == 0x9D;
+}
+
 static DWORD validate_create_container_request(BYTE bContainerIndex, DWORD dwFlags, DWORD dwKeySpec, DWORD dwKeySize,
                                                PBYTE pbKeyData) {
   if (bContainerIndex >= MAX_SLOT_ID) {
@@ -60,7 +61,14 @@ static DWORD validate_create_container_request(BYTE bContainerIndex, DWORD dwFla
 
   switch (dwKeySpec) {
   case AT_SIGNATURE:
+    if (dwKeySize != 2048 && dwKeySize != 3072 && dwKeySize != 4096) {
+      CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported RSA key size");
+    }
+    CMD_RET_OK;
   case AT_KEYEXCHANGE:
+    if (!container_index_is_piv_9d(bContainerIndex)) {
+      CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "RSA key exchange is only supported by PIV 9D");
+    }
     if (dwKeySize != 2048 && dwKeySize != 3072 && dwKeySize != 4096) {
       CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported RSA key size");
     }
@@ -111,7 +119,6 @@ static DWORD create_keypair(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWOR
   CK_BYTE objectId = container_index_to_object_id(bContainerIndex);
   CK_BBOOL token = CK_TRUE;
   CK_BBOOL privateKey = CK_TRUE;
-  CK_BBOOL alwaysAuthenticate = CK_FALSE;
   CK_OBJECT_HANDLE publicKey = CK_INVALID_HANDLE;
   CK_OBJECT_HANDLE privateKeyHandle = CK_INVALID_HANDLE;
   CK_MECHANISM mechanism = {0};
@@ -119,11 +126,6 @@ static DWORD create_keypair(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWOR
   CK_ULONG publicCount = 0;
   CK_ATTRIBUTE privateTemplate[6];
   CK_ULONG privateCount = 0;
-
-  const CMD_CONFIG *config = cmd_get_config();
-  if (config->new_key_touch_policy == CMD_NEW_KEY_TOUCH_POLICY_ALWAYS) {
-    alwaysAuthenticate = CK_TRUE;
-  }
 
   publicTemplate[publicCount++] = (CK_ATTRIBUTE){CKA_CLASS, &publicClass, sizeof(publicClass)};
   publicTemplate[publicCount++] = (CK_ATTRIBUTE){CKA_ID, &objectId, sizeof(objectId)};
@@ -133,8 +135,6 @@ static DWORD create_keypair(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWOR
   privateTemplate[privateCount++] = (CK_ATTRIBUTE){CKA_ID, &objectId, sizeof(objectId)};
   privateTemplate[privateCount++] = (CK_ATTRIBUTE){CKA_TOKEN, &token, sizeof(token)};
   privateTemplate[privateCount++] = (CK_ATTRIBUTE){CKA_PRIVATE, &privateKey, sizeof(privateKey)};
-  privateTemplate[privateCount++] =
-      (CK_ATTRIBUTE){CKA_ALWAYS_AUTHENTICATE, &alwaysAuthenticate, sizeof(alwaysAuthenticate)};
 
   if (dwKeySpec == AT_SIGNATURE || dwKeySpec == AT_KEYEXCHANGE) {
     CK_ULONG modulusBits = dwKeySize;
@@ -283,7 +283,8 @@ DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContaine
 
   CMD_GET_CTX(pCardData, pContext);
 
-  if (bContainerIndex >= pContext->canokey.slotCount) {
+  if (bContainerIndex >= pContext->canokey.slotCount ||
+      !canokey_slot_has_key(&pContext->canokey.slots[bContainerIndex])) {
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
   }
 
