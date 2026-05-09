@@ -122,9 +122,32 @@ By default it builds x64 Debug, runs the debug-install target, resets the
 development board through `COM3`, and then runs the targeted `certutil` command
 above.
 
-The current WIP minidriver may still make `certutil` exit with
-`NTE_BAD_KEYSET` after the useful CanoKey probes have completed. The wrapper
-treats that specific result as non-fatal unless `-StrictExitCode` is passed.
+`certutil -scinfo` is a broad Windows smoke test: it exercises certificate
+enumeration, public-key matching, PIN authentication, and private-key signing
+through both the legacy Base Smart Card CSP and the Smart Card KSP paths.
+
+## Signing Matrix Test
+
+For targeted signing coverage, use:
+
+```powershell
+.\scripts\sign-test.ps1
+```
+
+The signing test uses Windows CryptoAPI/CNG APIs directly instead of parsing
+`certutil` output. It discovers containers with
+`CryptGetProvParam(PP_ENUMCONTAINERS)` and `NCryptEnumKeys`, then verifies:
+
+- CAPI RSA/SHA1 PKCS#1 through Microsoft Base Smart Card Crypto Provider
+- CAPI RSA/SHA256 PKCS#1 through Microsoft Base Smart Card Crypto Provider
+- CNG RSA/SHA256 PKCS#1 through Microsoft Smart Card Key Storage Provider
+- CNG RSA/SHA256 PSS through Microsoft Smart Card Key Storage Provider
+- CNG ECDSA P-256/SHA256 through Microsoft Smart Card Key Storage Provider
+
+Like the smoke wrapper, it defaults to building x64 Debug, running the debug
+install target, resetting the board on `COM3`, and passing the local test PIN.
+Use `-SkipBuild -SkipInstall -SkipReset` for a fast rerun against the currently
+loaded DLL, and `-DiscoverOnly` to list containers without signing.
 
 ## INF Installation
 

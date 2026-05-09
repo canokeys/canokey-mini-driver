@@ -142,9 +142,6 @@ Start-Sleep -Seconds 6
 .\scripts\smoke-scinfo.ps1
 ```
 
-- The smoke wrapper treats the current WIP `certutil` trailing
-  `NTE_BAD_KEYSET` result as non-fatal. Pass `-StrictExitCode` when the exact
-  `certutil` process exit code matters.
 - Logs are written under `C:/canokey-minidriver/logs` by default. The most useful
   files are usually from `certutil.exe`, `CredentialUIBroker.exe`, and
   `svchost.exe`.
@@ -159,6 +156,16 @@ Start-Sleep -Seconds 6
   `CardAcquireContext`, reads `mscp/cmapfile` and `mscp/kscNN`, prompts through
   `CredentialUIBroker.exe`, then reaches `CardAuthenticateEx` and
   `CardSignData`.
+- For targeted signing coverage, use:
+
+```powershell
+.\scripts\sign-test.ps1
+```
+
+  It uses `CryptGetProvParam(PP_ENUMCONTAINERS)` and `NCryptEnumKeys` for API
+  discovery, then signs/verifies CAPI RSA/SHA1 PKCS#1, CAPI RSA/SHA256 PKCS#1,
+  CNG RSA/SHA256 PKCS#1, CNG RSA/SHA256 PSS, and CNG ECDSA P-256/SHA256. Use
+  `-SkipBuild -SkipInstall -SkipReset` for fast reruns.
 - The current development card has useful PIV material in:
 
 ```text

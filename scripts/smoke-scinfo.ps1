@@ -7,8 +7,7 @@ param(
     [switch]$SkipBuild,
     [switch]$SkipInstall,
     [switch]$SkipReset,
-    [switch]$NoPin,
-    [switch]$StrictExitCode
+    [switch]$NoPin
 )
 
 $ErrorActionPreference = "Stop"
@@ -67,11 +66,6 @@ try {
     & certutil @certutilArgs
     $exitCode = $LASTEXITCODE
     Write-Host "certutil exit code: $exitCode"
-
-    if (!$StrictExitCode -and $exitCode -eq -2146893802) {
-        Write-Warning "certutil returned NTE_BAD_KEYSET after probing the current WIP minidriver; treating it as non-fatal."
-        exit 0
-    }
 
     exit $exitCode
 } finally {
