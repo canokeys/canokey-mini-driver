@@ -15,6 +15,28 @@ void reverse_bytes(CK_BYTE *data, CK_ULONG len) {
   }
 }
 
+static CK_BYTE capabilities_for_piv_slot(CK_BYTE pivId) {
+  switch (pivId) {
+  case 0x9A:
+  case 0x9C:
+  case 0x9D:
+  case 0x9E:
+  case 0x82:
+  case 0x83:
+    return CANOKEY_SLOT_CAP_SIGN | (pivId == 0x9D ? CANOKEY_SLOT_CAP_DECRYPT : 0);
+  default:
+    return 0;
+  }
+}
+
+CK_BBOOL canokey_slot_can_sign(const SLOT *slot) {
+  return slot != NULL && (slot->capabilities & CANOKEY_SLOT_CAP_SIGN) != 0;
+}
+
+CK_BBOOL canokey_slot_can_decrypt(const SLOT *slot) {
+  return slot != NULL && (slot->capabilities & CANOKEY_SLOT_CAP_DECRYPT) != 0;
+}
+
 /**
  * Function: read_canokey
  *
@@ -61,6 +83,11 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
     SLOT *slot = &pCanokey->slots[pCanokey->slotCount];
     slot->id = i;
     C_CNK_ObjIdToPivTag(i, &slot->pivId);
+    slot->capabilities = capabilities_for_piv_slot(slot->pivId);
+    if (!canokey_slot_can_sign(slot) && !canokey_slot_can_decrypt(slot)) {
+      CMD_DEBUG("Slot %d: PIV 0x%02x has no minidriver capability, skipping", i, slot->pivId);
+      continue;
+    }
 
     CK_ATTRIBUTE attr[] = {
         {CKA_KEY_TYPE, &slot->keyType, sizeof(slot->keyType)},
@@ -107,7 +134,8 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
       CMD_RETURN(rv, "C_GetAttributeValue failed");
     slot->certLen = attr[0].ulValueLen;
 
-    CMD_DEBUG("Slot %d: keyType = %d, certLen = %d", i, slot->keyType, slot->certLen);
+    CMD_DEBUG("Slot %d: PIV 0x%02x, keyType = %d, certLen = %d, capabilities = 0x%02x", i, slot->pivId, slot->keyType,
+              slot->certLen, slot->capabilities);
 
     pCanokey->slotCount++;
   }

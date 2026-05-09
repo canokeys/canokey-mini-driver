@@ -173,6 +173,17 @@ ID 01 -> PIV 9A -> RSA-2048 key and certificate
 ID 02 -> PIV 9C -> EC P-256 key and certificate
 ```
 
+- The minidriver keeps explicit per-slot capabilities in `SLOT.capabilities`.
+  The intended YubiKey-style PIV policy is:
+
+```text
+9A, 9C, 9D, 9E, 82, 83 -> signature-capable
+9D                         -> also decryption/key-exchange-capable
+```
+
+- `scripts\sign-test.ps1` should exercise every discovered signing container.
+  CAPI coverage is for RSA containers; CNG coverage is split by RSA and ECDSA
+  algorithm group.
 - Do not hardcode the development PIN in minidriver code. Authentication must
   enter through `CardAuthenticateEx`; signing should use the authenticated
   PKCS#11 session state.

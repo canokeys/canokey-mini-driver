@@ -4,9 +4,9 @@ param(
     [string]$Arch = "x64",
     [string]$Config = "Debug",
     [string]$ComPort = "COM3",
-    [string]$BaseCspContainer,
-    [string]$RsaKspContainer,
-    [string]$EccKspContainer,
+    [string[]]$BaseCspContainer,
+    [string[]]$RsaKspContainer,
+    [string[]]$EccKspContainer,
     [switch]$RunScinfo,
     [switch]$SkipBuild,
     [switch]$SkipInstall,
@@ -526,20 +526,37 @@ try {
                 Flags = $_.Flags
             }
         })
+    $rsaKspNames = @($kspInfo |
+        Where-Object { $_.AlgorithmGroup -match "RSA" } |
+        Select-Object -ExpandProperty Container -Unique)
 
-    if (!$BaseCspContainer) {
-        $BaseCspContainer = $capiContainers | Select-Object -First 1
+    $selectedBaseCspContainers = @()
+    if ($BaseCspContainer) {
+        $selectedBaseCspContainers = @($BaseCspContainer)
+    } elseif ($rsaKspNames.Count -gt 0) {
+        $selectedBaseCspContainers = @($capiContainers |
+            Where-Object { $rsaKspNames -contains $_ } |
+            Select-Object -Unique)
+        if ($selectedBaseCspContainers.Count -eq 0) {
+            $selectedBaseCspContainers = @($capiContainers | Select-Object -Unique)
+        }
+    } else {
+        $selectedBaseCspContainers = @($capiContainers | Select-Object -Unique)
     }
 
-    if (!$RsaKspContainer) {
-        $RsaKspContainer = ($kspInfo |
-            Where-Object { $_.AlgorithmGroup -match "RSA" } |
-            Select-Object -First 1 -ExpandProperty Container)
+    $selectedRsaKspContainers = @()
+    if ($RsaKspContainer) {
+        $selectedRsaKspContainers = @($RsaKspContainer)
+    } else {
+        $selectedRsaKspContainers = @($rsaKspNames)
     }
-    if (!$EccKspContainer) {
-        $EccKspContainer = ($kspInfo |
+    $selectedEccKspContainers = @()
+    if ($EccKspContainer) {
+        $selectedEccKspContainers = @($EccKspContainer)
+    } else {
+        $selectedEccKspContainers = @($kspInfo |
             Where-Object { $_.AlgorithmGroup -match "ECDSA" } |
-            Select-Object -First 1 -ExpandProperty Container)
+            Select-Object -ExpandProperty Container -Unique)
     }
 
     Write-Host ""
@@ -560,40 +577,46 @@ try {
 
     Write-Host ""
     [pscustomobject]@{
-        SelectedBaseCspContainer = $BaseCspContainer
-        SelectedRsaKspContainer = $RsaKspContainer
-        SelectedEccKspContainer = $EccKspContainer
+        SelectedBaseCspContainers = ($selectedBaseCspContainers -join ", ")
+        SelectedRsaKspContainers = ($selectedRsaKspContainers -join ", ")
+        SelectedEccKspContainers = ($selectedEccKspContainers -join ", ")
     } | Format-List
 
     if ($DiscoverOnly) {
         return
     }
 
-    if (!$BaseCspContainer) {
+    if ($selectedBaseCspContainers.Count -eq 0) {
         throw "No Base Smart Card CSP RSA container was discovered."
     }
-    if (!$RsaKspContainer) {
+    if ($selectedRsaKspContainers.Count -eq 0) {
         throw "No Smart Card KSP RSA container was discovered."
     }
-    if (!$EccKspContainer) {
+    if ($selectedEccKspContainers.Count -eq 0) {
         throw "No Smart Card KSP ECDSA container was discovered."
     }
 
     $results = @()
-    $results += Invoke-SignCase "CAPI RSA/SHA1 PKCS1" {
-        [CanokeyMinidriver.SignTestNative]::CapiSign($BaseCspContainer, $ReaderName, $pinArg, "SHA1")
+    foreach ($container in $selectedBaseCspContainers) {
+        $results += Invoke-SignCase "CAPI RSA/SHA1 PKCS1 [$container]" {
+            [CanokeyMinidriver.SignTestNative]::CapiSign($container, $ReaderName, $pinArg, "SHA1")
+        }
+        $results += Invoke-SignCase "CAPI RSA/SHA256 PKCS1 [$container]" {
+            [CanokeyMinidriver.SignTestNative]::CapiSign($container, $ReaderName, $pinArg, "SHA256")
+        }
     }
-    $results += Invoke-SignCase "CAPI RSA/SHA256 PKCS1" {
-        [CanokeyMinidriver.SignTestNative]::CapiSign($BaseCspContainer, $ReaderName, $pinArg, "SHA256")
+    foreach ($container in $selectedRsaKspContainers) {
+        $results += Invoke-SignCase "CNG RSA/SHA256 PKCS1 [$container]" {
+            [CanokeyMinidriver.SignTestNative]::CngSign($container, $pinArg, "RSA_PKCS1_SHA256")
+        }
+        $results += Invoke-SignCase "CNG RSA/SHA256 PSS [$container]" {
+            [CanokeyMinidriver.SignTestNative]::CngSign($container, $pinArg, "RSA_PSS_SHA256")
+        }
     }
-    $results += Invoke-SignCase "CNG RSA/SHA256 PKCS1" {
-        [CanokeyMinidriver.SignTestNative]::CngSign($RsaKspContainer, $pinArg, "RSA_PKCS1_SHA256")
-    }
-    $results += Invoke-SignCase "CNG RSA/SHA256 PSS" {
-        [CanokeyMinidriver.SignTestNative]::CngSign($RsaKspContainer, $pinArg, "RSA_PSS_SHA256")
-    }
-    $results += Invoke-SignCase "CNG ECDSA P-256/SHA256" {
-        [CanokeyMinidriver.SignTestNative]::CngSign($EccKspContainer, $pinArg, "ECDSA_SHA256")
+    foreach ($container in $selectedEccKspContainers) {
+        $results += Invoke-SignCase "CNG ECDSA P-256/SHA256 [$container]" {
+            [CanokeyMinidriver.SignTestNative]::CngSign($container, $pinArg, "ECDSA_SHA256")
+        }
     }
 
     Write-Host ""

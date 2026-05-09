@@ -40,6 +40,9 @@ DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContaine
   pContainerInfo->pbKeyExPublicKey = NULL;
 
   SLOT *slot = &pContext->canokey.slots[bContainerIndex];
+  if (!canokey_slot_can_sign(slot)) {
+    CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Container has no signature key");
+  }
 
   if (slot->keyType == CKK_RSA) {
     // Create a properly formatted RSA public key structure

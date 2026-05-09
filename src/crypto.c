@@ -53,6 +53,9 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
 
   SLOT *slot = &pContext->canokey.slots[pCardSigningInfo->bContainerIndex];
+  if (!canokey_slot_can_sign(slot)) {
+    CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Container has no signature key");
+  }
 
   if (pCardSigningInfo->dwSigningFlags & CARD_BUFFER_SIZE_ONLY) {
     pCardSigningInfo->cbSignedData = slot->keyType == CKK_RSA ? slot->rsa.modulusBits / 8 : slot->ecc.cbPrivate * 2;
