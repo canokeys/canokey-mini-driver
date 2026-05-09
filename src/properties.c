@@ -25,16 +25,16 @@ static DWORD getCardCapabilities(PCARD_DATA pCardData, PBYTE pbData, DWORD cbDat
 }
 
 static DWORD getCardKeysizes(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen, DWORD dwFlags) {
-  // TODO: check dwFlags
+  (void)pCardData;
+
   if (cbData < sizeof(CARD_KEY_SIZES)) {
     CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
   }
   PCARD_KEY_SIZES p = (PCARD_KEY_SIZES)pbData;
-  p->dwVersion = CARD_KEY_SIZES_CURRENT_VERSION;
-  p->dwMinimumBitlen = 2048;
-  p->dwDefaultBitlen = 2048;
-  p->dwMaximumBitlen = 4096;
-  p->dwIncrementalBitlen = 1024;
+  DWORD ret = FillCardKeySizes(dwFlags, p);
+  if (ret != SCARD_S_SUCCESS) {
+    CMD_RETURN(ret, "Unsupported key size property request");
+  }
   *pdwDataLen = sizeof(CARD_KEY_SIZES);
   CMD_RET_OK;
 }
@@ -89,7 +89,7 @@ static DWORD getCardPinInfo(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PD
   }
   p->PinType = AlphaNumericPinType;
   p->PinPurpose = PrimaryCardPin;
-  p->dwChangePermission = ROLE_ADMIN; // TODO: check
+  p->dwChangePermission = ROLE_ADMIN;  // TODO: check
   p->dwUnblockPermission = ROLE_ADMIN; // TODO: check
   p->PinCachePolicy.dwVersion = PIN_CACHE_POLICY_CURRENT_VERSION;
   p->PinCachePolicy.PinCachePolicyType = PinCacheNormal; // TODO: DO NOT cache in pkcs11 layer

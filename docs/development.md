@@ -143,6 +143,8 @@ The signing test uses Windows CryptoAPI/CNG APIs directly instead of parsing
 - CNG RSA/SHA256 PKCS#1 through Microsoft Smart Card Key Storage Provider
 - CNG RSA/SHA256 PSS through Microsoft Smart Card Key Storage Provider
 - CNG ECDSA P-256/SHA256 through Microsoft Smart Card Key Storage Provider
+- CNG ECDH P-256 raw-secret derivation through Microsoft Smart Card Key Storage
+  Provider, checked against a software-generated peer key
 - CNG RSA PKCS#1 decrypt for discovered key-exchange RSA containers
 - CNG RSA OAEP-SHA256 decrypt for discovered key-exchange RSA containers
 
@@ -152,10 +154,20 @@ Use `-SkipBuild -SkipInstall -SkipReset` for a fast rerun against the currently
 loaded DLL, and `-DiscoverOnly` to list containers without signing.
 
 For the current development card, the full matrix passes with 9A RSA-2048
-signing, 9C EC P-256 signing, and 9D RSA-2048 signing plus key exchange. The
-script opens CNG signature keys with `LegacyKeySpec = AT_SIGNATURE` and
-decryption keys with `LegacyKeySpec = AT_KEYEXCHANGE`; using `0` for a container
-that appears as both key specs can fail with `NTE_BAD_KEYSET`.
+signing, 9C EC P-256 signing plus ECDH raw-secret derivation, and 9D RSA-2048
+signing plus key exchange. The script opens CNG RSA signature keys with
+`LegacyKeySpec = AT_SIGNATURE`, RSA decryption keys with
+`LegacyKeySpec = AT_KEYEXCHANGE`, ECDSA keys with the matching `AT_ECDSA_*`
+spec, and ECDH keys with the matching `AT_ECDHE_*` spec; using `0` for a
+container that appears as multiple key specs can fail or open the wrong
+algorithm group.
+
+ECDH currently supports only raw secret derivation (`BCRYPT_KDF_RAW_SECRET`,
+which maps to PKCS#11 `CKD_NULL`). `CardDeriveKey` does not yet implement
+higher-level KDF parameter lists. The `pfnCspGetDHAgreement` member in
+`CARD_DATA` is a callback from the CSP/KSP to the minidriver; keep it as a
+caller-owned callback, and only call it later if supporting KDF buffers such as
+`KDF_SECRET_HANDLE` / `KDF_NCRYPT_SECRET_HANDLE`.
 
 ## INF Installation
 

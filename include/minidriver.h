@@ -34,11 +34,27 @@ extern PFN_CSP_UNPAD_DATA g_pfnCspUnpadData;
     }                                                                                                                  \
   } while (0);
 
+#define CMD_MAX_DH_AGREEMENTS 8
+#define CMD_MAX_DH_SECRET_LEN 66
+#define CMD_MAKE_OBJECT_HANDLE(SLOT_ID, OBJECT_CLASS, OBJECT_ID)                                                       \
+  ((((CK_OBJECT_HANDLE)(SLOT_ID)) << 16) | (((CK_OBJECT_HANDLE)(OBJECT_CLASS)) << 8) | ((CK_OBJECT_HANDLE)(OBJECT_ID)))
+
+typedef struct {
+  BOOL active;
+  BYTE secret[CMD_MAX_DH_SECRET_LEN];
+  DWORD secretLen;
+  BYTE containerIndex;
+  DWORD keySpec;
+} CMD_DH_AGREEMENT;
+
 typedef struct {
   CK_SESSION_HANDLE session;
   CANOKEY canokey;
+  CMD_DH_AGREEMENT dhAgreements[CMD_MAX_DH_AGREEMENTS];
 } CMD_CONTEXT;
 
 typedef CMD_CONTEXT *CMD_CONTEXT_PTR;
+
+DWORD FillCardKeySizes(DWORD dwKeySpec, PCARD_KEY_SIZES pKeySizes);
 
 #endif // MINIDRIVER_H

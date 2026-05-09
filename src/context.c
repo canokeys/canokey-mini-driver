@@ -26,9 +26,6 @@ X(CardCreateFile) \
 X(CardWriteFile) \
 X(CardDeleteFile) \
 X(CardSetContainerProperty) \
-X(CardConstructDHAgreement) \
-X(CardDeriveKey) \
-X(CardDestroyDHAgreement) \
 X(CardGetChallengeEx) \
 X(CardChangeAuthenticatorEx) \
 X(MDImportSessionKey) \
@@ -145,13 +142,13 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
   pCardData->pfnCardQueryFreeSpace = CardQueryFreeSpace;       // Yes
   pCardData->pfnCardQueryKeySizes = CardQueryKeySizes;         // Yes
 
-  pCardData->pfnCardSignData = CardSignData;     // Yes
-  pCardData->pfnCardRSADecrypt = CardRSADecrypt; // Yes (opt)
-  pCardData->pfnCardConstructDHAgreement = NULL; // Yes (opt)
+  pCardData->pfnCardSignData = CardSignData;                         // Yes
+  pCardData->pfnCardRSADecrypt = CardRSADecrypt;                     // Yes (opt)
+  pCardData->pfnCardConstructDHAgreement = CardConstructDHAgreement; // Yes (opt)
 
   // New functions in version five.
-  pCardData->pfnCardDeriveKey = NULL;          // Yes (opt)
-  pCardData->pfnCardDestroyDHAgreement = NULL; // Yes (opt)
+  pCardData->pfnCardDeriveKey = CardDeriveKey;                   // Yes (opt)
+  pCardData->pfnCardDestroyDHAgreement = CardDestroyDHAgreement; // Yes (opt)
   // pCardData->pfnCspGetDHAgreement;
 
   // version 6 additions below here
@@ -249,6 +246,7 @@ DWORD CardDeleteContext(__inout PCARD_DATA pCardData) {
     if (rv != CKR_OK && rv != CKR_SESSION_HANDLE_INVALID && rv != CKR_CRYPTOKI_NOT_INITIALIZED) {
       CMD_WARN("C_CloseSession failed: 0x%lx", rv);
     }
+    SecureZeroMemory(context->dhAgreements, sizeof(context->dhAgreements));
     pCardData->pfnCspFree(context);
     pCardData->pvVendorSpecific = NULL;
 

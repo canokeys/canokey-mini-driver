@@ -77,7 +77,7 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
       if (slotIndex >= pContext->canokey.slotCount)
         CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "File not found");
       SLOT *slot = &pContext->canokey.slots[slotIndex];
-      if (!canokey_slot_can_decrypt(slot)) {
+      if (!canokey_slot_can_decrypt(slot) && !canokey_slot_can_derive(slot)) {
         CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Key exchange certificate not found");
       }
       if (slot->certLen == 0) {
@@ -206,6 +206,8 @@ static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, 
     }
     if (canokey_slot_can_decrypt(slot) && slot->keyType == CKK_RSA) {
       rec->wKeyExchangeKeySizeBits = (WORD)slot->rsa.modulusBits;
+    } else if (canokey_slot_can_derive(slot) && slot->keyType == CKK_EC) {
+      rec->wKeyExchangeKeySizeBits = (WORD)(slot->ecc.cbPrivate * 8);
     }
     CMD_DEBUG("Container %d: %ls, flags: %d, wSigKeySizeBits: %d, wKeyExchangeKeySizeBits: %d", i, rec->wszGuid,
               rec->bFlags, rec->wSigKeySizeBits, rec->wKeyExchangeKeySizeBits);

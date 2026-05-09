@@ -34,6 +34,37 @@ static DWORD AllocRsaPublicKeyBlob(const SLOT *slot, ALG_ID keyAlg, PBYTE *ppbKe
   CMD_RET_OK;
 }
 
+static DWORD AllocEcPublicKeyBlob(const SLOT *slot, ULONG magic, PBYTE *ppbKey, PDWORD pcbKey) {
+  DWORD totalSize = sizeof(BCRYPT_ECCKEY_BLOB) + (DWORD)slot->ecc.cbPrivate * 2;
+
+  *ppbKey = (PBYTE)g_pfnCspAlloc(totalSize);
+  CMD_ENSURE_NONNULL(*ppbKey, SCARD_E_NO_MEMORY);
+
+  BCRYPT_ECCKEY_BLOB *keyHeader = (BCRYPT_ECCKEY_BLOB *)*ppbKey;
+  keyHeader->dwMagic = magic;
+  keyHeader->cbKey = (ULONG)slot->ecc.cbPrivate;
+  memcpy(*ppbKey + sizeof(BCRYPT_ECCKEY_BLOB), slot->ecc.x, slot->ecc.cbPrivate);
+  memcpy(*ppbKey + sizeof(BCRYPT_ECCKEY_BLOB) + slot->ecc.cbPrivate, slot->ecc.y, slot->ecc.cbPrivate);
+  *pcbKey = totalSize;
+
+  CMD_RET_OK;
+}
+
+static DWORD EcPublicKeyMagic(const SLOT *slot, BOOL derive, ULONG *pMagic) {
+  CMD_ENSURE_NONNULL(pMagic, SCARD_E_INVALID_PARAMETER);
+
+  switch (slot->ecc.cbPrivate) {
+  case 32:
+    *pMagic = derive ? BCRYPT_ECDH_PUBLIC_P256_MAGIC : BCRYPT_ECDSA_PUBLIC_P256_MAGIC;
+    CMD_RET_OK;
+  case 48:
+    *pMagic = derive ? BCRYPT_ECDH_PUBLIC_P384_MAGIC : BCRYPT_ECDSA_PUBLIC_P384_MAGIC;
+    CMD_RET_OK;
+  default:
+    CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Unsupported EC key size");
+  }
+}
+
 /*
  * Function: CardGetContainerInfo
  *
@@ -64,7 +95,7 @@ DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContaine
   pContainerInfo->pbKeyExPublicKey = NULL;
 
   SLOT *slot = &pContext->canokey.slots[bContainerIndex];
-  if (!canokey_slot_can_sign(slot) && !canokey_slot_can_decrypt(slot)) {
+  if (!canokey_slot_can_sign(slot) && !canokey_slot_can_decrypt(slot) && !canokey_slot_can_derive(slot)) {
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Container has no usable key");
   }
 
@@ -93,37 +124,42 @@ DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContaine
       CMD_PRINT_HEX(pContainerInfo->pbKeyExPublicKey, pContainerInfo->cbKeyExPublicKey);
     }
   } else if (slot->keyType == CKK_EC) {
-    if (!canokey_slot_can_sign(slot)) {
-      CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "EC container has no signature key");
+    if (!canokey_slot_can_sign(slot) && !canokey_slot_can_derive(slot)) {
+      CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "EC container has no usable key");
     }
 
-    DWORD totalSize = sizeof(BCRYPT_ECCKEY_BLOB) + slot->ecc.cbPrivate * 2;
-
-    // Allocate memory for the complete key structure
-    pContainerInfo->cbSigPublicKey = totalSize;
-    pContainerInfo->pbSigPublicKey = (PBYTE)g_pfnCspAlloc(totalSize);
-    CMD_ENSURE_NONNULL(pContainerInfo->pbSigPublicKey, SCARD_E_NO_MEMORY);
-
-    // Initialize the key header
-    BCRYPT_ECCKEY_BLOB *keyHeader = (BCRYPT_ECCKEY_BLOB *)pContainerInfo->pbSigPublicKey;
-    switch (slot->ecc.cbPrivate) {
-    case 32:
-      keyHeader->dwMagic = BCRYPT_ECDSA_PUBLIC_P256_MAGIC;
-      break;
-    case 48:
-      keyHeader->dwMagic = BCRYPT_ECDSA_PUBLIC_P384_MAGIC;
-      break;
-    default:
-      CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
+    if (canokey_slot_can_sign(slot)) {
+      ULONG magic;
+      DWORD ret = EcPublicKeyMagic(slot, FALSE, &magic);
+      if (ret != SCARD_S_SUCCESS) {
+        CMD_RETURN(ret, "Failed to select signature EC public key magic");
+      }
+      ret = AllocEcPublicKeyBlob(slot, magic, &pContainerInfo->pbSigPublicKey, &pContainerInfo->cbSigPublicKey);
+      if (ret != SCARD_S_SUCCESS) {
+        CMD_RETURN(ret, "Failed to allocate signature EC public key blob");
+      }
     }
-    keyHeader->cbKey = slot->ecc.cbPrivate;
-    memcpy(pContainerInfo->pbSigPublicKey + sizeof(BCRYPT_ECCKEY_BLOB), slot->ecc.x, slot->ecc.cbPrivate);
-    memcpy(pContainerInfo->pbSigPublicKey + sizeof(BCRYPT_ECCKEY_BLOB) + slot->ecc.cbPrivate, slot->ecc.y,
-           slot->ecc.cbPrivate);
+
+    if (canokey_slot_can_derive(slot)) {
+      ULONG magic;
+      DWORD ret = EcPublicKeyMagic(slot, TRUE, &magic);
+      if (ret != SCARD_S_SUCCESS) {
+        CMD_RETURN(ret, "Failed to select ECDH public key magic");
+      }
+      ret = AllocEcPublicKeyBlob(slot, magic, &pContainerInfo->pbKeyExPublicKey, &pContainerInfo->cbKeyExPublicKey);
+      if (ret != SCARD_S_SUCCESS) {
+        CMD_RETURN(ret, "Failed to allocate ECDH public key blob");
+      }
+    }
 
     CMD_DEBUG("pContainerInfo:");
     CMD_PRINT_HEX(pContainerInfo, sizeof(CONTAINER_INFO));
-    CMD_PRINT_HEX(pContainerInfo->pbSigPublicKey, totalSize);
+    if (pContainerInfo->pbSigPublicKey != NULL) {
+      CMD_PRINT_HEX(pContainerInfo->pbSigPublicKey, pContainerInfo->cbSigPublicKey);
+    }
+    if (pContainerInfo->pbKeyExPublicKey != NULL) {
+      CMD_PRINT_HEX(pContainerInfo->pbKeyExPublicKey, pContainerInfo->cbKeyExPublicKey);
+    }
   }
 
   CMD_RET_OK;

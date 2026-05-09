@@ -166,8 +166,9 @@ Start-Sleep -Seconds 6
   discovery, then signs/verifies CAPI RSA/SHA1 PKCS#1, CAPI RSA/SHA256 PKCS#1,
   CNG RSA/SHA256 PKCS#1, CNG RSA/SHA256 PSS, and CNG ECDSA P-256/SHA256. When
   a key-exchange RSA KSP container is discovered, the script also tests CNG RSA
-  PKCS#1 and OAEP-SHA256 decrypt. Use `-SkipBuild -SkipInstall -SkipReset` for
-  fast reruns.
+  PKCS#1 and OAEP-SHA256 decrypt. When an ECDH KSP key is discovered, it tests
+  `BCRYPT_KDF_RAW_SECRET` against a software-generated peer key. Use
+  `-SkipBuild -SkipInstall -SkipReset` for fast reruns.
 - The current development card has useful PIV material in:
 
 ```text
@@ -181,7 +182,8 @@ ID 03 -> PIV 9D -> RSA-2048 key and certificate
 
 ```text
 9A, 9C, 9D, 9E, 82, 83 -> signature-capable
-9D                         -> also decryption/key-exchange-capable
+EC keys in those slots       -> also ECDH-capable
+9D RSA keys                  -> also decryption/key-exchange-capable
 ```
 
 - `scripts\sign-test.ps1` should exercise every discovered signing container.
@@ -199,6 +201,15 @@ ID 03 -> PIV 9D -> RSA-2048 key and certificate
 - The PKCS#11 dependency is linked statically into the minidriver target.
 - `external/canokey-pkcs11` commit `1c0bb0d` adds the `C_DecryptInit` /
   `C_Decrypt` RSA path used by `CardRSADecrypt`.
+- `external/canokey-pkcs11` commit `ff21a84` adds `C_DeriveKey` for PIV ECDH
+  with `CKM_ECDH1_DERIVE` and `CKD_NULL`. The minidriver maps this to CNG
+  `BCRYPT_KDF_RAW_SECRET`; higher-level KDF parameter lists are intentionally
+  unsupported for now.
+- `pfnCspGetDHAgreement` is a CSP/KSP callback supplied in `CARD_DATA`, not a
+  minidriver entry point to implement. Do not overwrite it in
+  `CardAcquireContext`. If future `CardDeriveKey` support accepts
+  `KDF_SECRET_HANDLE` / `KDF_NCRYPT_SECRET_HANDLE` buffers, call this callback
+  to translate those handles into on-card agreement indexes.
 - `CMD_DEBUG_INSTALL_DIR` and `CMD_LOG_DIR` are CMake cache variables and are
   compiled into the DLL as preprocessor definitions.
 - The minidriver uses CanoKey PKCS#11 managed mode; initialize managed mode
@@ -211,3 +222,6 @@ ID 03 -> PIV 9D -> RSA-2048 key and certificate
   order. Reverse ciphertext before calling PKCS#11 and reverse the plaintext
   before returning to Windows, including PKCS#1/OAEP paths where PKCS#11 has
   already removed padding.
+- `CardDeriveKey` returns ECDH raw secret bytes to Windows in little-endian
+  order. PKCS#11 derives the X coordinate in big-endian form, so reverse the
+  returned raw secret before handing it back to CNG.

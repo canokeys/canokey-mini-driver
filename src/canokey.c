@@ -23,7 +23,7 @@ static CK_BYTE capabilities_for_piv_slot(CK_BYTE pivId) {
   case 0x9E:
   case 0x82:
   case 0x83:
-    return CANOKEY_SLOT_CAP_SIGN | (pivId == 0x9D ? CANOKEY_SLOT_CAP_DECRYPT : 0);
+    return CANOKEY_SLOT_CAP_SIGN | CANOKEY_SLOT_CAP_DERIVE | (pivId == 0x9D ? CANOKEY_SLOT_CAP_DECRYPT : 0);
   default:
     return 0;
   }
@@ -35,6 +35,10 @@ CK_BBOOL canokey_slot_can_sign(const SLOT *slot) {
 
 CK_BBOOL canokey_slot_can_decrypt(const SLOT *slot) {
   return slot != NULL && (slot->capabilities & CANOKEY_SLOT_CAP_DECRYPT) != 0;
+}
+
+CK_BBOOL canokey_slot_can_derive(const SLOT *slot) {
+  return slot != NULL && (slot->capabilities & CANOKEY_SLOT_CAP_DERIVE) != 0 && slot->keyType == CKK_EC;
 }
 
 /**
@@ -84,7 +88,7 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
     slot->id = i;
     C_CNK_ObjIdToPivTag(i, &slot->pivId);
     slot->capabilities = capabilities_for_piv_slot(slot->pivId);
-    if (!canokey_slot_can_sign(slot) && !canokey_slot_can_decrypt(slot)) {
+    if (!canokey_slot_can_sign(slot) && !canokey_slot_can_decrypt(slot) && !canokey_slot_can_derive(slot)) {
       CMD_DEBUG("Slot %d: PIV 0x%02x has no minidriver capability, skipping", i, slot->pivId);
       continue;
     }

@@ -6,9 +6,9 @@ Windows smart card minidriver for CanoKey, built on top of
 **Status:** this project is still WIP, but the development loop is usable.
 Windows can load the DLL through a Calais smart card registry mapping without
 installing the generated INF. Current local testing can enumerate the CanoKey
-PIV certificates and run CSP/KSP signing and RSA decryption tests against the
-development card. Release packaging, INF installation, and broader PIV slot
-coverage are still in progress.
+PIV certificates and run CSP/KSP signing, RSA decryption, and ECDH raw-secret
+derivation tests against the development card. Release packaging, INF
+installation, and broader PIV slot coverage are still in progress.
 
 ## Current State
 
@@ -19,11 +19,14 @@ coverage are still in progress.
 - `scripts\sign-test.ps1` exercises the minidriver through Windows CAPI/CNG
   APIs instead of parsing command output.
 - The current development card has been tested with 9A RSA-2048 signing, 9C
-  EC P-256 signing, and 9D RSA-2048 signing plus key exchange/decryption.
+  EC P-256 signing plus ECDH raw-secret derivation, and 9D RSA-2048 signing
+  plus key exchange/decryption.
 
 Known gaps:
 
 - Full YubiKey-style PIV slot mapping still needs broader card coverage.
+- ECDH currently supports raw secret derivation only (`BCRYPT_KDF_RAW_SECRET` /
+  PKCS#11 `CKD_NULL`). Higher-level KDF parameter lists are not implemented yet.
 - INF installation is kept for later release validation.
 - The test matrix depends on which keys and certificates are provisioned on the
   attached CanoKey.
@@ -83,8 +86,9 @@ Useful local checks:
 
 `smoke-scinfo.ps1` drives `certutil -silent -pin ... -scinfo` against the
 CanoKey reader. `sign-test.ps1` uses Windows cryptographic APIs directly to
-enumerate containers and test signing. If a decrypt-capable RSA KSP container
-is present, it also runs CNG PKCS#1 and OAEP-SHA256 decrypt checks.
+enumerate containers and test signing. If matching keys are present, it also
+runs CNG PKCS#1/OAEP-SHA256 RSA decrypt checks and an ECDH raw-secret check
+against a software-generated peer key.
 
 INF installation is still useful for release-style validation and final
 packaging. For that flow, enable test signing mode if needed, install the

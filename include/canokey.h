@@ -7,6 +7,7 @@
 #define MAX_SLOT_ID 6
 #define CANOKEY_SLOT_CAP_SIGN 0x01
 #define CANOKEY_SLOT_CAP_DECRYPT 0x02
+#define CANOKEY_SLOT_CAP_DERIVE 0x04
 
 #pragma pack(push, 1)
 typedef struct {
@@ -46,6 +47,7 @@ typedef struct {
 CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey);
 CK_BBOOL canokey_slot_can_sign(const SLOT *slot);
 CK_BBOOL canokey_slot_can_decrypt(const SLOT *slot);
+CK_BBOOL canokey_slot_can_derive(const SLOT *slot);
 void reverse_bytes(CK_BYTE *data, CK_ULONG len);
 
 #endif // CANOKEY_H

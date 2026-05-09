@@ -53,6 +53,80 @@ static DWORD map_oaep_hash_alg(LPCWSTR pszAlgId, CK_MECHANISM_TYPE *pHashAlg, CK
   CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Unsupported OAEP hash algorithm");
 }
 
+static DWORD ec_key_spec_for_slot(const SLOT *slot, DWORD *pKeySpec) {
+  CMD_ENSURE_NONNULL(slot, SCARD_E_INVALID_PARAMETER);
+  CMD_ENSURE_NONNULL(pKeySpec, SCARD_E_INVALID_PARAMETER);
+
+  switch (slot->ecc.cbPrivate) {
+  case 32:
+    *pKeySpec = AT_ECDHE_P256;
+    CMD_RET_OK;
+  case 48:
+    *pKeySpec = AT_ECDHE_P384;
+    CMD_RET_OK;
+  case 66:
+    *pKeySpec = AT_ECDHE_P521;
+    CMD_RET_OK;
+  default:
+    CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Unsupported EC key size");
+  }
+}
+
+static DWORD expected_ecdh_public_magic(const SLOT *slot, ULONG *pMagic) {
+  CMD_ENSURE_NONNULL(slot, SCARD_E_INVALID_PARAMETER);
+  CMD_ENSURE_NONNULL(pMagic, SCARD_E_INVALID_PARAMETER);
+
+  switch (slot->ecc.cbPrivate) {
+  case 32:
+    *pMagic = BCRYPT_ECDH_PUBLIC_P256_MAGIC;
+    CMD_RET_OK;
+  case 48:
+    *pMagic = BCRYPT_ECDH_PUBLIC_P384_MAGIC;
+    CMD_RET_OK;
+  default:
+    CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Unsupported ECDH public key size");
+  }
+}
+
+static void clear_dh_agreement(CMD_DH_AGREEMENT *agreement) {
+  if (agreement == NULL) {
+    return;
+  }
+  SecureZeroMemory(agreement->secret, sizeof(agreement->secret));
+  memset(agreement, 0, sizeof(*agreement));
+}
+
+static DWORD find_free_dh_agreement(CMD_CONTEXT_PTR pContext, BYTE *pAgreementIndex) {
+  CMD_ENSURE_NONNULL(pContext, SCARD_E_INVALID_PARAMETER);
+  CMD_ENSURE_NONNULL(pAgreementIndex, SCARD_E_INVALID_PARAMETER);
+
+  for (BYTE i = 0; i < CMD_MAX_DH_AGREEMENTS; i++) {
+    if (!pContext->dhAgreements[i].active) {
+      *pAgreementIndex = (BYTE)(i + 1);
+      CMD_RET_OK;
+    }
+  }
+
+  CMD_RETURN(SCARD_E_NO_MEMORY, "No free DH agreement slot");
+}
+
+static DWORD get_dh_agreement(CMD_CONTEXT_PTR pContext, BYTE agreementIndex, CMD_DH_AGREEMENT **ppAgreement) {
+  CMD_ENSURE_NONNULL(pContext, SCARD_E_INVALID_PARAMETER);
+  CMD_ENSURE_NONNULL(ppAgreement, SCARD_E_INVALID_PARAMETER);
+
+  if (agreementIndex == 0 || agreementIndex > CMD_MAX_DH_AGREEMENTS) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid DH agreement index");
+  }
+
+  CMD_DH_AGREEMENT *agreement = &pContext->dhAgreements[agreementIndex - 1];
+  if (!agreement->active) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "DH agreement index is not active");
+  }
+
+  *ppAgreement = agreement;
+  CMD_RET_OK;
+}
+
 /*
  * Function: CardSignData
  *
@@ -113,7 +187,7 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
 
     // Sign
     CK_MECHANISM mech = {CKM_RSA_X_509, NULL, 0};
-    CK_OBJECT_HANDLE hKey = (CKO_PRIVATE_KEY << 8) | slot->id;
+    CK_OBJECT_HANDLE hKey = CMD_MAKE_OBJECT_HANDLE(0, CKO_PRIVATE_KEY, slot->id);
     CK_RV rv = C_SignInit(pContext->session, &mech, hKey);
     if (rv != CKR_OK)
       CMD_RETURN(map_pkcs11_crypto_error(rv), "C_SignInit failed");
@@ -131,7 +205,7 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
     reverse_bytes(pCardSigningInfo->pbSignedData, pCardSigningInfo->cbSignedData);
   } else if (slot->keyType == CKK_EC) {
     CK_MECHANISM mech = {CKM_ECDSA, NULL, 0};
-    CK_OBJECT_HANDLE hKey = (CKO_PRIVATE_KEY << 8) | slot->id;
+    CK_OBJECT_HANDLE hKey = CMD_MAKE_OBJECT_HANDLE(0, CKO_PRIVATE_KEY, slot->id);
     CK_RV rv = C_SignInit(pContext->session, &mech, hKey);
     if (rv != CKR_OK)
       CMD_RETURN(map_pkcs11_crypto_error(rv), "C_SignInit failed");
@@ -151,6 +225,247 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Unsupported key type");
   }
 
+  CMD_RET_OK;
+}
+
+/*
+ * Function: CardConstructDHAgreement
+ *
+ * Purpose: Create an ECDH shared secret with a card EC private key and a peer
+ *          public key.
+ */
+DWORD WINAPI CardConstructDHAgreement(__in PCARD_DATA pCardData, __inout PCARD_DH_AGREEMENT_INFO pAgreementInfo) {
+  CMD_LOG_FUNC("pCardData %p, pAgreementInfo %p", pCardData, pAgreementInfo);
+
+  CMD_NONNULL_PARAM(pCardData);
+  CMD_NONNULL_PARAM(pAgreementInfo);
+
+  INJECT_HANDLES();
+
+  CMD_DEBUG("CardConstructDHAgreement: dwVersion %d, bContainerIndex %d, dwFlags %x, dwPublicKey %d, pbPublicKey %p, "
+            "pbReserved %p, cbReserved %d",
+            pAgreementInfo->dwVersion, pAgreementInfo->bContainerIndex, pAgreementInfo->dwFlags,
+            pAgreementInfo->dwPublicKey, pAgreementInfo->pbPublicKey, pAgreementInfo->pbReserved,
+            pAgreementInfo->cbReserved);
+
+  if (pAgreementInfo->dwVersion != CARD_DH_AGREEMENT_INFO_VERSION) {
+    CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
+  }
+  if (pAgreementInfo->dwFlags != 0 || pAgreementInfo->pbReserved != NULL || pAgreementInfo->cbReserved != 0) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported DH agreement flags or reserved fields");
+  }
+  CMD_NONNULL_PARAM(pAgreementInfo->pbPublicKey);
+
+  CMD_GET_CTX(pCardData, pContext);
+  if (pAgreementInfo->bContainerIndex >= pContext->canokey.slotCount) {
+    CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
+  }
+
+  SLOT *slot = &pContext->canokey.slots[pAgreementInfo->bContainerIndex];
+  if (!canokey_slot_can_derive(slot)) {
+    CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Container has no ECDH key");
+  }
+
+  DWORD keySpec;
+  DWORD ret = ec_key_spec_for_slot(slot, &keySpec);
+  if (ret != SCARD_S_SUCCESS) {
+    CMD_RETURN(ret, "Unsupported ECDH key size");
+  }
+
+  ULONG expectedMagic;
+  ret = expected_ecdh_public_magic(slot, &expectedMagic);
+  if (ret != SCARD_S_SUCCESS) {
+    CMD_RETURN(ret, "Unsupported ECDH public key size");
+  }
+
+  if (pAgreementInfo->dwPublicKey != sizeof(BCRYPT_ECCKEY_BLOB) + slot->ecc.cbPrivate * 2) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Peer public key blob length mismatch");
+  }
+
+  BCRYPT_ECCKEY_BLOB *peerKey = (BCRYPT_ECCKEY_BLOB *)pAgreementInfo->pbPublicKey;
+  if (peerKey->dwMagic != expectedMagic || peerKey->cbKey != slot->ecc.cbPrivate) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Peer public key curve mismatch");
+  }
+
+  BYTE peerPoint[1 + CMD_MAX_DH_SECRET_LEN * 2] = {0};
+  DWORD peerPointLen = 1 + (DWORD)slot->ecc.cbPrivate * 2;
+  peerPoint[0] = 0x04;
+  memcpy(peerPoint + 1, pAgreementInfo->pbPublicKey + sizeof(BCRYPT_ECCKEY_BLOB), slot->ecc.cbPrivate * 2);
+
+  CK_ECDH1_DERIVE_PARAMS deriveParams = {
+      .kdf = CKD_NULL,
+      .pSharedData = NULL,
+      .ulSharedDataLen = 0,
+      .pPublicData = peerPoint,
+      .ulPublicDataLen = peerPointLen,
+  };
+  CK_MECHANISM mech = {CKM_ECDH1_DERIVE, &deriveParams, sizeof(deriveParams)};
+
+  CK_OBJECT_CLASS secretClass = CKO_SECRET_KEY;
+  CK_KEY_TYPE secretType = CKK_GENERIC_SECRET;
+  CK_ULONG secretLen = slot->ecc.cbPrivate;
+  CK_BBOOL token = CK_FALSE;
+  CK_BBOOL private = CK_TRUE;
+  CK_BBOOL sensitive = CK_FALSE;
+  CK_BBOOL extractable = CK_TRUE;
+  CK_ATTRIBUTE template[] = {
+      {CKA_CLASS, &secretClass, sizeof(secretClass)},
+      {CKA_KEY_TYPE, &secretType, sizeof(secretType)},
+      {CKA_VALUE_LEN, &secretLen, sizeof(secretLen)},
+      {CKA_TOKEN, &token, sizeof(token)},
+      {CKA_PRIVATE, &private, sizeof(private)},
+      {CKA_SENSITIVE, &sensitive, sizeof(sensitive)},
+      {CKA_EXTRACTABLE, &extractable, sizeof(extractable)},
+  };
+
+  CK_OBJECT_HANDLE hBaseKey = CMD_MAKE_OBJECT_HANDLE(0, CKO_PRIVATE_KEY, slot->id);
+  CK_OBJECT_HANDLE hSecret = 0;
+  CK_RV rv =
+      C_DeriveKey(pContext->session, &mech, hBaseKey, template, sizeof(template) / sizeof(template[0]), &hSecret);
+  SecureZeroMemory(peerPoint, sizeof(peerPoint));
+  if (rv != CKR_OK) {
+    CMD_RETURN(map_pkcs11_crypto_error(rv), "C_DeriveKey failed");
+  }
+
+  BYTE agreementIndex;
+  ret = find_free_dh_agreement(pContext, &agreementIndex);
+  if (ret != SCARD_S_SUCCESS) {
+    (void)C_DestroyObject(pContext->session, hSecret);
+    CMD_RETURN(ret, "No free DH agreement slot");
+  }
+
+  CMD_DH_AGREEMENT *agreement = &pContext->dhAgreements[agreementIndex - 1];
+  clear_dh_agreement(agreement);
+  CK_ATTRIBUTE valueAttr = {CKA_VALUE, agreement->secret, sizeof(agreement->secret)};
+  rv = C_GetAttributeValue(pContext->session, hSecret, &valueAttr, 1);
+  (void)C_DestroyObject(pContext->session, hSecret);
+  if (rv != CKR_OK) {
+    clear_dh_agreement(agreement);
+    CMD_RETURN(map_pkcs11_crypto_error(rv), "C_GetAttributeValue for ECDH secret failed");
+  }
+  if (valueAttr.ulValueLen == CK_UNAVAILABLE_INFORMATION || valueAttr.ulValueLen == 0 ||
+      valueAttr.ulValueLen > sizeof(agreement->secret)) {
+    clear_dh_agreement(agreement);
+    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Invalid ECDH secret length");
+  }
+
+  agreement->active = TRUE;
+  agreement->secretLen = (DWORD)valueAttr.ulValueLen;
+  agreement->containerIndex = pAgreementInfo->bContainerIndex;
+  agreement->keySpec = keySpec;
+  pAgreementInfo->bSecretAgreementIndex = agreementIndex;
+
+  CMD_DEBUG("Constructed DH agreement %u for container %u, secretLen %u", agreementIndex,
+            pAgreementInfo->bContainerIndex, agreement->secretLen);
+  CMD_RET_OK;
+}
+
+/*
+ * Function: CardDeriveKey
+ *
+ * Purpose: Return raw ECDH secret bytes for a previously constructed DH
+ *          agreement. Other KDFs are intentionally unsupported for now.
+ */
+DWORD WINAPI CardDeriveKey(__in PCARD_DATA pCardData, __inout PCARD_DERIVE_KEY pAgreementInfo) {
+  CMD_LOG_FUNC("pCardData %p, pAgreementInfo %p", pCardData, pAgreementInfo);
+
+  CMD_NONNULL_PARAM(pCardData);
+  CMD_NONNULL_PARAM(pAgreementInfo);
+
+  INJECT_HANDLES();
+
+  CMD_DEBUG("CardDeriveKey: dwVersion %d, dwFlags %x, pwszKDF %S, bSecretAgreementIndex %u, pParameterList %p, "
+            "pbDerivedKey %p, cbDerivedKey %d, pwszAlgId %S, dwKeyLen %d, hKey %p",
+            pAgreementInfo->dwVersion, pAgreementInfo->dwFlags, pAgreementInfo->pwszKDF,
+            pAgreementInfo->bSecretAgreementIndex, pAgreementInfo->pParameterList, pAgreementInfo->pbDerivedKey,
+            pAgreementInfo->cbDerivedKey, pAgreementInfo->pwszAlgId, pAgreementInfo->dwKeyLen,
+            (void *)pAgreementInfo->hKey);
+
+  if (pAgreementInfo->dwVersion != CARD_DERIVE_KEY_VERSION &&
+      pAgreementInfo->dwVersion != CARD_DERIVE_KEY_VERSION_TWO) {
+    CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
+  }
+
+  if (pAgreementInfo->dwFlags & CARD_RETURN_KEY_HANDLE) {
+    CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Returning symmetric key handles is not supported");
+  }
+  if ((pAgreementInfo->dwFlags & ~(CARD_BUFFER_SIZE_ONLY | CARD_RETURN_KEY_HANDLE)) != 0) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported derive key flags");
+  }
+  if (pAgreementInfo->pParameterList != NULL) {
+    BCryptBufferDesc *params = (BCryptBufferDesc *)pAgreementInfo->pParameterList;
+    if (params->ulVersion != BCRYPTBUFFER_VERSION || params->cBuffers != 0) {
+      CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "KDF parameter lists are not supported");
+    }
+  }
+  if (pAgreementInfo->pwszKDF != NULL && pAgreementInfo->pwszKDF[0] != L'\0' &&
+      wcscmp(pAgreementInfo->pwszKDF, BCRYPT_KDF_RAW_SECRET) != 0) {
+    CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Only raw secret KDF is supported");
+  }
+  if (pAgreementInfo->pwszAlgId != NULL) {
+    CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Derived key algorithms are not supported");
+  }
+
+  CMD_GET_CTX(pCardData, pContext);
+  CMD_DH_AGREEMENT *agreement = NULL;
+  DWORD ret = get_dh_agreement(pContext, pAgreementInfo->bSecretAgreementIndex, &agreement);
+  if (ret != SCARD_S_SUCCESS) {
+    CMD_RETURN(ret, "Invalid DH agreement");
+  }
+
+  DWORD outputLen = agreement->secretLen;
+  if (pAgreementInfo->dwKeyLen != 0) {
+    DWORD requestedLen = (pAgreementInfo->dwKeyLen + 7) / 8;
+    if (requestedLen == 0 || requestedLen > agreement->secretLen) {
+      CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid requested raw secret length");
+    }
+    outputLen = requestedLen;
+  }
+
+  if (pAgreementInfo->dwFlags & CARD_BUFFER_SIZE_ONLY) {
+    pAgreementInfo->cbDerivedKey = outputLen;
+    CMD_RET_OK;
+  }
+
+  if (pAgreementInfo->pbDerivedKey == NULL) {
+    pAgreementInfo->pbDerivedKey = (PBYTE)g_pfnCspAlloc(outputLen);
+    CMD_ENSURE_NONNULL(pAgreementInfo->pbDerivedKey, SCARD_E_NO_MEMORY);
+  } else if (pAgreementInfo->cbDerivedKey < outputLen) {
+    pAgreementInfo->cbDerivedKey = outputLen;
+    CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "Derived key buffer is too small");
+  }
+
+  memcpy(pAgreementInfo->pbDerivedKey, agreement->secret, outputLen);
+  reverse_bytes(pAgreementInfo->pbDerivedKey, outputLen);
+  pAgreementInfo->cbDerivedKey = outputLen;
+
+  CMD_DEBUG("Derived raw ECDH secret: %d bytes", pAgreementInfo->cbDerivedKey);
+  CMD_RET_OK;
+}
+
+/*
+ * Function: CardDestroyDHAgreement
+ *
+ * Purpose: Delete a cached DH shared secret.
+ */
+DWORD WINAPI CardDestroyDHAgreement(__in PCARD_DATA pCardData, __in BYTE bSecretAgreementIndex, __in DWORD dwFlags) {
+  CMD_LOG_FUNC("pCardData %p, bSecretAgreementIndex %u, dwFlags %x", pCardData, bSecretAgreementIndex, dwFlags);
+
+  CMD_NONNULL_PARAM(pCardData);
+  if (dwFlags != 0) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported DH agreement destroy flags");
+  }
+
+  INJECT_HANDLES();
+
+  CMD_GET_CTX(pCardData, pContext);
+  CMD_DH_AGREEMENT *agreement = NULL;
+  DWORD ret = get_dh_agreement(pContext, bSecretAgreementIndex, &agreement);
+  if (ret != SCARD_S_SUCCESS) {
+    CMD_RETURN(ret, "Invalid DH agreement");
+  }
+
+  clear_dh_agreement(agreement);
   CMD_RET_OK;
 }
 
@@ -227,7 +542,7 @@ DWORD WINAPI CardRSADecrypt(__in PCARD_DATA pCardData, __inout PCARD_RSA_DECRYPT
   memcpy(encryptedData, pInfo->pbData, pInfo->cbData);
   reverse_bytes(encryptedData, pInfo->cbData);
 
-  CK_OBJECT_HANDLE hKey = (CKO_PRIVATE_KEY << 8) | slot->id;
+  CK_OBJECT_HANDLE hKey = CMD_MAKE_OBJECT_HANDLE(0, CKO_PRIVATE_KEY, slot->id);
   CK_RV rv = C_DecryptInit(pContext->session, &mech, hKey);
   if (rv != CKR_OK) {
     g_pfnCspFree(encryptedData);
@@ -257,6 +572,43 @@ DWORD WINAPI CardRSADecrypt(__in PCARD_DATA pCardData, __inout PCARD_RSA_DECRYPT
  *
  * Purpose: Query the supported key sizes for a given algorithm.
  */
+DWORD FillCardKeySizes(DWORD dwKeySpec, PCARD_KEY_SIZES pKeySizes) {
+  CMD_ENSURE_NONNULL(pKeySizes, SCARD_E_INVALID_PARAMETER);
+
+  pKeySizes->dwVersion = CARD_KEY_SIZES_CURRENT_VERSION;
+  pKeySizes->dwIncrementalBitlen = 0;
+
+  switch (dwKeySpec) {
+  case AT_SIGNATURE:
+  case AT_KEYEXCHANGE:
+    pKeySizes->dwMinimumBitlen = 2048;
+    pKeySizes->dwDefaultBitlen = 2048;
+    pKeySizes->dwMaximumBitlen = 4096;
+    pKeySizes->dwIncrementalBitlen = 1024;
+    CMD_RET_OK;
+  case AT_ECDSA_P256:
+  case AT_ECDHE_P256:
+    pKeySizes->dwMinimumBitlen = 256;
+    pKeySizes->dwDefaultBitlen = 256;
+    pKeySizes->dwMaximumBitlen = 256;
+    CMD_RET_OK;
+  case AT_ECDSA_P384:
+  case AT_ECDHE_P384:
+    pKeySizes->dwMinimumBitlen = 384;
+    pKeySizes->dwDefaultBitlen = 384;
+    pKeySizes->dwMaximumBitlen = 384;
+    CMD_RET_OK;
+  case AT_ECDSA_P521:
+  case AT_ECDHE_P521:
+    pKeySizes->dwMinimumBitlen = 521;
+    pKeySizes->dwDefaultBitlen = 521;
+    pKeySizes->dwMaximumBitlen = 521;
+    CMD_RET_OK;
+  default:
+    CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Unsupported key spec");
+  }
+}
+
 DWORD WINAPI CardQueryKeySizes(__in PCARD_DATA pCardData, __in DWORD dwKeySpec, __in DWORD dwFlags,
                                __inout PCARD_KEY_SIZES pKeySizes) {
   CMD_LOG_FUNC("pCardData %p, dwKeySpec %x, dwFlags "
@@ -268,5 +620,12 @@ DWORD WINAPI CardQueryKeySizes(__in PCARD_DATA pCardData, __in DWORD dwKeySpec, 
 
   INJECT_HANDLES();
 
-  CMD_RET_UNIMPL;
+  if (pKeySizes->dwVersion != CARD_KEY_SIZES_CURRENT_VERSION) {
+    CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
+  }
+  if (dwFlags != 0) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported CardQueryKeySizes flags");
+  }
+
+  return FillCardKeySizes(dwKeySpec, pKeySizes);
 }

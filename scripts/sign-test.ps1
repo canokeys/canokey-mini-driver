@@ -7,6 +7,7 @@ param(
     [string[]]$BaseCspContainer,
     [string[]]$RsaKspContainer,
     [string[]]$EccKspContainer,
+    [string[]]$EcdhKspContainer,
     [string[]]$DecryptKspContainer,
     [switch]$RunScinfo,
     [switch]$SkipBuild,
@@ -78,6 +79,7 @@ function Invoke-CertutilScinfo {
 if (-not ("CanokeyMinidriver.SignTestNative" -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -101,9 +103,19 @@ namespace CanokeyMinidriver {
     public static class SignTestNative {
         private const string BaseSmartCardCsp = "Microsoft Base Smart Card Crypto Provider";
         private const string SmartCardKsp = "Microsoft Smart Card Key Storage Provider";
+        private const string SoftwareKsp = "Microsoft Software Key Storage Provider";
+        private const string BcryptKdfRawSecret = "TRUNCATE";
+        private const string BcryptEccPublicBlob = "ECCPUBLICBLOB";
         private const uint PROV_RSA_FULL = 1;
         private const uint CRYPT_SILENT = 0x00000040;
+        private const uint AT_KEYEXCHANGE = 1;
         private const uint AT_SIGNATURE = 2;
+        private const int AT_ECDSA_P256 = 3;
+        private const int AT_ECDSA_P384 = 4;
+        private const int AT_ECDSA_P521 = 5;
+        private const int AT_ECDHE_P256 = 6;
+        private const int AT_ECDHE_P384 = 7;
+        private const int AT_ECDHE_P521 = 8;
         private const uint PP_ENUMCONTAINERS = 2;
         private const uint PP_SIGNATURE_PIN = 33;
         private const uint CALG_SHA1 = 0x00008004;
@@ -195,6 +207,12 @@ namespace CanokeyMinidriver {
         private static extern int NCryptOpenKey(IntPtr hProvider, out IntPtr phKey, string pszKeyName, int dwLegacyKeySpec, int dwFlags);
 
         [DllImport("ncrypt.dll", CharSet = CharSet.Unicode)]
+        private static extern int NCryptCreatePersistedKey(IntPtr hProvider, out IntPtr phKey, string pszAlgId, string pszKeyName, int dwLegacyKeySpec, int dwFlags);
+
+        [DllImport("ncrypt.dll")]
+        private static extern int NCryptFinalizeKey(IntPtr hKey, int dwFlags);
+
+        [DllImport("ncrypt.dll", CharSet = CharSet.Unicode)]
         private static extern int NCryptEnumKeys(IntPtr hProvider, string pszScope, out IntPtr ppKeyName, ref IntPtr ppEnumState, int dwFlags);
 
         [DllImport("ncrypt.dll", CharSet = CharSet.Unicode)]
@@ -214,6 +232,18 @@ namespace CanokeyMinidriver {
 
         [DllImport("ncrypt.dll")]
         private static extern int NCryptDecrypt(IntPtr hKey, byte[] pbInput, int cbInput, IntPtr pPaddingInfo, byte[] pbOutput, int cbOutput, out int pcbResult, int dwFlags);
+
+        [DllImport("ncrypt.dll")]
+        private static extern int NCryptSecretAgreement(IntPtr hPrivKey, IntPtr hPubKey, out IntPtr phAgreedSecret, int dwFlags);
+
+        [DllImport("ncrypt.dll", CharSet = CharSet.Unicode)]
+        private static extern int NCryptDeriveKey(IntPtr hSharedSecret, string pwszKDF, IntPtr pParameterList, byte[] pbDerivedKey, int cbDerivedKey, out int pcbResult, int dwFlags);
+
+        [DllImport("ncrypt.dll", CharSet = CharSet.Unicode)]
+        private static extern int NCryptExportKey(IntPtr hKey, IntPtr hExportKey, string pszBlobType, IntPtr pParameterList, byte[] pbOutput, int cbOutput, out int pcbResult, int dwFlags);
+
+        [DllImport("ncrypt.dll", CharSet = CharSet.Unicode)]
+        private static extern int NCryptImportKey(IntPtr hProvider, IntPtr hImportKey, string pszBlobType, IntPtr pParameterList, out IntPtr phKey, byte[] pbData, int cbData, int dwFlags);
 
         [DllImport("ncrypt.dll")]
         private static extern int NCryptFreeObject(IntPtr hObject);
@@ -475,6 +505,70 @@ namespace CanokeyMinidriver {
             }
         }
 
+        public static SignResult CngEcdh(string container, string pin, int legacyKeySpec) {
+            IntPtr hSmartProvider = IntPtr.Zero;
+            IntPtr hCardKey = IntPtr.Zero;
+            IntPtr hSoftwareProvider = IntPtr.Zero;
+            IntPtr hPeerPrivateKey = IntPtr.Zero;
+            IntPtr hPeerPublicForCard = IntPtr.Zero;
+            IntPtr hCardPublicForPeer = IntPtr.Zero;
+            IntPtr hCardSecret = IntPtr.Zero;
+            IntPtr hSoftwareSecret = IntPtr.Zero;
+            try {
+                CheckStatus(NCryptOpenStorageProvider(out hSmartProvider, SmartCardKsp, 0), "NCryptOpenStorageProvider(smart)");
+                CheckStatus(NCryptOpenKey(hSmartProvider, out hCardKey, container, legacyKeySpec, NCRYPT_SILENT_FLAG), "NCryptOpenKey(ECDH)");
+                if (!String.IsNullOrEmpty(pin)) {
+                    byte[] pinBytes = Encoding.Unicode.GetBytes(pin + "\0");
+                    CheckStatus(NCryptSetProperty(hCardKey, "SmartCardPin", pinBytes, pinBytes.Length, NCRYPT_SILENT_FLAG), "NCryptSetProperty(SmartCardPin)");
+                }
+
+                string group = GetCngStringProperty(hCardKey, "Algorithm Group");
+                RequireGroup(group, "ECDH", "ECDH_RAW_SECRET");
+                string algorithm = EcdhAlgorithmForKeySpec(legacyKeySpec);
+
+                CheckStatus(NCryptOpenStorageProvider(out hSoftwareProvider, SoftwareKsp, 0), "NCryptOpenStorageProvider(software)");
+                CheckStatus(NCryptCreatePersistedKey(hSoftwareProvider, out hPeerPrivateKey, algorithm, null, 0, 0), "NCryptCreatePersistedKey(peer)");
+                CheckStatus(NCryptFinalizeKey(hPeerPrivateKey, 0), "NCryptFinalizeKey(peer)");
+
+                byte[] peerPublicBlob = ExportKeyBlob(hPeerPrivateKey, BcryptEccPublicBlob);
+                CheckStatus(NCryptImportKey(hSmartProvider, IntPtr.Zero, BcryptEccPublicBlob, IntPtr.Zero, out hPeerPublicForCard,
+                    peerPublicBlob, peerPublicBlob.Length, 0), "NCryptImportKey(peer public to smart provider)");
+
+                byte[] cardPublicBlob = ExportKeyBlob(hCardKey, BcryptEccPublicBlob);
+                CheckStatus(NCryptImportKey(hSoftwareProvider, IntPtr.Zero, BcryptEccPublicBlob, IntPtr.Zero, out hCardPublicForPeer,
+                    cardPublicBlob, cardPublicBlob.Length, 0), "NCryptImportKey(card public to software provider)");
+
+                CheckStatus(NCryptSecretAgreement(hCardKey, hPeerPublicForCard, out hCardSecret, NCRYPT_SILENT_FLAG), "NCryptSecretAgreement(card)");
+                CheckStatus(NCryptSecretAgreement(hPeerPrivateKey, hCardPublicForPeer, out hSoftwareSecret, 0), "NCryptSecretAgreement(software)");
+
+                byte[] cardSecret = DeriveRawSecret(hCardSecret);
+                byte[] softwareSecret = DeriveRawSecret(hSoftwareSecret);
+                if (!ByteArraysEqual(cardSecret, softwareSecret)) {
+                    throw new InvalidOperationException("ECDH raw secret mismatch; card " + Hex(cardSecret, cardSecret.Length) +
+                        "; software " + Hex(softwareSecret, softwareSecret.Length));
+                }
+
+                return new SignResult {
+                    Provider = SmartCardKsp,
+                    Container = container,
+                    LegacyKeySpec = legacyKeySpec,
+                    Algorithm = "ECDH_RAW_SECRET",
+                    Padding = "RAW",
+                    OutputLength = cardSecret.Length,
+                    Verified = true
+                };
+            } finally {
+                if (hSoftwareSecret != IntPtr.Zero) NCryptFreeObject(hSoftwareSecret);
+                if (hCardSecret != IntPtr.Zero) NCryptFreeObject(hCardSecret);
+                if (hCardPublicForPeer != IntPtr.Zero) NCryptFreeObject(hCardPublicForPeer);
+                if (hPeerPublicForCard != IntPtr.Zero) NCryptFreeObject(hPeerPublicForCard);
+                if (hPeerPrivateKey != IntPtr.Zero) NCryptFreeObject(hPeerPrivateKey);
+                if (hSoftwareProvider != IntPtr.Zero) NCryptFreeObject(hSoftwareProvider);
+                if (hCardKey != IntPtr.Zero) NCryptFreeObject(hCardKey);
+                if (hSmartProvider != IntPtr.Zero) NCryptFreeObject(hSmartProvider);
+            }
+        }
+
         private static IntPtr AcquireCapiProvider(string container, string readerName, out string openedContainer) {
             string[] candidates;
             if (String.IsNullOrEmpty(readerName)) {
@@ -523,6 +617,59 @@ namespace CanokeyMinidriver {
             return Encoding.Unicode.GetString(buffer, 0, cbResult).TrimEnd('\0');
         }
 
+        private static byte[] ExportKeyBlob(IntPtr hKey, string blobType) {
+            int cbResult;
+            CheckStatus(NCryptExportKey(hKey, IntPtr.Zero, blobType, IntPtr.Zero, null, 0, out cbResult, 0),
+                "NCryptExportKey(" + blobType + ", size)");
+            byte[] blob = new byte[cbResult];
+            CheckStatus(NCryptExportKey(hKey, IntPtr.Zero, blobType, IntPtr.Zero, blob, blob.Length, out cbResult, 0),
+                "NCryptExportKey(" + blobType + ")");
+            if (cbResult != blob.Length) {
+                Array.Resize(ref blob, cbResult);
+            }
+            return blob;
+        }
+
+        private static byte[] DeriveRawSecret(IntPtr hSecret) {
+            int cbResult;
+            CheckStatus(NCryptDeriveKey(hSecret, BcryptKdfRawSecret, IntPtr.Zero, null, 0, out cbResult, 0),
+                "NCryptDeriveKey(raw secret, size)");
+            byte[] secret = new byte[cbResult];
+            CheckStatus(NCryptDeriveKey(hSecret, BcryptKdfRawSecret, IntPtr.Zero, secret, secret.Length, out cbResult, 0),
+                "NCryptDeriveKey(raw secret)");
+            if (cbResult != secret.Length) {
+                Array.Resize(ref secret, cbResult);
+            }
+            return secret;
+        }
+
+        public static int SignatureKeySpecForGroup(string algorithmGroup) {
+            if (String.Equals(algorithmGroup, "ECDSA_P256", StringComparison.OrdinalIgnoreCase)) return AT_ECDSA_P256;
+            if (String.Equals(algorithmGroup, "ECDSA_P384", StringComparison.OrdinalIgnoreCase)) return AT_ECDSA_P384;
+            if (String.Equals(algorithmGroup, "ECDSA_P521", StringComparison.OrdinalIgnoreCase)) return AT_ECDSA_P521;
+            return 0;
+        }
+
+        public static int EcdhKeySpecForGroup(string algorithmGroup) {
+            if (String.Equals(algorithmGroup, "ECDH_P256", StringComparison.OrdinalIgnoreCase)) return AT_ECDHE_P256;
+            if (String.Equals(algorithmGroup, "ECDH_P384", StringComparison.OrdinalIgnoreCase)) return AT_ECDHE_P384;
+            if (String.Equals(algorithmGroup, "ECDH_P521", StringComparison.OrdinalIgnoreCase)) return AT_ECDHE_P521;
+            return 0;
+        }
+
+        private static string EcdhAlgorithmForKeySpec(int legacyKeySpec) {
+            switch (legacyKeySpec) {
+            case AT_ECDHE_P256:
+                return "ECDH_P256";
+            case AT_ECDHE_P384:
+                return "ECDH_P384";
+            case AT_ECDHE_P521:
+                return "ECDH_P521";
+            default:
+                throw new ArgumentException("Unsupported ECDH key spec: " + legacyKeySpec);
+            }
+        }
+
         private static void RequireGroup(string group, string expected, string mode) {
             if (group == null || group.IndexOf(expected, StringComparison.OrdinalIgnoreCase) < 0) {
                 throw new InvalidOperationException(mode + " requires " + expected + " key, but container algorithm group is " + group);
@@ -559,6 +706,13 @@ namespace CanokeyMinidriver {
                 sb.Append(data[i].ToString("x2"));
             }
             return sb.ToString();
+        }
+
+        private static bool ByteArraysEqual(byte[] left, byte[] right) {
+            if (left == null || right == null || left.Length != right.Length) return false;
+            int diff = 0;
+            for (int i = 0; i < left.Length; i++) diff |= left[i] ^ right[i];
+            return diff == 0;
         }
     }
 }
@@ -646,6 +800,20 @@ try {
     $rsaKspDecryptKeys = @($kspInfo |
         Where-Object { $_.AlgorithmGroup -match "RSA" -and $_.LegacyKeySpec -eq 1 } |
         Sort-Object Container -Unique)
+    $ecdsaKspKeys = @($kspInfo |
+        Where-Object { $_.AlgorithmGroup -match "ECDSA" } |
+        ForEach-Object {
+            $_ | Add-Member -NotePropertyName OpenKeySpec -NotePropertyValue ([CanokeyMinidriver.SignTestNative]::SignatureKeySpecForGroup($_.AlgorithmGroup)) -PassThru
+        } |
+        Where-Object { $_.OpenKeySpec -ne 0 } |
+        Sort-Object Container, AlgorithmGroup -Unique)
+    $ecdhKspKeys = @($kspInfo |
+        Where-Object { $_.AlgorithmGroup -match "ECDH" } |
+        ForEach-Object {
+            $_ | Add-Member -NotePropertyName OpenKeySpec -NotePropertyValue ([CanokeyMinidriver.SignTestNative]::EcdhKeySpecForGroup($_.AlgorithmGroup)) -PassThru
+        } |
+        Where-Object { $_.OpenKeySpec -ne 0 } |
+        Sort-Object Container, AlgorithmGroup -Unique)
 
     $selectedBaseCspContainers = @()
     if ($BaseCspContainer) {
@@ -669,11 +837,27 @@ try {
     }
     $selectedEccKspContainers = @()
     if ($EccKspContainer) {
-        $selectedEccKspContainers = @($EccKspContainer)
+        $selectedEccKspContainers = @($EccKspContainer | ForEach-Object {
+                [pscustomobject]@{
+                    Container = $_
+                    AlgorithmGroup = "ECDSA_P256"
+                    OpenKeySpec = 3
+                }
+            })
     } else {
-        $selectedEccKspContainers = @($kspInfo |
-            Where-Object { $_.AlgorithmGroup -match "ECDSA" } |
-            Select-Object -ExpandProperty Container -Unique)
+        $selectedEccKspContainers = @($ecdsaKspKeys)
+    }
+    $selectedEcdhKspContainers = @()
+    if ($EcdhKspContainer) {
+        $selectedEcdhKspContainers = @($EcdhKspContainer | ForEach-Object {
+                [pscustomobject]@{
+                    Container = $_
+                    AlgorithmGroup = "ECDH_P256"
+                    OpenKeySpec = 6
+                }
+            })
+    } else {
+        $selectedEcdhKspContainers = @($ecdhKspKeys)
     }
     $selectedDecryptKspContainers = @()
     if ($DecryptKspContainer) {
@@ -702,7 +886,8 @@ try {
     [pscustomobject]@{
         SelectedBaseCspContainers = ($selectedBaseCspContainers -join ", ")
         SelectedRsaKspContainers = ($selectedRsaKspContainers -join ", ")
-        SelectedEccKspContainers = ($selectedEccKspContainers -join ", ")
+        SelectedEccKspContainers = (($selectedEccKspContainers | ForEach-Object { "$($_.Container)/$($_.AlgorithmGroup)" }) -join ", ")
+        SelectedEcdhKspContainers = (($selectedEcdhKspContainers | ForEach-Object { "$($_.Container)/$($_.AlgorithmGroup)" }) -join ", ")
         SelectedDecryptKspContainers = ($selectedDecryptKspContainers -join ", ")
     } | Format-List
 
@@ -718,6 +903,9 @@ try {
     }
     if ($selectedEccKspContainers.Count -eq 0) {
         throw "No Smart Card KSP ECDSA container was discovered."
+    }
+    if ($selectedEcdhKspContainers.Count -eq 0) {
+        throw "No Smart Card KSP ECDH container was discovered."
     }
 
     $results = @()
@@ -737,9 +925,14 @@ try {
             [CanokeyMinidriver.SignTestNative]::CngSign($container, $pinArg, "RSA_PSS_SHA256", 2)
         }
     }
-    foreach ($container in $selectedEccKspContainers) {
-        $results += Invoke-SignCase "CNG ECDSA P-256/SHA256 [$container]" {
-            [CanokeyMinidriver.SignTestNative]::CngSign($container, $pinArg, "ECDSA_SHA256", 0)
+    foreach ($key in $selectedEccKspContainers) {
+        $results += Invoke-SignCase "CNG $($key.AlgorithmGroup)/SHA256 [$($key.Container)]" {
+            [CanokeyMinidriver.SignTestNative]::CngSign($key.Container, $pinArg, "ECDSA_SHA256", $key.OpenKeySpec)
+        }
+    }
+    foreach ($key in $selectedEcdhKspContainers) {
+        $results += Invoke-SignCase "CNG $($key.AlgorithmGroup) raw secret [$($key.Container)]" {
+            [CanokeyMinidriver.SignTestNative]::CngEcdh($key.Container, $pinArg, $key.OpenKeySpec)
         }
     }
     foreach ($container in $selectedDecryptKspContainers) {
