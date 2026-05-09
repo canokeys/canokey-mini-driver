@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "cardmod.h": "c",
+        "windows.h": "c",
+        "stdlib.h": "c"
+    }
+}

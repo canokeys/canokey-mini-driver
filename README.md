@@ -1,6 +1,38 @@
 # CanoKey Mini Driver
 
-**Note: This project is still WIP.**
+Windows smart card minidriver for CanoKey, built on top of
+[`canokey-pkcs11`](external/canokey-pkcs11).
+
+**Status:** this project is still WIP, but the development loop is usable.
+Windows can load the DLL through a Calais smart card registry mapping without
+installing the generated INF. Current local testing can enumerate the CanoKey
+PIV certificates and run CSP/KSP signing, RSA decryption, and ECDH raw-secret
+derivation tests against the development card. Release packaging, INF
+installation, and broader PIV slot coverage are still in progress.
+
+## Current State
+
+- Debug loading works by copying `canokey-minidriver.dll` to
+  `C:\canokey-minidriver\` and registering that path under the CanoKey ATR.
+- Minidriver configuration is read from `HKLM\SOFTWARE\Canokeys\ckmd`.
+  Logging is disabled unless `LogPath` is set there; `LogLevel` and
+  `LogSensitiveData` control verbosity and APDU/hex dumps.
+- `certutil -scinfo` can see the card and current certificates.
+- `scripts\crypto-test.ps1` exercises the minidriver through Windows CAPI/CNG
+  APIs instead of parsing command output. The same checks can be run in focused
+  groups with `sign-test.ps1`, `decrypt-test.ps1`, and `derive-test.ps1`.
+- The current development card has been tested with 9A RSA-2048 signing, 9C
+  EC P-256 signing plus ECDH raw-secret derivation, and 9D RSA-2048 signing
+  plus key exchange/decryption.
+
+Known gaps:
+
+- Full YubiKey-style PIV slot mapping still needs broader card coverage.
+- ECDH currently supports raw secret derivation only (`BCRYPT_KDF_RAW_SECRET` /
+  PKCS#11 `CKD_NULL`). Higher-level KDF parameter lists are not implemented yet.
+- INF installation is kept for later release validation.
+- The test matrix depends on which keys and certificates are provisioned on the
+  attached CanoKey.
 
 ## Build
 
@@ -15,26 +47,65 @@ Install Visual Studio 2022 with:
 ### Build with CMake
 
 You can configure the project with CMake (or use Visual Studio GUI).
-You must you clang-cl as frontend, or `thirdpart/dbg.h` will fail to compile.
+You must use `clang-cl` as the frontend, or `external/dbg.h` will fail to
+compile.
 
-After successful build, you will get `canokey_minidriver.{inf,dll}` in your build output directory.
+After successful build, you will get `canokey-minidriver.{inf,dll}` in your build output directory.
+
+The helper script uses the same defaults as the local debug workflow:
+
+```powershell
+.\build.ps1 -Arch x64 -Config Debug
+```
+
+If the TF-PSA-Crypto generator needs a specific Python environment, pass it
+explicitly:
+
+```powershell
+.\build.ps1 -Arch x64 -Config Debug -Python3Executable C:\Path\To\python.exe
+```
 
 ## Test
 
-1. Before loading the mini driver, you should [enable test signing mode](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/the-testsigning-boot-configuration-option) and reboot.
-1. Right-click on `canokey_minidriver.inf` and select `Install`, then ignore any warnings.
-1. Insert your CanoKey, go to Device Manager - Smart card readers. If Microsoft driver is loaded, right-click and select "Update driver" - "Browse my computer for drivers" and select "Let me pick from a list of available drivers on my computer", then select "CanoKey Mini Driver".
-1. Unplug and reinsert your CanoKey, you should now see log files under `C:\Logs\`.
+For development, you do not need to install the INF. Windows can load the
+minidriver through the Calais smart card registry mapping:
 
-If you would like to test a new version, you **should** uninstall the old driver first.
-To do so, right-click on `canokey_minidriver.inf` and select `Uninstall`, check "Delete the driver software for this device" and click `OK`.
-Then you can install the new version and test again.
+```powershell
+.\build.ps1 -Arch x64 -Config Debug
+cmake --build out\build\x64-Clang-Debug --target canokey-minidriver-debug-install
+```
+
+This copies the DLL to `C:\canokey-minidriver\` and creates
+`C:\canokey-minidriver\logs\`. Import the debug Calais mapping and optional
+`HKLM\SOFTWARE\Canokeys\ckmd` configuration described in
+[`docs/development.md`](docs/development.md), then unplug and reinsert your
+CanoKey or restart the calling application.
+
+Useful local checks:
+
+```powershell
+.\scripts\smoke-scinfo.ps1
+.\scripts\crypto-test.ps1
+```
+
+`smoke-scinfo.ps1` drives `certutil -silent -pin ... -scinfo` against the
+CanoKey reader. `crypto-test.ps1` uses Windows cryptographic APIs directly to
+enumerate containers and run the full local matrix: signing, RSA decrypt, and
+ECDH raw-secret derivation against a software-generated peer key. For fast
+focused reruns, use `sign-test.ps1`, `decrypt-test.ps1`, or `derive-test.ps1`
+with `-SkipBuild -SkipInstall -SkipReset`.
+
+INF installation is still useful for release-style validation and final
+packaging. For that flow, enable test signing mode if needed, install the
+generated INF, and uninstall the old driver package before testing a new
+version.
 
 ## Troubleshooting
 
 If you encounter any strange problems, you may try to (in order):
 
 - Re-plug your CanoKey.
-- Uninstall and reinstall the driver.
+- Restart the calling application.
 - Restart the `CertPropSvc` service (espcially when you cannot read or delete the log files).
+- Uninstall and reinstall the driver if you are testing the INF path.
 - Reboot your computer.

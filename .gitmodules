@@ -1,0 +1,3 @@
+[submodule "external/canokey-pkcs11"]
+	path = external/canokey-pkcs11
+	url = ../canokey-pkcs11.git
