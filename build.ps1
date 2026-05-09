@@ -1,50 +1,200 @@
-# Set paths
-$buildDir = "./out/build/arm64-Clang-Debug"
-$infName = "canokey-minidriver.inf"
+param(
+    [ValidateSet("x64", "arm64", "all")]
+    [string]$Arch = "x64",
 
-Write-Host "Step 1: Building project..."
-Push-Location $buildDir
-$buildResult = cmake --build . 2>&1
-Pop-Location
+    [ValidateSet("Debug", "Release", "RelWithDebInfo", "MinSizeRel")]
+    [string]$Config = "Debug",
 
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "Build failed:"
-    Write-Output $buildResult
-    exit 1
+    [switch]$CleanFirst,
+    [switch]$VerboseBuild
+)
+
+$ErrorActionPreference = "Stop"
+
+$repoRoot = $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($repoRoot)) {
+    $repoRoot = (Get-Location).Path
 }
-Write-Host "Build succeeded."
 
-exit 0
+$cmakeName = "canokey-minidriver"
+$vsWhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
 
-# Step 2: Uninstall existing driver if present
-Write-Host "Step 2: Searching for existing driver..."
-$driverList = pnputil /enum-drivers
-$infRegex = [regex]::Escape($infName)
+function Find-VisualStudio {
+    if (Test-Path -LiteralPath $vsWhere) {
+        $installPath = & $vsWhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        if ($LASTEXITCODE -eq 0 -and ![string]::IsNullOrWhiteSpace($installPath)) {
+            return $installPath.Trim()
+        }
+    }
 
-# Use Select-String with context to find the oemXXX.inf line before the matching INF line
-$oemMatch = $null
-$match = $driverList | Select-String -Pattern $infRegex -Context 1,0
+    $candidates = @(
+        Join-Path $env:ProgramFiles "Microsoft Visual Studio\2022\Community",
+        Join-Path $env:ProgramFiles "Microsoft Visual Studio\2022\Professional",
+        Join-Path $env:ProgramFiles "Microsoft Visual Studio\2022\Enterprise",
+        Join-Path $env:ProgramFiles "Microsoft Visual Studio\2022\BuildTools"
+    )
 
-if ($match -and $match.Context.PreContext.Count -gt 0) {
-    $prevLine = $match.Context.PreContext[-1]
-    if ($prevLine -like "*:*") {
-        $oemMatch = $prevLine.Split(":")[1].Trim()
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath (Join-Path $candidate "Common7\Tools\VsDevCmd.bat")) {
+            return $candidate
+        }
+    }
+
+    throw "Visual Studio 2022 with C++ tools was not found."
+}
+
+function Convert-ArchName {
+    param([string]$TargetArch)
+
+    switch ($TargetArch) {
+        "x64" { return "x64" }
+        "arm64" { return "arm64" }
+        default { throw "Unsupported architecture: $TargetArch" }
     }
 }
 
-if (!$oemMatch) {
-    Write-Host "No matching installed INF found. Skipping uninstall."
-} else {
-    Write-Host "Found driver: $oemMatch. Uninstalling..."
-    pnputil /delete-driver $oemMatch /uninstall /force
+function Get-ClangTarget {
+    param([string]$TargetArch)
+
+    switch ($TargetArch) {
+        "x64" { return "amd64-pc-windows-msvc" }
+        "arm64" { return "arm64-pc-windows-msvc" }
+        default { throw "Unsupported architecture: $TargetArch" }
+    }
+}
+
+function Get-VsToolPath {
+    param(
+        [string]$VsInstall,
+        [string]$RelativePath
+    )
+
+    $path = Join-Path $VsInstall $RelativePath
+    if (!(Test-Path -LiteralPath $path)) {
+        throw "Required Visual Studio tool was not found: $path"
+    }
+    return $path
+}
+
+function Get-LatestMsvcToolsetPath {
+    param([string]$VsInstall)
+
+    $msvcRoot = Join-Path $VsInstall "VC\Tools\MSVC"
+    if (!(Test-Path -LiteralPath $msvcRoot)) {
+        throw "MSVC toolset directory was not found: $msvcRoot"
+    }
+
+    $toolset = Get-ChildItem -LiteralPath $msvcRoot -Directory |
+        Sort-Object Name -Descending |
+        Select-Object -First 1
+    if ($null -eq $toolset) {
+        throw "No MSVC toolset was found under: $msvcRoot"
+    }
+
+    return $toolset.FullName
+}
+
+function Assert-MsvcTargetLibraries {
+    param(
+        [string]$VsInstall,
+        [string]$TargetArch
+    )
+
+    $toolsetPath = Get-LatestMsvcToolsetPath $VsInstall
+    $libDir = Join-Path $toolsetPath "lib\$TargetArch"
+    $requiredLibs = @("msvcrtd.lib", "oldnames.lib")
+
+    foreach ($lib in $requiredLibs) {
+        $libPath = Join-Path $libDir $lib
+        if (!(Test-Path -LiteralPath $libPath)) {
+            throw "Missing MSVC $TargetArch library $lib. Install the Visual Studio C++ $TargetArch build tools."
+        }
+    }
+}
+
+function Invoke-VsCommand {
+    param(
+        [string]$VsInstall,
+        [string]$TargetArch,
+        [string]$Command
+    )
+
+    $vsDevCmd = Get-VsToolPath $VsInstall "Common7\Tools\VsDevCmd.bat"
+    $hostArch = "x64"
+    $cmdLine = "`"$vsDevCmd`" -arch=$TargetArch -host_arch=$hostArch && $Command"
+    & cmd.exe /s /c $cmdLine
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "Driver uninstall failed. Aborting."
-        exit 1
+        throw "Command failed with exit code $LASTEXITCODE."
     }
-    Write-Host "Driver uninstalled successfully."
 }
 
-# Step 3: Install new driver
-Write-Host "Step 3: Installing new driver..."
-$infPath = Join-Path $buildDir $infName
-pnputil /add-driver $infPath /install
+function Invoke-CMakeBuild {
+    param(
+        [string]$VsInstall,
+        [string]$TargetArch
+    )
+
+    $cmake = Get-VsToolPath $VsInstall "Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
+    $ninja = Get-VsToolPath $VsInstall "Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe"
+    $clangCl = Get-VsToolPath $VsInstall "VC\Tools\Llvm\x64\bin\clang-cl.exe"
+
+    $normalizedArch = Convert-ArchName $TargetArch
+    Assert-MsvcTargetLibraries $VsInstall $normalizedArch
+
+    $clangTarget = Get-ClangTarget $normalizedArch
+    $buildDir = Join-Path $repoRoot "out\build\$normalizedArch-Clang-$Config"
+    $installDir = Join-Path $repoRoot "out\install\$normalizedArch-Clang-$Config"
+
+    Write-Host "Configuring $normalizedArch $Config..."
+    $configureCommand = @(
+        "`"$cmake`"",
+        "-S `"$repoRoot`"",
+        "-B `"$buildDir`"",
+        "-G Ninja",
+        "-DCMAKE_MAKE_PROGRAM=`"$ninja`"",
+        "-DCMAKE_C_COMPILER=`"$clangCl`"",
+        "-DCMAKE_CXX_COMPILER=`"$clangCl`"",
+        "-DCMAKE_C_COMPILER_TARGET=$clangTarget",
+        "-DCMAKE_CXX_COMPILER_TARGET=$clangTarget",
+        "-DCMAKE_BUILD_TYPE=$Config",
+        "-DCMAKE_INSTALL_PREFIX=`"$installDir`""
+    ) -join " "
+    Invoke-VsCommand $VsInstall $normalizedArch $configureCommand
+
+    Write-Host "Building $normalizedArch $Config..."
+    $buildArgs = @("`"$cmake`"", "--build `"$buildDir`"")
+    if ($CleanFirst) {
+        $buildArgs += "--clean-first"
+    }
+    if ($VerboseBuild) {
+        $buildArgs += "-v"
+    }
+
+    Invoke-VsCommand $VsInstall $normalizedArch ($buildArgs -join " ")
+
+    $dllPath = Join-Path $buildDir "$cmakeName.dll"
+    $infPath = Join-Path $buildDir "$cmakeName.inf"
+    if (!(Test-Path -LiteralPath $dllPath)) {
+        throw "Expected DLL was not produced: $dllPath"
+    }
+    if (!(Test-Path -LiteralPath $infPath)) {
+        throw "Expected INF was not produced: $infPath"
+    }
+
+    Write-Host "Built:"
+    Write-Host "  $dllPath"
+    Write-Host "  $infPath"
+}
+
+$vsInstall = Find-VisualStudio
+$targetArchs = if ($Arch -eq "all") {
+    @("x64", "arm64")
+} else {
+    @($Arch)
+}
+
+foreach ($targetArch in $targetArchs) {
+    Invoke-CMakeBuild $vsInstall $targetArch
+}
+
+Write-Host "Build succeeded."
