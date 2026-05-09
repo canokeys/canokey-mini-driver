@@ -5,6 +5,8 @@ param(
     [ValidateSet("Debug", "Release", "RelWithDebInfo", "MinSizeRel")]
     [string]$Config = "Debug",
 
+    [string]$Python3Executable,
+
     [switch]$CleanFirst,
     [switch]$VerboseBuild
 )
@@ -18,6 +20,15 @@ if ([string]::IsNullOrWhiteSpace($repoRoot)) {
 
 $cmakeName = "canokey-minidriver"
 $vsWhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+
+if ([string]::IsNullOrWhiteSpace($Python3Executable) -and ![string]::IsNullOrWhiteSpace($env:Python3_EXECUTABLE)) {
+    $Python3Executable = $env:Python3_EXECUTABLE
+}
+
+if (![string]::IsNullOrWhiteSpace($Python3Executable)) {
+    $resolvedPython = Resolve-Path -LiteralPath $Python3Executable -ErrorAction Stop
+    $Python3Executable = $resolvedPython.ProviderPath
+}
 
 function Find-VisualStudio {
     if (Test-Path -LiteralPath $vsWhere) {
@@ -158,7 +169,11 @@ function Invoke-CMakeBuild {
         "-DCMAKE_CXX_COMPILER_TARGET=$clangTarget",
         "-DCMAKE_BUILD_TYPE=$Config",
         "-DCMAKE_INSTALL_PREFIX=`"$installDir`""
-    ) -join " "
+    )
+    if (![string]::IsNullOrWhiteSpace($Python3Executable)) {
+        $configureCommand += "-DPython3_EXECUTABLE=`"$Python3Executable`""
+    }
+    $configureCommand = $configureCommand -join " "
     Invoke-VsCommand $VsInstall $normalizedArch $configureCommand
 
     Write-Host "Building $normalizedArch $Config..."
