@@ -129,7 +129,7 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
   pCardData->pfnCardAuthenticateChallenge = NULL;              // No (opt)
   pCardData->pfnCardUnblockPin = NULL;                         // No (opt)
   pCardData->pfnCardChangeAuthenticator = NULL;                // No (opt)
-  pCardData->pfnCardDeauthenticate = NULL;                     // Yes (opt)
+  pCardData->pfnCardDeauthenticate = NULL;                     // No (opt, NULL means Base CSP may reset the card)
   pCardData->pfnCardCreateDirectory = NULL;                    // No
   pCardData->pfnCardDeleteDirectory = NULL;                    // No
   pCardData->pfnCardCreateFile = NULL;                         // No
@@ -195,6 +195,7 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
   for (uintptr_t *p = begin; p <= end; p++) {
     if (*p == 0 &&
         !(p == (uintptr_t *)&pCardData->pvUnused3 || p == (uintptr_t *)&pCardData->pvUnused4 ||
+          p == (uintptr_t *)&pCardData->pfnCardDeauthenticate ||
           p == (uintptr_t *)&pCardData->pfnCspGetDHAgreement || p == (uintptr_t *)&pCardData->pfnCspUnpadData)) {
       CMD_ERROR("pCardData has NULL entry point at offset %lld to pfnCardDeleteContext, check CardAcquireContext!\n",
                 p - begin);
