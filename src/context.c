@@ -14,7 +14,6 @@
 // would be silently ignored by CSP.
 #define INVOKE_X_ON_NO_IMPL_FUNCS(X) \
 X(CardDeleteContainer) \
-X(CardCreateContainer) \
 X(CardGetChallenge) \
 X(CardAuthenticateChallenge) \
 X(CardUnblockPin) \
@@ -35,8 +34,7 @@ X(CardGetAlgorithmProperty) \
 X(CardGetKeyProperty) \
 X(CardSetKeyProperty) \
 X(CardDestroyKey) \
-X(CardProcessEncryptedData) \
-X(CardCreateContainerEx)
+X(CardProcessEncryptedData)
 
 #define CMD_NO_IMPL_FUNC_NAME(NAME) __cmd_noimpl__ ## NAME
 #define CMD_GEN_NO_IMPL_FUNC(NAME) DWORD WINAPI CMD_NO_IMPL_FUNC_NAME(NAME)(__inout PCARD_DATA pCardData, ...) { \
@@ -122,7 +120,7 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
   pCardData->pfnCardDeleteContext = CardDeleteContext;         // Yes
   pCardData->pfnCardQueryCapabilities = CardQueryCapabilities; // Yes
   pCardData->pfnCardDeleteContainer = NULL;                    // No
-  pCardData->pfnCardCreateContainer = NULL;                    // No
+  pCardData->pfnCardCreateContainer = CardCreateContainer;     // Yes
   pCardData->pfnCardGetContainerInfo = CardGetContainerInfo;   // Yes
   pCardData->pfnCardAuthenticatePin = CardAuthenticatePin;     // Yes
   pCardData->pfnCardGetChallenge = NULL;                       // No (opt)
@@ -162,16 +160,16 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
 
   // version 7 additions below here
   // pCardData->pfnCspUnpadData;
-  pCardData->pfnMDImportSessionKey = NULL;       // No (opt)
-  pCardData->pfnMDEncryptData = NULL;            // No (opt)
-  pCardData->pfnCardImportSessionKey = NULL;     // No (opt)
-  pCardData->pfnCardGetSharedKeyHandle = NULL;   // No (opt)
-  pCardData->pfnCardGetAlgorithmProperty = NULL; // No (opt)
-  pCardData->pfnCardGetKeyProperty = NULL;       // No (opt)
-  pCardData->pfnCardSetKeyProperty = NULL;       // No (opt)
-  pCardData->pfnCardDestroyKey = NULL;           // No (opt)
-  pCardData->pfnCardProcessEncryptedData = NULL; // No (opt)
-  pCardData->pfnCardCreateContainerEx = NULL;    // No (opt)
+  pCardData->pfnMDImportSessionKey = NULL;                     // No (opt)
+  pCardData->pfnMDEncryptData = NULL;                          // No (opt)
+  pCardData->pfnCardImportSessionKey = NULL;                   // No (opt)
+  pCardData->pfnCardGetSharedKeyHandle = NULL;                 // No (opt)
+  pCardData->pfnCardGetAlgorithmProperty = NULL;               // No (opt)
+  pCardData->pfnCardGetKeyProperty = NULL;                     // No (opt)
+  pCardData->pfnCardSetKeyProperty = NULL;                     // No (opt)
+  pCardData->pfnCardDestroyKey = NULL;                         // No (opt)
+  pCardData->pfnCardProcessEncryptedData = NULL;               // No (opt)
+  pCardData->pfnCardCreateContainerEx = CardCreateContainerEx; // Yes (opt)
 
   // fill in generated stubs
 #pragma clang diagnostic push
@@ -195,8 +193,8 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
   for (uintptr_t *p = begin; p <= end; p++) {
     if (*p == 0 &&
         !(p == (uintptr_t *)&pCardData->pvUnused3 || p == (uintptr_t *)&pCardData->pvUnused4 ||
-          p == (uintptr_t *)&pCardData->pfnCardDeauthenticate ||
-          p == (uintptr_t *)&pCardData->pfnCspGetDHAgreement || p == (uintptr_t *)&pCardData->pfnCspUnpadData)) {
+          p == (uintptr_t *)&pCardData->pfnCardDeauthenticate || p == (uintptr_t *)&pCardData->pfnCspGetDHAgreement ||
+          p == (uintptr_t *)&pCardData->pfnCspUnpadData)) {
       CMD_ERROR("pCardData has NULL entry point at offset %lld to pfnCardDeleteContext, check CardAcquireContext!\n",
                 p - begin);
     }

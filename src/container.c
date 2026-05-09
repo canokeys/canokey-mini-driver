@@ -2,13 +2,172 @@
 #include <wchar.h>
 
 #include "cardmod.h"
+#include "config.h"
 #include "logging.h"
 #include "minidriver.h"
+
+#define CMD_PIV_OBJECT_ID_MIN 1
+#define CMD_PIV_OBJECT_ID_MAX MAX_SLOT_ID
 
 typedef struct {
   PUBLICKEYSTRUC publickeystruc;
   RSAPUBKEY rsapubkey;
 } PUBRSAKEYSTRUCT_BASE;
+
+static DWORD map_pkcs11_container_error(CK_RV rv) {
+  switch (rv) {
+  case CKR_OK:
+    return SCARD_S_SUCCESS;
+  case CKR_USER_NOT_LOGGED_IN:
+    return SCARD_W_SECURITY_VIOLATION;
+  case CKR_SESSION_READ_ONLY:
+    return SCARD_E_INVALID_PARAMETER;
+  case CKR_PIN_INCORRECT:
+  case CKR_PIN_INVALID:
+  case CKR_PIN_LEN_RANGE:
+  case CKR_PIN_EXPIRED:
+    return SCARD_W_WRONG_CHV;
+  case CKR_PIN_LOCKED:
+    return SCARD_W_CHV_BLOCKED;
+  case CKR_KEY_SIZE_RANGE:
+  case CKR_MECHANISM_INVALID:
+  case CKR_ATTRIBUTE_VALUE_INVALID:
+  case CKR_TEMPLATE_INCONSISTENT:
+    return SCARD_E_INVALID_PARAMETER;
+  case CKR_HOST_MEMORY:
+    return SCARD_E_NO_MEMORY;
+  default:
+    return SCARD_F_INTERNAL_ERROR;
+  }
+}
+
+static CK_BYTE container_index_to_object_id(BYTE bContainerIndex) { return (CK_BYTE)(bContainerIndex + 1); }
+
+static DWORD validate_create_container_request(BYTE bContainerIndex, DWORD dwFlags, DWORD dwKeySpec, DWORD dwKeySize,
+                                               PBYTE pbKeyData) {
+  if (bContainerIndex >= MAX_SLOT_ID) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid container index");
+  }
+  if (dwFlags != CARD_CREATE_CONTAINER_KEY_GEN && dwFlags != CARD_CREATE_CONTAINER_KEY_IMPORT) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid container creation flags");
+  }
+  if (dwFlags == CARD_CREATE_CONTAINER_KEY_GEN && pbKeyData != NULL) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Key generation does not accept key data");
+  }
+  if (dwFlags == CARD_CREATE_CONTAINER_KEY_IMPORT && pbKeyData == NULL) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Key import requires key data");
+  }
+
+  switch (dwKeySpec) {
+  case AT_SIGNATURE:
+  case AT_KEYEXCHANGE:
+    if (dwKeySize != 2048 && dwKeySize != 3072 && dwKeySize != 4096) {
+      CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported RSA key size");
+    }
+    CMD_RET_OK;
+  case AT_ECDSA_P256:
+  case AT_ECDHE_P256:
+    if (dwKeySize != 256) {
+      CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported P-256 key size");
+    }
+    CMD_RET_OK;
+  case AT_ECDSA_P384:
+  case AT_ECDHE_P384:
+    if (dwKeySize != 384) {
+      CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported P-384 key size");
+    }
+    CMD_RET_OK;
+  default:
+    CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Unsupported key spec");
+  }
+}
+
+static DWORD ec_params_for_key_spec(DWORD dwKeySpec, const CK_BYTE **ppParams, CK_ULONG *pParamsLen) {
+  static const CK_BYTE p256[] = {0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07};
+  static const CK_BYTE p384[] = {0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x22};
+
+  CMD_ENSURE_NONNULL(ppParams, SCARD_E_INVALID_PARAMETER);
+  CMD_ENSURE_NONNULL(pParamsLen, SCARD_E_INVALID_PARAMETER);
+
+  switch (dwKeySpec) {
+  case AT_ECDSA_P256:
+  case AT_ECDHE_P256:
+    *ppParams = p256;
+    *pParamsLen = sizeof(p256);
+    CMD_RET_OK;
+  case AT_ECDSA_P384:
+  case AT_ECDHE_P384:
+    *ppParams = p384;
+    *pParamsLen = sizeof(p384);
+    CMD_RET_OK;
+  default:
+    CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Unsupported EC key spec");
+  }
+}
+
+static DWORD create_keypair(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWORD dwKeySpec, DWORD dwKeySize) {
+  CK_OBJECT_CLASS publicClass = CKO_PUBLIC_KEY;
+  CK_OBJECT_CLASS privateClass = CKO_PRIVATE_KEY;
+  CK_BYTE objectId = container_index_to_object_id(bContainerIndex);
+  CK_BBOOL token = CK_TRUE;
+  CK_BBOOL privateKey = CK_TRUE;
+  CK_BBOOL alwaysAuthenticate = CK_FALSE;
+  CK_OBJECT_HANDLE publicKey = CK_INVALID_HANDLE;
+  CK_OBJECT_HANDLE privateKeyHandle = CK_INVALID_HANDLE;
+  CK_MECHANISM mechanism = {0};
+  CK_ATTRIBUTE publicTemplate[5];
+  CK_ULONG publicCount = 0;
+  CK_ATTRIBUTE privateTemplate[6];
+  CK_ULONG privateCount = 0;
+
+  const CMD_CONFIG *config = cmd_get_config();
+  if (config->new_key_touch_policy == CMD_NEW_KEY_TOUCH_POLICY_ALWAYS) {
+    alwaysAuthenticate = CK_TRUE;
+  }
+
+  publicTemplate[publicCount++] = (CK_ATTRIBUTE){CKA_CLASS, &publicClass, sizeof(publicClass)};
+  publicTemplate[publicCount++] = (CK_ATTRIBUTE){CKA_ID, &objectId, sizeof(objectId)};
+  publicTemplate[publicCount++] = (CK_ATTRIBUTE){CKA_TOKEN, &token, sizeof(token)};
+
+  privateTemplate[privateCount++] = (CK_ATTRIBUTE){CKA_CLASS, &privateClass, sizeof(privateClass)};
+  privateTemplate[privateCount++] = (CK_ATTRIBUTE){CKA_ID, &objectId, sizeof(objectId)};
+  privateTemplate[privateCount++] = (CK_ATTRIBUTE){CKA_TOKEN, &token, sizeof(token)};
+  privateTemplate[privateCount++] = (CK_ATTRIBUTE){CKA_PRIVATE, &privateKey, sizeof(privateKey)};
+  privateTemplate[privateCount++] =
+      (CK_ATTRIBUTE){CKA_ALWAYS_AUTHENTICATE, &alwaysAuthenticate, sizeof(alwaysAuthenticate)};
+
+  if (dwKeySpec == AT_SIGNATURE || dwKeySpec == AT_KEYEXCHANGE) {
+    CK_ULONG modulusBits = dwKeySize;
+    mechanism.mechanism = CKM_RSA_PKCS_KEY_PAIR_GEN;
+    publicTemplate[publicCount++] = (CK_ATTRIBUTE){CKA_MODULUS_BITS, &modulusBits, sizeof(modulusBits)};
+  } else {
+    const CK_BYTE *ecParams = NULL;
+    CK_ULONG ecParamsLen = 0;
+    DWORD ret = ec_params_for_key_spec(dwKeySpec, &ecParams, &ecParamsLen);
+    if (ret != SCARD_S_SUCCESS) {
+      return ret;
+    }
+    mechanism.mechanism = CKM_EC_KEY_PAIR_GEN;
+    publicTemplate[publicCount++] = (CK_ATTRIBUTE){CKA_EC_PARAMS, (CK_BYTE_PTR)ecParams, ecParamsLen};
+  }
+
+  CK_RV rv = C_GenerateKeyPair(pContext->session, &mechanism, publicTemplate, publicCount, privateTemplate,
+                               privateCount, &publicKey, &privateKeyHandle);
+  if (rv != CKR_OK) {
+    CMD_RETURN(map_pkcs11_container_error(rv), "C_GenerateKeyPair failed");
+  }
+
+  rv = read_canokey(pContext->session, &pContext->canokey);
+  if (rv != CKR_OK) {
+    CMD_RETURN(map_pkcs11_container_error(rv), "Failed to refresh CanoKey metadata");
+  }
+  DWORD ret = GenerateCardIdentifier(pContext);
+  if (ret != SCARD_S_SUCCESS) {
+    CMD_RETURN(ret, "Failed to refresh card identifier");
+  }
+
+  CMD_RET_OK;
+}
 
 static DWORD AllocRsaPublicKeyBlob(const SLOT *slot, ALG_ID keyAlg, PBYTE *ppbKey, PDWORD pcbKey) {
   PUBRSAKEYSTRUCT_BASE keyHeader;
@@ -66,6 +225,41 @@ static DWORD EcPublicKeyMagic(const SLOT *slot, BOOL derive, ULONG *pMagic) {
   default:
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Unsupported EC key size");
   }
+}
+
+DWORD WINAPI CardCreateContainer(__in PCARD_DATA pCardData, __in BYTE bContainerIndex, __in DWORD dwFlags,
+                                 __in DWORD dwKeySpec, __in DWORD dwKeySize, __in PBYTE pbKeyData) {
+  CMD_LOG_FUNC("pCardData %p, bContainerIndex %d, dwFlags %x, dwKeySpec %x, dwKeySize %d, pbKeyData %p", pCardData,
+               bContainerIndex, dwFlags, dwKeySpec, dwKeySize, pbKeyData);
+
+  CMD_NONNULL_PARAM(pCardData);
+
+  INJECT_HANDLES();
+  CMD_GET_CTX(pCardData, pContext);
+
+  DWORD ret = validate_create_container_request(bContainerIndex, dwFlags, dwKeySpec, dwKeySize, pbKeyData);
+  if (ret != SCARD_S_SUCCESS) {
+    return ret;
+  }
+
+  if (dwFlags == CARD_CREATE_CONTAINER_KEY_IMPORT) {
+    CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Key import is not implemented yet");
+  }
+
+  return create_keypair(pContext, bContainerIndex, dwKeySpec, dwKeySize);
+}
+
+DWORD WINAPI CardCreateContainerEx(__in PCARD_DATA pCardData, __in BYTE bContainerIndex, __in DWORD dwFlags,
+                                   __in DWORD dwKeySpec, __in DWORD dwKeySize, __in PBYTE pbKeyData,
+                                   __in PIN_ID PinId) {
+  CMD_LOG_FUNC("pCardData %p, bContainerIndex %d, dwFlags %x, dwKeySpec %x, dwKeySize %d, pbKeyData %p, PinId %d",
+               pCardData, bContainerIndex, dwFlags, dwKeySpec, dwKeySize, pbKeyData, PinId);
+
+  if (PinId != ROLE_USER && PinId != ROLE_ADMIN) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid PinId");
+  }
+
+  return CardCreateContainer(pCardData, bContainerIndex, dwFlags, dwKeySpec, dwKeySize, pbKeyData);
 }
 
 /*
