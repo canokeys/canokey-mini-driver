@@ -51,9 +51,11 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
       CMD_RET_OK;
     }
 
-    if (strncmp(pszFileName, szUSER_SIGNATURE_CERT_PREFIX, 3) == 0 ||
-        strncmp(pszFileName, szUSER_KEYEXCHANGE_CERT_PREFIX, 3) == 0) {
+    if (strncmp(pszFileName, szUSER_KEYEXCHANGE_CERT_PREFIX, 3) == 0) {
+      CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Key exchange certificate not found");
+    }
 
+    if (strncmp(pszFileName, szUSER_SIGNATURE_CERT_PREFIX, 3) == 0) {
       BYTE slotIndex = pszFileName[4] - '0';
       if (slotIndex >= pContext->canokey.slotCount)
         CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "File not found");
@@ -151,9 +153,13 @@ static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, 
 
     // Set flags
     rec->bFlags = CONTAINER_MAP_VALID_CONTAINER;
+    if (i == 0) {
+      rec->bFlags |= CONTAINER_MAP_DEFAULT_CONTAINER;
+    }
     // Set signature key size bits
     rec->wSigKeySizeBits = (WORD)(slot->keyType == CKK_RSA ? slot->rsa.modulusBits : slot->ecc.cbPrivate * 8);
-    CMD_DEBUG("Container %d: %ls, wSigKeySizeBits: %d", i, rec->wszGuid, rec->wSigKeySizeBits);
+    CMD_DEBUG("Container %d: %ls, flags: %d, wSigKeySizeBits: %d, wKeyExchangeKeySizeBits: %d", i, rec->wszGuid,
+              rec->bFlags, rec->wSigKeySizeBits, rec->wKeyExchangeKeySizeBits);
   }
   *pcbData = (DWORD)total;
   CMD_DEBUG("Container map generated, size: %d", total);

@@ -39,22 +39,35 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
   INJECT_HANDLES();
 
   CMD_DEBUG("CardSigningInfo: dwVersion %d, bContainerIndex %d, dwKeySpec %d, dwSigningFlags %d, aiHashAlg %d, cbData "
-            "%d, pbData %p, cbSignedData %d, pbSignedData %p, pPaddingInfo %p, dwPaddingType %d",
+            "%d, pbData %p, cbSignedData %d, pbSignedData %p",
             pCardSigningInfo->dwVersion, pCardSigningInfo->bContainerIndex, pCardSigningInfo->dwKeySpec,
             pCardSigningInfo->dwSigningFlags, pCardSigningInfo->aiHashAlg, pCardSigningInfo->cbData,
-            pCardSigningInfo->pbData, pCardSigningInfo->cbSignedData, pCardSigningInfo->pbSignedData,
-            pCardSigningInfo->pPaddingInfo, pCardSigningInfo->dwPaddingType);
+            pCardSigningInfo->pbData, pCardSigningInfo->cbSignedData, pCardSigningInfo->pbSignedData);
 
-  if (pCardSigningInfo->dwVersion < CARD_SIGNING_INFO_CURRENT_VERSION &&
-      pCardData->dwVersion == CARD_DATA_CURRENT_VERSION)
+  if (pCardSigningInfo->dwVersion != CARD_SIGNING_INFO_BASIC_VERSION &&
+      pCardSigningInfo->dwVersion != CARD_SIGNING_INFO_CURRENT_VERSION)
     CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
 
   CMD_GET_CTX(pCardData, pContext);
+  if (pCardSigningInfo->bContainerIndex >= pContext->canokey.slotCount)
+    CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
+
   SLOT *slot = &pContext->canokey.slots[pCardSigningInfo->bContainerIndex];
 
-  if (pCardSigningInfo->dwSigningFlags & CARD_PADDING_INFO_PRESENT) {
+  if (pCardSigningInfo->dwSigningFlags & CARD_BUFFER_SIZE_ONLY) {
+    pCardSigningInfo->cbSignedData = slot->keyType == CKK_RSA ? slot->rsa.modulusBits / 8 : slot->ecc.cbPrivate * 2;
+    CMD_RET_OK;
+  }
+
+  CMD_NONNULL_PARAM(pCardSigningInfo->pbData);
+
+  if (slot->keyType == CKK_RSA) {
     if (pCardSigningInfo->dwVersion != CARD_SIGNING_INFO_CURRENT_VERSION)
-      CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
+      CMD_DEBUG("Using legacy CARD_SIGNING_INFO basic RSA padding path");
+    if ((pCardSigningInfo->dwSigningFlags & CARD_PADDING_INFO_PRESENT) &&
+        pCardSigningInfo->dwVersion != CARD_SIGNING_INFO_CURRENT_VERSION)
+      CMD_RETURN(ERROR_REVISION_MISMATCH, "Padding info requires current signing info version");
+    CMD_ENSURE_NONNULL(g_pfnCspPadData, SCARD_F_INTERNAL_ERROR);
 
     DWORD paddedLen = slot->rsa.modulusBits / 8;
     DWORD ret = g_pfnCspPadData(pCardSigningInfo, paddedLen, &paddedLen, &pCardSigningInfo->pbSignedData);
@@ -85,10 +98,7 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
 
     // reverse the signature
     reverse_bytes(pCardSigningInfo->pbSignedData, pCardSigningInfo->cbSignedData);
-  } else {
-    // if (pCardSigningInfo->dwVersion != CARD_SIGNING_INFO_BASIC_VERSION)
-    //   CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
-    // Sign
+  } else if (slot->keyType == CKK_EC) {
     CK_MECHANISM mech = {CKM_ECDSA, NULL, 0};
     CK_OBJECT_HANDLE hKey = (CKO_PRIVATE_KEY << 8) | slot->id;
     CK_RV rv = C_SignInit(pContext->session, &mech, hKey);
@@ -106,6 +116,8 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
 
     CMD_DEBUG("Signed data: %d bytes (@%p)", pCardSigningInfo->cbSignedData, pCardSigningInfo->pbSignedData);
     CMD_PRINT_HEX(pCardSigningInfo->pbSignedData, pCardSigningInfo->cbSignedData);
+  } else {
+    CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Unsupported key type");
   }
 
   CMD_RET_OK;
