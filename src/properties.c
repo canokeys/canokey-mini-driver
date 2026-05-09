@@ -208,14 +208,18 @@ DWORD WINAPI CardGetContainerProperty(__in PCARD_DATA pCardData, __in BYTE bCont
 
   CMD_NONNULL_PARAM(pCardData);
   CMD_NONNULL_PARAM(wszProperty);
-  CMD_NONNULL_PARAM(pbData);
   CMD_NONNULL_PARAM(pdwDataLen);
+  *pdwDataLen = 0;
+  if (cbData != 0) {
+    CMD_NONNULL_PARAM(pbData);
+  }
   (void)bContainerIndex;
 
   INJECT_HANDLES();
 
   CMD_CHECK_DW_FLAGS;
   if (wcscmp(wszProperty, CCP_PIN_IDENTIFIER) == 0) {
+    *pdwDataLen = sizeof(PIN_ID);
     if (cbData < sizeof(PIN_ID)) {
       CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
     }

@@ -14,6 +14,9 @@ static DWORD map_pkcs11_pin_error(CK_RV rv) {
     return SCARD_S_SUCCESS;
   case CKR_USER_PIN_NOT_INITIALIZED:
   case CKR_PIN_INCORRECT:
+  case CKR_PIN_INVALID:
+  case CKR_PIN_LEN_RANGE:
+  case CKR_PIN_EXPIRED:
     return SCARD_W_WRONG_CHV;
   case CKR_PIN_LOCKED:
     return SCARD_W_CHV_BLOCKED;
@@ -25,6 +28,17 @@ static DWORD map_pkcs11_pin_error(CK_RV rv) {
   default:
     return SCARD_F_INTERNAL_ERROR;
   }
+}
+
+static DWORD map_pkcs11_login_error(CK_RV rv, BYTE pinTries) {
+  if (rv == CKR_PIN_INCORRECT || rv == CKR_PIN_INVALID || rv == CKR_PIN_LEN_RANGE || rv == CKR_PIN_EXPIRED ||
+      rv == CKR_USER_PIN_NOT_INITIALIZED) {
+    return pinTries > 0 ? SCARD_W_WRONG_CHV : SCARD_W_CHV_BLOCKED;
+  }
+  if (rv == CKR_USER_NOT_LOGGED_IN) {
+    return SCARD_F_INTERNAL_ERROR;
+  }
+  return map_pkcs11_pin_error(rv);
 }
 
 /*
@@ -78,7 +92,11 @@ DWORD WINAPI CardAuthenticateEx(__in PCARD_DATA pCardData, __in PIN_ID PinId, __
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid PinId");
   }
 
-  if (dwFlags & CARD_AUTHENTICATE_GENERATE_SESSION_PIN) {
+  if ((dwFlags & ~(CARD_AUTHENTICATE_GENERATE_SESSION_PIN | CARD_AUTHENTICATE_SESSION_PIN | CARD_PIN_SILENT_CONTEXT)) !=
+      0) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid dwFlags");
+  }
+  if ((dwFlags & (CARD_AUTHENTICATE_GENERATE_SESSION_PIN | CARD_AUTHENTICATE_SESSION_PIN)) != 0) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Session PIN not supported");
   }
 
@@ -105,7 +123,7 @@ DWORD WINAPI CardAuthenticateEx(__in PCARD_DATA pCardData, __in PIN_ID PinId, __
   if (rv != CKR_OK) {
     // If the card minidriver returns a nonzero value from this function,
     // the Base CSP/KSP resets the card
-    CMD_RETURN(pinTries > 0 ? SCARD_W_WRONG_CHV : SCARD_W_CHV_BLOCKED, "C_Login failed");
+    CMD_RETURN(map_pkcs11_login_error(rv, pinTries), "C_Login failed");
   } else {
     CMD_RET_OK;
   }

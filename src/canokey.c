@@ -41,6 +41,28 @@ CK_BBOOL canokey_slot_can_derive(const SLOT *slot) {
   return slot != NULL && (slot->capabilities & CANOKEY_SLOT_CAP_DERIVE) != 0 && slot->keyType == CKK_EC;
 }
 
+static CK_RV unpack_ec_point(SLOT *slot, CK_ULONG value_len) {
+  if (value_len == CK_UNAVAILABLE_INFORMATION || value_len < 3 || value_len > sizeof(ECC_PUB_KEY)) {
+    CMD_RETURN(CKR_ATTRIBUTE_VALUE_INVALID, "Invalid EC point length");
+  }
+
+  CK_ULONG coordinate_len = value_len - 1;
+  if (coordinate_len % 2 != 0 || coordinate_len / 2 > sizeof(slot->ecc.x)) {
+    CMD_RETURN(CKR_ATTRIBUTE_VALUE_INVALID, "Invalid EC coordinate length");
+  }
+
+  CK_BYTE point[sizeof(ECC_PUB_KEY)];
+  memcpy(point, &slot->ecc, value_len);
+  if (point[0] != 0x04) {
+    CMD_RETURN(CKR_ATTRIBUTE_VALUE_INVALID, "Only uncompressed EC points are supported");
+  }
+
+  slot->ecc.cbPrivate = coordinate_len / 2;
+  memcpy(slot->ecc.x, point + 1, slot->ecc.cbPrivate);
+  memcpy(slot->ecc.y, point + 1 + slot->ecc.cbPrivate, slot->ecc.cbPrivate);
+  return CKR_OK;
+}
+
 /**
  * Function: read_canokey
  *
@@ -108,8 +130,9 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
       reverse_bytes(slot->rsa.modulus, slot->rsa.modulusBits / 8);
       CMD_DEBUG("Slot %d: keyType = CKK_RSA, modulusBits = %d", i, slot->rsa.modulusBits);
     } else if (slot->keyType == CKK_EC) {
-      slot->ecc.cbPrivate = (attr[3].ulValueLen - 1) / 2;
-      memcpy(slot->ecc.y, slot->ecc.x + slot->ecc.cbPrivate, slot->ecc.cbPrivate);
+      rv = unpack_ec_point(slot, attr[3].ulValueLen);
+      if (rv != CKR_OK)
+        CMD_RETURN(rv, "Invalid EC point");
       CMD_DEBUG("Point:");
       CMD_PRINT_HEX(slot->ecc.x, slot->ecc.cbPrivate);
       CMD_PRINT_HEX(slot->ecc.y, slot->ecc.cbPrivate);
