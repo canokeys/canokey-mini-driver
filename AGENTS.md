@@ -156,10 +156,10 @@ Start-Sleep -Seconds 6
   `CardAcquireContext`, reads `mscp/cmapfile` and `mscp/kscNN`, prompts through
   `CredentialUIBroker.exe`, then reaches `CardAuthenticateEx` and
   `CardSignData`.
-- For targeted signing coverage, use:
+- For the full API-level crypto matrix, use:
 
 ```powershell
-.\scripts\sign-test.ps1
+.\scripts\crypto-test.ps1
 ```
 
   It uses `CryptGetProvParam(PP_ENUMCONTAINERS)` and `NCryptEnumKeys` for API
@@ -169,6 +169,11 @@ Start-Sleep -Seconds 6
   PKCS#1 and OAEP-SHA256 decrypt. When an ECDH KSP key is discovered, it tests
   `BCRYPT_KDF_RAW_SECRET` against a software-generated peer key. Use
   `-SkipBuild -SkipInstall -SkipReset` for fast reruns.
+- For focused reruns, use `.\scripts\sign-test.ps1`,
+  `.\scripts\decrypt-test.ps1`, or `.\scripts\derive-test.ps1`. They share
+  `scripts\minidriver-test-common.ps1`, so `crypto-test.ps1` can build,
+  debug-install, reset, discover once, and then run all three categories in a
+  single PowerShell process.
 - The current development card has useful PIV material in:
 
 ```text

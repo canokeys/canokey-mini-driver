@@ -7,6 +7,8 @@ param(
     [string[]]$BaseCspContainer,
     [string[]]$RsaKspContainer,
     [string[]]$EccKspContainer,
+    [string[]]$EcdhKspContainer,
+    [string[]]$DecryptKspContainer,
     [switch]$RunScinfo,
     [switch]$SkipBuild,
     [switch]$SkipInstall,
@@ -41,7 +43,9 @@ try {
         -Discovery $discovery `
         -BaseCspContainer $BaseCspContainer `
         -RsaKspContainer $RsaKspContainer `
-        -EccKspContainer $EccKspContainer
+        -EccKspContainer $EccKspContainer `
+        -EcdhKspContainer $EcdhKspContainer `
+        -DecryptKspContainer $DecryptKspContainer
 
     Write-MinidriverTestDiscovery -Discovery $discovery -Selection $selection
 
@@ -49,11 +53,21 @@ try {
         return
     }
 
-    $results = @(Invoke-MinidriverSignTests `
-            -Selection $selection `
-            -ReaderName $ReaderName `
-            -PinArg $pinArg `
-            -ContinueOnError:$ContinueOnError)
+    $results = @()
+    $results += Invoke-MinidriverSignTests `
+        -Selection $selection `
+        -ReaderName $ReaderName `
+        -PinArg $pinArg `
+        -ContinueOnError:$ContinueOnError
+    $results += Invoke-MinidriverDecryptTests `
+        -Selection $selection `
+        -PinArg $pinArg `
+        -ContinueOnError:$ContinueOnError
+    $results += Invoke-MinidriverDeriveTests `
+        -Selection $selection `
+        -PinArg $pinArg `
+        -ContinueOnError:$ContinueOnError
+
     Complete-MinidriverTestRun -Results $results
 } finally {
     Pop-Location

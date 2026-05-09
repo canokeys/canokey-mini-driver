@@ -126,15 +126,15 @@ above.
 enumeration, public-key matching, PIN authentication, and private-key signing
 through both the legacy Base Smart Card CSP and the Smart Card KSP paths.
 
-## Signing Matrix Test
+## API Crypto Tests
 
-For targeted signing coverage, use:
+For the full local API-level crypto matrix, use:
 
 ```powershell
-.\scripts\sign-test.ps1
+.\scripts\crypto-test.ps1
 ```
 
-The signing test uses Windows CryptoAPI/CNG APIs directly instead of parsing
+The crypto tests use Windows CryptoAPI/CNG APIs directly instead of parsing
 `certutil` output. It discovers containers with
 `CryptGetProvParam(PP_ENUMCONTAINERS)` and `NCryptEnumKeys`, then verifies:
 
@@ -152,6 +152,19 @@ Like the smoke wrapper, it defaults to building x64 Debug, running the debug
 install target, resetting the board on `COM3`, and passing the local test PIN.
 Use `-SkipBuild -SkipInstall -SkipReset` for a fast rerun against the currently
 loaded DLL, and `-DiscoverOnly` to list containers without signing.
+
+Focused entry points are also available when iterating on one capability:
+
+```powershell
+.\scripts\sign-test.ps1
+.\scripts\decrypt-test.ps1
+.\scripts\derive-test.ps1
+```
+
+All four scripts share `scripts\minidriver-test-common.ps1`, so
+`crypto-test.ps1` can build, debug-install, reset, discover once, and then run
+signing, decrypt, and derive tests without recompiling or reloading between
+groups.
 
 For the current development card, the full matrix passes with 9A RSA-2048
 signing, 9C EC P-256 signing plus ECDH raw-secret derivation, and 9D RSA-2048

@@ -16,8 +16,9 @@ installation, and broader PIV slot coverage are still in progress.
   `C:\canokey-minidriver\` and registering that path under the CanoKey ATR.
 - Debug logs are written under `C:\canokey-minidriver\logs\` by default.
 - `certutil -scinfo` can see the card and current certificates.
-- `scripts\sign-test.ps1` exercises the minidriver through Windows CAPI/CNG
-  APIs instead of parsing command output.
+- `scripts\crypto-test.ps1` exercises the minidriver through Windows CAPI/CNG
+  APIs instead of parsing command output. The same checks can be run in focused
+  groups with `sign-test.ps1`, `decrypt-test.ps1`, and `derive-test.ps1`.
 - The current development card has been tested with 9A RSA-2048 signing, 9C
   EC P-256 signing plus ECDH raw-secret derivation, and 9D RSA-2048 signing
   plus key exchange/decryption.
@@ -81,14 +82,15 @@ Useful local checks:
 
 ```powershell
 .\scripts\smoke-scinfo.ps1
-.\scripts\sign-test.ps1
+.\scripts\crypto-test.ps1
 ```
 
 `smoke-scinfo.ps1` drives `certutil -silent -pin ... -scinfo` against the
-CanoKey reader. `sign-test.ps1` uses Windows cryptographic APIs directly to
-enumerate containers and test signing. If matching keys are present, it also
-runs CNG PKCS#1/OAEP-SHA256 RSA decrypt checks and an ECDH raw-secret check
-against a software-generated peer key.
+CanoKey reader. `crypto-test.ps1` uses Windows cryptographic APIs directly to
+enumerate containers and run the full local matrix: signing, RSA decrypt, and
+ECDH raw-secret derivation against a software-generated peer key. For fast
+focused reruns, use `sign-test.ps1`, `decrypt-test.ps1`, or `derive-test.ps1`
+with `-SkipBuild -SkipInstall -SkipReset`.
 
 INF installation is still useful for release-style validation and final
 packaging. For that flow, enable test signing mode if needed, install the

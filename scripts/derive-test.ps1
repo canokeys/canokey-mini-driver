@@ -4,9 +4,7 @@ param(
     [string]$Arch = "x64",
     [string]$Config = "Debug",
     [string]$ComPort = "COM3",
-    [string[]]$BaseCspContainer,
-    [string[]]$RsaKspContainer,
-    [string[]]$EccKspContainer,
+    [string[]]$EcdhKspContainer,
     [switch]$RunScinfo,
     [switch]$SkipBuild,
     [switch]$SkipInstall,
@@ -39,9 +37,7 @@ try {
     $discovery = Get-MinidriverTestDiscovery
     $selection = Select-MinidriverTestKeys `
         -Discovery $discovery `
-        -BaseCspContainer $BaseCspContainer `
-        -RsaKspContainer $RsaKspContainer `
-        -EccKspContainer $EccKspContainer
+        -EcdhKspContainer $EcdhKspContainer
 
     Write-MinidriverTestDiscovery -Discovery $discovery -Selection $selection
 
@@ -49,9 +45,8 @@ try {
         return
     }
 
-    $results = @(Invoke-MinidriverSignTests `
+    $results = @(Invoke-MinidriverDeriveTests `
             -Selection $selection `
-            -ReaderName $ReaderName `
             -PinArg $pinArg `
             -ContinueOnError:$ContinueOnError)
     Complete-MinidriverTestRun -Results $results
