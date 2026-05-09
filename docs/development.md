@@ -56,6 +56,7 @@ Windows Registry Editor Version 5.00
 "LogLevel"="debug"
 "LogSensitiveData"=dword:00000000
 "NewKeyTouchPolicy"=dword:00000001
+"NewKeyPinPolicy"=dword:00000002
 "PinCacheTimeout"=dword:0000003c
 ```
 
@@ -119,8 +120,11 @@ Supported values:
   traffic is needed for local debugging.
 - `NewKeyTouchPolicy` (`REG_DWORD`): YubiKey-style touch policy for keys
   created/imported through the minidriver: `1` = never, `2` = always,
-  `3` = cached. The default is `1`. This is read now but has no effect until
-  key creation/import is implemented.
+  `3` = cached. The default is `1`.
+- `NewKeyPinPolicy` (`REG_DWORD`): optional YubiKey-style PIN policy override
+  for keys created/imported through the minidriver: `1` = never, `2` = once,
+  `3` = always. If absent, generated keys use PIV defaults: 9E uses never and
+  every other supported key slot uses once.
 - `PinCacheTimeout` (`REG_DWORD`): number of seconds reported to Base CSP in
   `CP_CARD_PIN_INFO` as a timed PIN cache recommendation.
 
@@ -230,6 +234,42 @@ higher-level KDF parameter lists. The `pfnCspGetDHAgreement` member in
 `CARD_DATA` is a callback from the CSP/KSP to the minidriver; keep it as a
 caller-owned callback, and only call it later if supporting KDF buffers such as
 `KDF_SECRET_HANDLE` / `KDF_NCRYPT_SECRET_HANDLE`.
+
+When creating keys through Microsoft Smart Card KSP, callers select the smart
+card provider and reader, not a PIV slot directly. The KSP reads `mscp/cmapfile`
+and chooses a container index for the new key; the minidriver maps container
+indexes `0..5` to PIV object IDs `1..6` (`9A`, `9C`, `9D`, `9E`, `82`, `83`).
+Creating a new smart-card key must not use a silent context: Microsoft documents
+that new smart-card containers can require UI, and local testing showed
+`certreq -q`/`Silent = true` and `NCRYPT_SILENT_FLAG` stop before
+`CardCreateContainer*`. Non-silent `NCryptFinalizeKey` first writes the root
+`cardcf` cache file and an updated `mscp/cmapfile` before continuing toward
+container selection, so keep both writes tolerant even though the authoritative
+state comes from CanoKey metadata.
+
+Local testing also showed that the KSP does not automatically ask for
+`ROLE_ADMIN` when `CardCreateContainer` fails because the underlying PIV
+operation needs the management key. The KSP authenticates `ROLE_USER`, chooses
+the next container from `mscp/cmapfile`, and then calls `CardCreateContainer`.
+For CanoKey/PIV, key generation and private-key import therefore need an
+explicit management-key path, such as a provisioning/debug tool that calls
+`CardAuthenticateEx(ROLE_ADMIN)` first, or a later secure configuration bridge.
+
+YubiKey appears to bridge this gap with its "protect management key with PIN"
+model: the management key is stored on-card in a PIN-protected object, so the
+minidriver can recover it after the normal user PIN prompt and then perform PIV
+management operations on behalf of Windows. CanoKey will need an equivalent
+card-side PIN-protected management-key mechanism, or a local development-only
+configuration such as an explicit management-key registry value, before normal
+Windows KSP enrollment can generate/import PIV keys without a separate
+provisioning tool.
+
+Certificate files (`kscN` and `kxcN`) are different from key generation:
+they are exposed as everyone-read/admin-write files. `CardCreateFile` rejects
+certificate creation unless the requested access condition is
+`EveryoneReadAdminWriteAc`, and `CardWriteFile` requires `ROLE_ADMIN`
+authentication before passing the certificate to PKCS#11. This matches the PIV
+requirement that certificate objects are card-management writes.
 
 ## INF Installation
 

@@ -57,7 +57,9 @@ void cmd_load_config(CMD_CONFIG *config) {
               .level = CMD_LOG_LEVEL_NONE,
               .unsafe_log_apdu = false,
           },
-      .new_key_touch_policy = CMD_NEW_KEY_TOUCH_POLICY_NEVER,
+      .new_key_touch_policy = CNK_PIV_TOUCH_POLICY_NEVER,
+      .has_new_key_pin_policy = false,
+      .new_key_pin_policy = CNK_PIV_PIN_POLICY_ONCE,
       .has_pin_cache_timeout = false,
       .pin_cache_timeout = 0,
   };
@@ -80,9 +82,14 @@ void cmd_load_config(CMD_CONFIG *config) {
 
     DWORD new_key_touch_policy = 0;
     if (read_registry_dword(key, "NewKeyTouchPolicy", &new_key_touch_policy) &&
-        new_key_touch_policy >= CMD_NEW_KEY_TOUCH_POLICY_NEVER &&
-        new_key_touch_policy <= CMD_NEW_KEY_TOUCH_POLICY_CACHED) {
+        new_key_touch_policy >= CNK_PIV_TOUCH_POLICY_NEVER && new_key_touch_policy <= CNK_PIV_TOUCH_POLICY_CACHED) {
       local.new_key_touch_policy = new_key_touch_policy;
+    }
+    DWORD new_key_pin_policy = 0;
+    if (read_registry_dword(key, "NewKeyPinPolicy", &new_key_pin_policy) &&
+        new_key_pin_policy >= CNK_PIV_PIN_POLICY_NEVER && new_key_pin_policy <= CNK_PIV_PIN_POLICY_ALWAYS) {
+      local.has_new_key_pin_policy = true;
+      local.new_key_pin_policy = new_key_pin_policy;
     }
     if (read_registry_dword(key, "PinCacheTimeout", &local.pin_cache_timeout)) {
       local.has_pin_cache_timeout = true;

@@ -226,9 +226,16 @@ EC keys in those slots       -> also ECDH-capable
   DLL; runtime behavior should come from `HKLM\SOFTWARE\Canokeys\ckmd`.
 - Keep registry parsing in the config layer. `LogPath` absence means no
   minidriver or managed PKCS#11 logging, even if `LogLevel` is present.
-  `NewKeyTouchPolicy` is read for future key creation/import work (`1` never,
-  `2` always, `3` cached; default `1`), and `PinCacheTimeout` is reported
-  through `CP_CARD_PIN_INFO`.
+  `NewKeyTouchPolicy` maps to `CKA_CNK_PIV_TOUCH_POLICY` (`1` never, `2`
+  always, `3` cached; default `1`). `NewKeyPinPolicy`, when present, maps to
+  `CKA_CNK_PIV_PIN_POLICY` (`1` never, `2` once, `3` always). If
+  `NewKeyPinPolicy` is absent, generated keys use the PIV defaults: 9E never,
+  all other supported key slots once. `PinCacheTimeout` is reported through
+  `CP_CARD_PIN_INFO`.
+- Microsoft Smart Card KSP key creation chooses a minidriver container index
+  from `mscp/cmapfile`; public KSP properties select provider/reader, not a
+  PIV slot directly. Keep container indexes stable: `0..5` map to PIV object
+  IDs `1..6` (`9A`, `9C`, `9D`, `9E`, `82`, `83`).
 - The minidriver uses CanoKey PKCS#11 managed mode; initialize managed mode
   before `C_Initialize()` when wiring card handles through this layer.
 - `CardAcquireContext` owns one PKCS#11 session in `CMD_CONTEXT`. Always close
@@ -255,6 +262,30 @@ EC keys in those slots       -> also ECDH-capable
   `CardGetFileInfo`, and `CardQueryFreeSpace`. `CP_CARD_GUID` and the `cardid`
   file must be byte-for-byte identical and stable for the token, because
   Windows uses them for cache identity.
+- Treat root `cardcf` as a Base CSP/KSP cache-coherency file. Return a valid
+  `CARD_CACHE_FILE_FORMAT` and accept same-version writes; the authoritative
+  token state still comes from CanoKey metadata and `mscp/cmapfile`.
+- Treat `mscp/cmapfile` similarly: generate it from live key metadata, and
+  accept well-formed writes from KSP as cache synchronization rather than
+  persisting a separate copy.
+- Do not use silent CNG/certreq contexts when debugging Windows smart-card key
+  creation. `NCRYPT_SILENT_FLAG`, `certreq -q`, and `Silent = true` can stop
+  before `CardCreateContainer*`; use non-silent calls and pass PIN/reader
+  properties where possible.
+- Microsoft Smart Card KSP key creation does not automatically ask for
+  `ROLE_ADMIN` when CanoKey/PIV key generation returns `CKU_SO login is
+  required`; it authenticates `ROLE_USER`, writes `cardcf`/`cmapfile`, and then
+  calls `CardCreateContainer`. Use an explicit provisioning/debug path for
+  management-key authentication.
+- YubiKey-style "protect management key with PIN" is the likely production
+  bridge for Windows enrollment: after the normal user PIN prompt, the
+  minidriver can recover an on-card PIN-protected management key and use it for
+  PIV management operations. Without an equivalent CanoKey mechanism, keep any
+  registry-stored management key limited to development/debug workflows.
+- Certificate files (`kscN`/`kxcN`) are everyone-read/admin-write. Report
+  `EveryoneReadAdminWriteAc` for existing cert files, reject certificate
+  `CardCreateFile` calls that request user-write access, and require
+  `ROLE_ADMIN` before `CardWriteFile` writes certificates through PKCS#11.
 - On `ERROR_INSUFFICIENT_BUFFER`, set the returned length before failing so
   Windows callers can retry with the right buffer size.
 - Logging must be best-effort. Failure to open the log file, or calling shutdown

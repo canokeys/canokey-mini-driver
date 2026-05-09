@@ -17,6 +17,14 @@ installation, and broader PIV slot coverage are still in progress.
 - Minidriver configuration is read from `HKLM\SOFTWARE\Canokeys\ckmd`.
   Logging is disabled unless `LogPath` is set there; `LogLevel` and
   `LogSensitiveData` control verbosity and APDU/hex dumps.
+- New key creation can pass CanoKey/YubiKey-style PIN and touch policies to
+  the PKCS#11 layer. By default, generated keys use touch policy never; 9E uses
+  PIN policy never and other supported PIV key slots use PIN policy once.
+- Smart Card KSP creation through Windows still needs more validation. Direct
+  minidriver creation works; KSP creation probes `cardcf` and `cmapfile` before
+  selecting a container, then needs a management-key path for PIV key writes.
+  A YubiKey-style PIN-protected management key is the likely production model;
+  local development can use explicit minidriver provisioning calls.
 - `certutil -scinfo` can see the card and current certificates.
 - `scripts\crypto-test.ps1` exercises the minidriver through Windows CAPI/CNG
   APIs instead of parsing command output. The same checks can be run in focused

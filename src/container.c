@@ -2,6 +2,7 @@
 #include <wchar.h>
 
 #include "cardmod.h"
+#include "config.h"
 #include "logging.h"
 #include "minidriver.h"
 
@@ -119,12 +120,17 @@ static DWORD create_keypair(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWOR
   CK_BYTE objectId = container_index_to_object_id(bContainerIndex);
   CK_BBOOL token = CK_TRUE;
   CK_BBOOL privateKey = CK_TRUE;
+  CK_BYTE pinPolicy = 0;
+  CK_BYTE touchPolicy = 0;
   CK_OBJECT_HANDLE publicKey = CK_INVALID_HANDLE;
   CK_OBJECT_HANDLE privateKeyHandle = CK_INVALID_HANDLE;
   CK_MECHANISM mechanism = {0};
   CK_ATTRIBUTE publicTemplate[5];
   CK_ULONG publicCount = 0;
-  CK_ATTRIBUTE privateTemplate[6];
+  const CMD_CONFIG *config = cmd_get_config();
+  touchPolicy = (CK_BYTE)config->new_key_touch_policy;
+
+  CK_ATTRIBUTE privateTemplate[8];
   CK_ULONG privateCount = 0;
 
   publicTemplate[publicCount++] = (CK_ATTRIBUTE){CKA_CLASS, &publicClass, sizeof(publicClass)};
@@ -135,6 +141,11 @@ static DWORD create_keypair(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWOR
   privateTemplate[privateCount++] = (CK_ATTRIBUTE){CKA_ID, &objectId, sizeof(objectId)};
   privateTemplate[privateCount++] = (CK_ATTRIBUTE){CKA_TOKEN, &token, sizeof(token)};
   privateTemplate[privateCount++] = (CK_ATTRIBUTE){CKA_PRIVATE, &privateKey, sizeof(privateKey)};
+  if (config->has_new_key_pin_policy) {
+    pinPolicy = (CK_BYTE)config->new_key_pin_policy;
+    privateTemplate[privateCount++] = (CK_ATTRIBUTE){CKA_CNK_PIV_PIN_POLICY, &pinPolicy, sizeof(pinPolicy)};
+  }
+  privateTemplate[privateCount++] = (CK_ATTRIBUTE){CKA_CNK_PIV_TOUCH_POLICY, &touchPolicy, sizeof(touchPolicy)};
 
   if (dwKeySpec == AT_SIGNATURE || dwKeySpec == AT_KEYEXCHANGE) {
     CK_ULONG modulusBits = dwKeySize;

@@ -60,6 +60,17 @@ static DWORD AllocCopy(const void *data, DWORD cbData, PBYTE *ppbData, PDWORD pc
   CMD_RET_OK;
 }
 
+static DWORD AllocCacheFile(PBYTE *ppbData, PDWORD pcbData) {
+  CARD_CACHE_FILE_FORMAT cache = {
+      .bVersion = CARD_CACHE_FILE_CURRENT_VERSION,
+      .bPinsFreshness = 0,
+      .wContainersFreshness = 0,
+      .wFilesFreshness = 0,
+  };
+
+  return AllocCopy(&cache, sizeof(cache), ppbData, pcbData);
+}
+
 static CK_RV DigestUpdateSlotPublicKey(CK_SESSION_HANDLE session, const SLOT *slot) {
   if (!canokey_slot_has_key(slot)) {
     return CKR_OK;
@@ -127,6 +138,11 @@ static BYTE GetFileContainerIndex(LPCSTR pszFileName) {
 
 static CK_BYTE ContainerIndexToObjectId(BYTE containerIndex) { return (CK_BYTE)(containerIndex + 1); }
 
+static BOOL IsCertificateFileName(LPCSTR pszFileName) {
+  return strncmp(pszFileName, szUSER_KEYEXCHANGE_CERT_PREFIX, 3) == 0 ||
+         strncmp(pszFileName, szUSER_SIGNATURE_CERT_PREFIX, 3) == 0;
+}
+
 static DWORD GetCertificateFileSlot(CMD_CONTEXT_PTR pContext, LPCSTR pszFileName, BOOL forWrite, SLOT **ppSlot) {
   CMD_ENSURE_NONNULL(pContext, SCARD_E_INVALID_PARAMETER);
   CMD_ENSURE_NONNULL(pszFileName, SCARD_E_INVALID_PARAMETER);
@@ -134,7 +150,7 @@ static DWORD GetCertificateFileSlot(CMD_CONTEXT_PTR pContext, LPCSTR pszFileName
 
   BOOL keyExchangeCert = strncmp(pszFileName, szUSER_KEYEXCHANGE_CERT_PREFIX, 3) == 0;
   BOOL signatureCert = strncmp(pszFileName, szUSER_SIGNATURE_CERT_PREFIX, 3) == 0;
-  if (!keyExchangeCert && !signatureCert) {
+  if (!IsCertificateFileName(pszFileName)) {
     CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "File not found");
   }
 
@@ -195,11 +211,7 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
 
   if (pszDirectoryName == NULL) { // Root directory
     if (strcmp(pszFileName, szCACHE_FILE) == 0) {
-      *ppbData = (PBYTE)g_pfnCspAlloc(6);
-      CMD_ENSURE_NONNULL(*ppbData, SCARD_E_NO_MEMORY);
-      memset(*ppbData, 0, 6);
-      *pcbData = 6;
-      CMD_RET_OK;
+      return AllocCacheFile(ppbData, pcbData);
     }
     if (strcmp(pszFileName, szCARD_IDENTIFIER_FILE) == 0) {
       return AllocCopy(pContext->cardId, sizeof(pContext->cardId), ppbData, pcbData);
@@ -269,6 +281,9 @@ DWORD WINAPI CardCreateFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirecto
   if (AccessCondition != EveryoneReadUserWriteAc && AccessCondition != EveryoneReadAdminWriteAc) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported file access condition");
   }
+  if (IsCertificateFileName(pszFileName) && AccessCondition != EveryoneReadAdminWriteAc) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Certificate files require admin write access");
+  }
   if (cbInitialCreationSize == 0) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid initial file size");
   }
@@ -294,14 +309,34 @@ DWORD WINAPI CardWriteFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
   INJECT_HANDLES();
   CMD_GET_CTX(pCardData, pContext);
 
+  if (pszDirectoryName == NULL && strcmp(pszFileName, szCACHE_FILE) == 0) {
+    if (cbData != sizeof(CARD_CACHE_FILE_FORMAT)) {
+      CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid cache file size");
+    }
+    PCARD_CACHE_FILE_FORMAT cacheFile = (PCARD_CACHE_FILE_FORMAT)pbData;
+    if (cacheFile->bVersion != CARD_CACHE_FILE_CURRENT_VERSION) {
+      CMD_RETURN(ERROR_REVISION_MISMATCH, "Cache file version mismatch");
+    }
+    CMD_RET_OK;
+  }
+
   if (pszDirectoryName == NULL || strcmp(pszDirectoryName, szBASE_CSP_DIR) != 0) {
     CMD_RETURN(SCARD_E_DIR_NOT_FOUND, "Directory not found");
+  }
+  if (strcmp(pszFileName, szCONTAINER_MAP_FILE) == 0) {
+    if (cbData % sizeof(CONTAINER_MAP_RECORD) != 0) {
+      CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid container map size");
+    }
+    CMD_RET_OK;
   }
 
   SLOT *slot = NULL;
   DWORD ret = GetCertificateFileSlot(pContext, pszFileName, TRUE, &slot);
   if (ret != SCARD_S_SUCCESS) {
     return ret;
+  }
+  if (!IS_PIN_SET(pContext->authenticatedPins, ROLE_ADMIN)) {
+    CMD_RETURN(SCARD_W_SECURITY_VIOLATION, "Certificate writes require admin authentication");
   }
 
   CK_OBJECT_CLASS objectClass = CKO_CERTIFICATE;
@@ -350,7 +385,7 @@ DWORD WINAPI CardGetFileInfo(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryN
 
   if (pszDirectoryName == NULL) {
     if (strcmp(pszFileName, szCACHE_FILE) == 0) {
-      pCardFileInfo->cbFileSize = 6;
+      pCardFileInfo->cbFileSize = sizeof(CARD_CACHE_FILE_FORMAT);
       CMD_RET_OK;
     }
     if (strcmp(pszFileName, szCARD_IDENTIFIER_FILE) == 0) {
@@ -380,6 +415,7 @@ DWORD WINAPI CardGetFileInfo(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryN
         CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Key exchange certificate not found");
       }
       pCardFileInfo->cbFileSize = (DWORD)slot->certLen;
+      pCardFileInfo->AccessCondition = EveryoneReadAdminWriteAc;
       CMD_RET_OK;
     }
     if (strncmp(pszFileName, szUSER_SIGNATURE_CERT_PREFIX, 3) == 0) {
@@ -392,6 +428,7 @@ DWORD WINAPI CardGetFileInfo(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryN
         CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Signature certificate not found");
       }
       pCardFileInfo->cbFileSize = (DWORD)slot->certLen;
+      pCardFileInfo->AccessCondition = EveryoneReadAdminWriteAc;
       CMD_RET_OK;
     }
     CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "File not found");
