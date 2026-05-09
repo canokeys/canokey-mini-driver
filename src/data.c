@@ -13,6 +13,12 @@
 
 static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, PDWORD pcbData);
 
+void FillCardFreeSpaceInfo(PCARD_FREE_SPACE_INFO pCardFreeSpaceInfo) {
+  pCardFreeSpaceInfo->dwBytesAvailable = CARD_DATA_VALUE_UNKNOWN;
+  pCardFreeSpaceInfo->dwKeyContainersAvailable = CARD_DATA_VALUE_UNKNOWN;
+  pCardFreeSpaceInfo->dwMaxKeyContainers = MAX_SLOT_ID;
+}
+
 static DWORD AllocCopy(const void *data, DWORD cbData, PBYTE *ppbData, PDWORD pcbData) {
   CMD_ENSURE_NONNULL(ppbData, SCARD_E_INVALID_PARAMETER);
   CMD_ENSURE_NONNULL(pcbData, SCARD_E_INVALID_PARAMETER);
@@ -348,9 +354,7 @@ DWORD WINAPI CardQueryFreeSpace(__in PCARD_DATA pCardData, __in DWORD dwFlags,
     CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
   }
 
-  pCardFreeSpaceInfo->dwBytesAvailable = 0;
-  pCardFreeSpaceInfo->dwKeyContainersAvailable = 0;
-  pCardFreeSpaceInfo->dwMaxKeyContainers = MAX_SLOT_ID;
+  FillCardFreeSpaceInfo(pCardFreeSpaceInfo);
   CMD_RET_OK;
 }
 

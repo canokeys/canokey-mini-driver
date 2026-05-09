@@ -15,9 +15,7 @@ static DWORD getCardFreeSpace(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, 
   }
   PCARD_FREE_SPACE_INFO p = (PCARD_FREE_SPACE_INFO)pbData;
   p->dwVersion = CARD_FREE_SPACE_INFO_CURRENT_VERSION;
-  p->dwBytesAvailable = 0;
-  p->dwKeyContainersAvailable = 0;
-  p->dwMaxKeyContainers = MAX_SLOT_ID;
+  FillCardFreeSpaceInfo(p);
   CMD_RET_OK;
 }
 
@@ -31,7 +29,7 @@ static DWORD getCardCapabilities(PCARD_DATA pCardData, PBYTE pbData, DWORD cbDat
   PCARD_CAPABILITIES p = (PCARD_CAPABILITIES)pbData;
   p->dwVersion = CARD_CAPABILITIES_CURRENT_VERSION;
   p->fCertificateCompression = FALSE;
-  p->fKeyGen = FALSE;
+  p->fKeyGen = TRUE;
   CMD_RET_OK;
 }
 
@@ -57,7 +55,7 @@ static DWORD getCardReadOnly(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, P
   if (cbData < sizeof(BOOL)) {
     CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
   }
-  *(BOOL *)pbData = TRUE;
+  *(BOOL *)pbData = FALSE;
   CMD_RET_OK;
 }
 
@@ -97,8 +95,8 @@ static DWORD getCardGuid(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWOR
 static DWORD getCardPinInfo(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen, DWORD dwFlags) {
   (void)pCardData;
 
-  if ((dwFlags & ROLE_USER) == 0) {
-    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "only ROLE_USER is supported");
+  if (dwFlags != ROLE_USER && dwFlags != ROLE_ADMIN) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "only ROLE_USER and ROLE_ADMIN are supported");
   }
   *pdwDataLen = sizeof(PIN_INFO);
   if (cbData < sizeof(PIN_INFO)) {
@@ -109,18 +107,48 @@ static DWORD getCardPinInfo(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PD
     CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
   }
   p->PinType = AlphaNumericPinType;
-  p->PinPurpose = PrimaryCardPin;
-  p->dwChangePermission = ROLE_ADMIN;  // TODO: check
-  p->dwUnblockPermission = ROLE_ADMIN; // TODO: check
   p->PinCachePolicy.dwVersion = PIN_CACHE_POLICY_CURRENT_VERSION;
-  const CMD_CONFIG *config = cmd_get_config();
-  if (config->has_pin_cache_timeout) {
-    p->PinCachePolicy.PinCachePolicyType = PinCacheTimed;
-    p->PinCachePolicy.dwPinCachePolicyInfo = config->pin_cache_timeout;
-  } else {
-    p->PinCachePolicy.PinCachePolicyType = PinCacheNormal;
+  if (dwFlags == ROLE_ADMIN) {
+    p->PinPurpose = AdministratorPin;
+    p->dwChangePermission = PIN_SET_NONE;
+    p->dwUnblockPermission = PIN_SET_NONE;
+    p->PinCachePolicy.PinCachePolicyType = PinCacheNone;
     p->PinCachePolicy.dwPinCachePolicyInfo = 0;
+  } else {
+    p->PinPurpose = PrimaryCardPin;
+    p->dwChangePermission = CREATE_PIN_SET(ROLE_ADMIN);  // TODO: check
+    p->dwUnblockPermission = CREATE_PIN_SET(ROLE_ADMIN); // TODO: check
+    const CMD_CONFIG *config = cmd_get_config();
+    if (config->has_pin_cache_timeout) {
+      p->PinCachePolicy.PinCachePolicyType = PinCacheTimed;
+      p->PinCachePolicy.dwPinCachePolicyInfo = config->pin_cache_timeout;
+    } else {
+      p->PinCachePolicy.PinCachePolicyType = PinCacheNormal;
+      p->PinCachePolicy.dwPinCachePolicyInfo = 0;
+    }
   }
+  CMD_RET_OK;
+}
+
+static DWORD getCardListPins(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen) {
+  (void)pCardData;
+
+  *pdwDataLen = sizeof(PIN_SET);
+  if (cbData < sizeof(PIN_SET)) {
+    CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
+  }
+  *(PIN_SET *)pbData = CREATE_PIN_SET(ROLE_USER) | CREATE_PIN_SET(ROLE_ADMIN);
+  CMD_RET_OK;
+}
+
+static DWORD getCardAuthenticatedState(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen) {
+  CMD_GET_CTX(pCardData, pContext);
+
+  *pdwDataLen = sizeof(PIN_SET);
+  if (cbData < sizeof(PIN_SET)) {
+    CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
+  }
+  *(PIN_SET *)pbData = pContext->authenticatedPins;
   CMD_RET_OK;
 }
 
@@ -170,9 +198,17 @@ DWORD WINAPI CardGetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty
   if (wcscmp(wszProperty, CP_CARD_PIN_INFO) == 0) {
     return getCardPinInfo(pCardData, pbData, cbData, pdwDataLen, dwFlags);
   }
+  if (wcscmp(wszProperty, CP_CARD_LIST_PINS) == 0) {
+    CMD_CHECK_DW_FLAGS;
+    return getCardListPins(pCardData, pbData, cbData, pdwDataLen);
+  }
+  if (wcscmp(wszProperty, CP_CARD_AUTHENTICATED_STATE) == 0) {
+    CMD_CHECK_DW_FLAGS;
+    return getCardAuthenticatedState(pCardData, pbData, cbData, pdwDataLen);
+  }
   if (wcscmp(wszProperty, CP_CARD_PIN_STRENGTH_VERIFY) == 0) {
-    if ((dwFlags & ROLE_USER) == 0) {
-      CMD_RETURN(SCARD_E_INVALID_PARAMETER, "only ROLE_USER is supported");
+    if (dwFlags != ROLE_USER && dwFlags != ROLE_ADMIN) {
+      CMD_RETURN(SCARD_E_INVALID_PARAMETER, "only ROLE_USER and ROLE_ADMIN are supported");
     }
     *pdwDataLen = sizeof(DWORD);
     if (cbData < sizeof(DWORD)) {
