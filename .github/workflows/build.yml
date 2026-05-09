@@ -4,34 +4,42 @@ on:
   push:
   pull_request:
     branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
-    if: ${{ !contains(github.event.head_commit.message, 'ci skip') }}
+    if: ${{ github.event_name != 'push' || !contains(github.event.head_commit.message, 'ci skip') }}
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2019, windows-2022]
         include:
-          - os: windows-2019
-            cmake-config-args: '-G "Visual Studio 16 2019"'
-          - os: windows-2022
-            cmake-config-args: '-G "Visual Studio 17 2022"'
+          - name: Windows Server 2022 / Visual Studio 2022
+            os: windows-2022
+          - name: Windows Server 2025 / Visual Studio 2022
+            os: windows-2025
+          - name: Windows Server 2025 / Visual Studio 2026
+            os: windows-2025-vs2026
 
-    name: ${{ matrix.os }}
+    name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
-          submodules: 'recursive'
-      - name: Configure
-        run: cmake -S . -B build -T ClangCL -A x64 ${{ matrix.cmake-config-args }}
-      - name: Build
-        run: cmake --build build -v
+          submodules: recursive
+
+      - name: Build x64 Debug
+        shell: pwsh
+        run: .\build.ps1 -Arch x64 -Config Debug -VerboseBuild
+
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: canokey-mini-driver-${{ matrix.os }}
+          if-no-files-found: error
           path: |
-            build/**/canokey-minidriver.*
+            out/build/**/canokey-minidriver.dll
+            out/build/**/canokey-minidriver.inf
