@@ -48,7 +48,7 @@ static bool ascii_equals_ignore_case(const char *lhs, const char *rhs) {
   return *lhs == '\0' && *rhs == '\0';
 }
 
-static bool parse_log_level(const char *value, int *level) {
+bool cmd_parse_log_level(const char *value, int *level) {
   if (value == NULL || level == NULL) {
     return false;
   }
@@ -70,7 +70,7 @@ static bool parse_log_level(const char *value, int *level) {
   return false;
 }
 
-static bool parse_bool(const char *value, bool *result) {
+bool cmd_parse_bool(const char *value, bool *result) {
   if (value == NULL || result == NULL) {
     return false;
   }
@@ -88,27 +88,6 @@ static bool parse_bool(const char *value, bool *result) {
   }
 
   return false;
-}
-
-CMD_LOG_CONFIG cmd_logging_config_from_env(void) {
-  CMD_LOG_CONFIG config = {
-      .level = CMD_LOG_LEVEL_WARN,
-      .unsafe_log_apdu = false,
-  };
-
-  int level = CMD_LOG_LEVEL_NONE;
-  const char *level_env = getenv("CNK_LOG_LEVEL");
-  if (parse_log_level(level_env, &level)) {
-    config.level = level;
-  }
-
-  bool unsafe_log_apdu = false;
-  const char *unsafe_log_apdu_env = getenv("CNK_UNSAFE_LOG_APDU");
-  if (parse_bool(unsafe_log_apdu_env, &unsafe_log_apdu)) {
-    config.unsafe_log_apdu = unsafe_log_apdu;
-  }
-
-  return config;
 }
 
 int cmd_init_logging(const char *log_file, CMD_LOG_CONFIG config) {
@@ -185,13 +164,9 @@ FILE *cmd_get_log_file(void) {
   return fp;
 }
 
-bool cmd_should_log(const int level) {
-  return level >= atomic_load(&g_log_level);
-}
+bool cmd_should_log(const int level) { return level >= atomic_load(&g_log_level); }
 
-bool cmd_unsafe_log_apdu_enabled(void) {
-  return atomic_load(&g_unsafe_log_apdu);
-}
+bool cmd_unsafe_log_apdu_enabled(void) { return atomic_load(&g_unsafe_log_apdu); }
 
 static void print_time(FILE *out) {
   struct timespec ts;
@@ -327,8 +302,8 @@ void cmd_print_stack() {
     line.SizeOfStruct = sizeof(IMAGEHLP_LINE64);
     BOOL lineFound = SymGetLineFromAddr64(process, address, &displacementLine, &line);
     if (lineFound) {
-      print_stack_line("\t[%02d] at %s!%s+0x%llx @ %p, in %s:%lu\n", i, module, pSymbol->Name, offset,
-                       (PVOID)address, line.FileName, line.LineNumber);
+      print_stack_line("\t[%02d] at %s!%s+0x%llx @ %p, in %s:%lu\n", i, module, pSymbol->Name, offset, (PVOID)address,
+                       line.FileName, line.LineNumber);
     } else {
       print_stack_line("\t[%02d] at %s!%s+0x%llx @ %p, in unknown line\n", i, module, pSymbol->Name, offset,
                        (PVOID)address);

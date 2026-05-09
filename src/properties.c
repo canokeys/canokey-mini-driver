@@ -2,6 +2,7 @@
 #include <wchar.h>
 
 #include "cardmod.h"
+#include "config.h"
 #include "logging.h"
 #include "minidriver.h"
 
@@ -112,8 +113,14 @@ static DWORD getCardPinInfo(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PD
   p->dwChangePermission = ROLE_ADMIN;  // TODO: check
   p->dwUnblockPermission = ROLE_ADMIN; // TODO: check
   p->PinCachePolicy.dwVersion = PIN_CACHE_POLICY_CURRENT_VERSION;
-  p->PinCachePolicy.PinCachePolicyType = PinCacheNormal; // TODO: DO NOT cache in pkcs11 layer
-  p->PinCachePolicy.dwPinCachePolicyInfo = 0;
+  const CMD_CONFIG *config = cmd_get_config();
+  if (config->has_pin_cache_timeout) {
+    p->PinCachePolicy.PinCachePolicyType = PinCacheTimed;
+    p->PinCachePolicy.dwPinCachePolicyInfo = config->pin_cache_timeout;
+  } else {
+    p->PinCachePolicy.PinCachePolicyType = PinCacheNormal;
+    p->PinCachePolicy.dwPinCachePolicyInfo = 0;
+  }
   CMD_RET_OK;
 }
 

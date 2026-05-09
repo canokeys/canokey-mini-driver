@@ -12,7 +12,7 @@ Build the minidriver:
 .\build.ps1 -Arch x64
 ```
 
-Copy the DLL and create the log directory:
+Copy the DLL and create the default debug log directory:
 
 ```powershell
 cmake --build out\build\x64-Clang-Debug --target canokey-minidriver-debug-install
@@ -24,7 +24,7 @@ By default this copies:
 C:\canokey-minidriver\canokey-minidriver.dll
 ```
 
-and creates:
+and creates a convenience log directory:
 
 ```text
 C:\canokey-minidriver\logs\
@@ -44,6 +44,25 @@ Windows Registry Editor Version 5.00
 "80000001"="C:\\canokey-minidriver\\canokey-minidriver.dll"
 ```
 
+Optional minidriver behavior is configured separately under
+`HKLM\SOFTWARE\Canokeys\ckmd`. For verbose local logging, import this as
+Administrator:
+
+```reg
+Windows Registry Editor Version 5.00
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Canokeys\ckmd]
+"LogPath"="C:\\canokey-minidriver\\logs"
+"LogLevel"="debug"
+"LogSensitiveData"=dword:00000000
+"NewKeyTouchPolicy"=dword:00000001
+"PinCacheTimeout"=dword:0000003c
+```
+
+Set `LogSensitiveData` to `1` only when you explicitly need raw APDU and hex
+dumps. Those logs may contain PIN-adjacent protocol data and other sensitive
+wire traffic.
+
 After updating the DLL, rebuild and rerun the debug-install target. You may need
 to unplug and reinsert the CanoKey, restart the calling application, or restart
 `CertPropSvc` if Windows keeps the old module loaded.
@@ -61,7 +80,8 @@ cmake -S . -B out\build\x64-Clang-Debug -G Ninja `
   -DCMD_DEBUG_INSTALL_DIR=C:/Logs
 ```
 
-If `CMD_LOG_DIR` is not set separately, CMake defaults it to:
+The debug-install target also creates a default log directory. If
+`CMD_DEBUG_LOG_DIR` is not set separately, CMake defaults it to:
 
 ```text
 <CMD_DEBUG_INSTALL_DIR>/logs
@@ -72,26 +92,44 @@ You can also override the log directory:
 ```powershell
 cmake -S . -B out\build\x64-Clang-Debug -G Ninja `
   -DCMD_DEBUG_INSTALL_DIR=C:/canokey-minidriver `
-  -DCMD_LOG_DIR=C:/canokey-minidriver/logs
+  -DCMD_DEBUG_LOG_DIR=C:/canokey-minidriver/logs
 ```
 
-`build.ps1` keeps the default unless you configure the build directory manually.
+`CMD_DEBUG_LOG_DIR` is not compiled into the DLL. It only creates the directory
+for local debugging. The DLL decides whether and where to write logs by reading
+`LogPath` from `HKLM\SOFTWARE\Canokeys\ckmd`.
 
 ## Logging
 
-The minidriver and managed `canokey-pkcs11` logging use the same environment
-variables:
+The minidriver reads logging configuration from:
 
-- `CNK_LOG_LEVEL`: one of `trace`, `debug`, `info`, `warn`, `error`, `fatal`,
-  `none`, or the corresponding numeric log level. The default is `warn`.
-- `CNK_UNSAFE_LOG_APDU`: set to `1`, `true`, `yes`, or `on` to enable raw
-  APDU/hex dumps. Leave this unset unless you explicitly need sensitive wire
-  data in the logs.
+```text
+HKLM\SOFTWARE\Canokeys\ckmd
+```
 
-Debug builds define `CMD_VERBOSE`. If `CNK_LOG_LEVEL` enables logging, the
-minidriver creates a log file from `DllMain` and passes the same `FILE *`,
-level, and unsafe-APDU flag to `canokey-pkcs11` through
-`C_CNK_ConfigLogging()`.
+Supported values:
+
+- `LogPath` (`REG_SZ` or `REG_EXPAND_SZ`): log directory. If this value is
+  absent, minidriver logging is completely disabled.
+- `LogLevel` (`REG_SZ`): `trace`, `debug`, `info`, `warn`, `error`, `fatal`,
+  `none`, or the corresponding numeric level. If `LogPath` exists and
+  `LogLevel` is missing or invalid, the default is `warn`.
+- `LogSensitiveData` (`REG_DWORD` or text bool): set to `1`, `true`, `yes`, or
+  `on` to enable raw APDU/hex dumps. Leave this off unless the sensitive wire
+  traffic is needed for local debugging.
+- `NewKeyTouchPolicy` (`REG_DWORD`): YubiKey-style touch policy for keys
+  created/imported through the minidriver: `1` = never, `2` = always,
+  `3` = cached. The default is `1`. This is read now but has no effect until
+  key creation/import is implemented.
+- `PinCacheTimeout` (`REG_DWORD`): number of seconds reported to Base CSP in
+  `CP_CARD_PIN_INFO` as a timed PIN cache recommendation.
+
+Debug builds define `CMD_VERBOSE`. When `LogPath` enables logging, the
+minidriver creates one log file per host process from `DllMain` and passes the
+same `FILE *`, level, and sensitive-data flag to `canokey-pkcs11` through
+`C_CNK_ConfigLogging()`. Standalone `canokey-pkcs11` still has its own
+environment-variable logging, but the managed minidriver path is registry
+controlled.
 
 Log files are named like:
 
@@ -99,21 +137,13 @@ Log files are named like:
 canokey_minidriver_YYYYMMDD_HHMMSS_<process>_<pid>_<tid>.log
 ```
 
-The default location is:
-
-```text
-C:\canokey-minidriver\logs\
-```
-
-The log directory is compiled into the DLL through `CMD_LOG_DIR`, so if you
-change it, rebuild the DLL and rerun `canokey-minidriver-debug-install`.
-
-For verbose local APDU debugging in PowerShell, set the environment for the
-host process before running the probe:
+For verbose local APDU debugging, update the registry first:
 
 ```powershell
-$env:CNK_LOG_LEVEL = "debug"
-$env:CNK_UNSAFE_LOG_APDU = "1"
+New-Item -Path HKLM:\SOFTWARE\Canokeys\ckmd -Force | Out-Null
+New-ItemProperty -Path HKLM:\SOFTWARE\Canokeys\ckmd -Name LogPath -Value 'C:\canokey-minidriver\logs' -PropertyType String -Force
+New-ItemProperty -Path HKLM:\SOFTWARE\Canokeys\ckmd -Name LogLevel -Value debug -PropertyType String -Force
+New-ItemProperty -Path HKLM:\SOFTWARE\Canokeys\ckmd -Name LogSensitiveData -Value 1 -PropertyType DWord -Force
 .\scripts\smoke-scinfo.ps1 -SkipBuild -SkipInstall -SkipReset
 ```
 

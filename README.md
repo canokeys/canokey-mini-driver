@@ -14,8 +14,9 @@ installation, and broader PIV slot coverage are still in progress.
 
 - Debug loading works by copying `canokey-minidriver.dll` to
   `C:\canokey-minidriver\` and registering that path under the CanoKey ATR.
-- Logging is controlled by `CNK_LOG_LEVEL`; log files are created under
-  `C:\canokey-minidriver\logs\` when the level is not `none`.
+- Minidriver configuration is read from `HKLM\SOFTWARE\Canokeys\ckmd`.
+  Logging is disabled unless `LogPath` is set there; `LogLevel` and
+  `LogSensitiveData` control verbosity and APDU/hex dumps.
 - `certutil -scinfo` can see the card and current certificates.
 - `scripts\crypto-test.ps1` exercises the minidriver through Windows CAPI/CNG
   APIs instead of parsing command output. The same checks can be run in focused
@@ -75,7 +76,8 @@ cmake --build out\build\x64-Clang-Debug --target canokey-minidriver-debug-instal
 ```
 
 This copies the DLL to `C:\canokey-minidriver\` and creates
-`C:\canokey-minidriver\logs\`. Import the debug registry mapping described in
+`C:\canokey-minidriver\logs\`. Import the debug Calais mapping and optional
+`HKLM\SOFTWARE\Canokeys\ckmd` configuration described in
 [`docs/development.md`](docs/development.md), then unplug and reinsert your
 CanoKey or restart the calling application.
 

@@ -25,7 +25,8 @@ typedef struct {
 
 extern const char *g_log_level_name[CMD_LOG_LEVEL_SIZE];
 
-extern CMD_LOG_CONFIG cmd_logging_config_from_env(void);
+extern bool cmd_parse_log_level(const char *value, int *level);
+extern bool cmd_parse_bool(const char *value, bool *result);
 extern int cmd_init_logging(const char *log_file, CMD_LOG_CONFIG config);
 extern int cmd_stop_logging();
 extern FILE *cmd_get_log_file(void);
@@ -93,7 +94,7 @@ extern void cmd_print_stack();
 #define CMD_CHECK_DW_FLAGS                                                                                             \
   do {                                                                                                                 \
     if (dwFlags != 0) {                                                                                                \
-      CMD_RETURN(SCARD_E_INVALID_PARAMETER, "dwFlags is not zero");                                                   \
+      CMD_RETURN(SCARD_E_INVALID_PARAMETER, "dwFlags is not zero");                                                    \
     }                                                                                                                  \
   } while (0)
 
@@ -103,7 +104,7 @@ extern void cmd_print_stack();
   } while (0)
 
 #define CMD_GET_CTX(PCARD, CTX)                                                                                        \
-    CMD_CONTEXT_PTR CTX = (CMD_CONTEXT_PTR) (PCARD)->pvVendorSpecific;                                                 \
-    CMD_NONNULL_PARAM(CTX)
+  CMD_CONTEXT_PTR CTX = (CMD_CONTEXT_PTR)(PCARD)->pvVendorSpecific;                                                    \
+  CMD_NONNULL_PARAM(CTX)
 
 #endif // __LOGGING__H__

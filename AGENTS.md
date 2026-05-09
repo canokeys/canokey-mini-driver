@@ -53,8 +53,9 @@ out/build/x64-Clang-Debug/canokey-minidriver.inf
 ```
 
 - The debug deployment target copies the DLL to `CMD_DEBUG_INSTALL_DIR`
-  (`C:/canokey-minidriver` by default) and creates `CMD_LOG_DIR`
-  (`C:/canokey-minidriver/logs` by default):
+  (`C:/canokey-minidriver` by default) and creates `CMD_DEBUG_LOG_DIR`
+  (`C:/canokey-minidriver/logs` by default). These are debug deployment
+  paths only; they are not compiled into the DLL:
 
 ```powershell
 cmake --build out\build\x64-Clang-Debug --target canokey-minidriver-debug-install
@@ -103,11 +104,12 @@ git commit -s
 - Do not enable test signing, install the driver, delete installed driver
   packages, restart Windows services, or write to system driver stores unless
   the user directly requests that action.
-- Logging follows the `canokey-pkcs11` convention. `CNK_LOG_LEVEL` controls
-  minidriver and managed PKCS#11 log verbosity (`warn` by default), and
-  `CNK_UNSAFE_LOG_APDU=1` is required before raw APDU/hex dumps are written.
-  The minidriver passes the parsed level, log file, and unsafe flag to
-  `C_CNK_ConfigLogging(level, file, unsafe_log_apdu)`.
+- Minidriver runtime configuration comes from
+  `HKLM\SOFTWARE\Canokeys\ckmd`. Logging is disabled unless `LogPath` is set.
+  `LogLevel` accepts text levels (`trace`, `debug`, `info`, `warn`, `error`,
+  `fatal`, `none`) and `LogSensitiveData` enables raw APDU/hex dumps. The
+  minidriver passes the registry-derived level, log file, and sensitive-data
+  flag to `C_CNK_ConfigLogging(level, file, unsafe_log_apdu)`.
 
 ## Local Debug Loop
 
@@ -145,8 +147,9 @@ Start-Sleep -Seconds 6
 .\scripts\smoke-scinfo.ps1
 ```
 
-- Logs are written under `C:/canokey-minidriver/logs` by default. The most useful
-  files are usually from `certutil.exe`, `CredentialUIBroker.exe`, and
+- Logs are written only when `HKLM\SOFTWARE\Canokeys\ckmd\LogPath` is set. For
+  the local debug loop this is usually `C:/canokey-minidriver/logs`. The most
+  useful files are usually from `certutil.exe`, `CredentialUIBroker.exe`, and
   `svchost.exe`.
 - Prefer passing the CanoKey reader name to `certutil -scinfo`. Plain
   `certutil /scinfo` enumerates every smart-card reader and may also exercise
@@ -218,8 +221,14 @@ EC keys in those slots       -> also ECDH-capable
   `CardAcquireContext`. If future `CardDeriveKey` support accepts
   `KDF_SECRET_HANDLE` / `KDF_NCRYPT_SECRET_HANDLE` buffers, call this callback
   to translate those handles into on-card agreement indexes.
-- `CMD_DEBUG_INSTALL_DIR` and `CMD_LOG_DIR` are CMake cache variables and are
-  compiled into the DLL as preprocessor definitions.
+- `CMD_DEBUG_INSTALL_DIR` and `CMD_DEBUG_LOG_DIR` are CMake cache variables for
+  the debug-install target only. Do not compile deployment/log paths into the
+  DLL; runtime behavior should come from `HKLM\SOFTWARE\Canokeys\ckmd`.
+- Keep registry parsing in the config layer. `LogPath` absence means no
+  minidriver or managed PKCS#11 logging, even if `LogLevel` is present.
+  `NewKeyTouchPolicy` is read for future key creation/import work (`1` never,
+  `2` always, `3` cached; default `1`), and `PinCacheTimeout` is reported
+  through `CP_CARD_PIN_INFO`.
 - The minidriver uses CanoKey PKCS#11 managed mode; initialize managed mode
   before `C_Initialize()` when wiring card handles through this layer.
 - `CardAcquireContext` owns one PKCS#11 session in `CMD_CONTEXT`. Always close
