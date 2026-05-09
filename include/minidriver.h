@@ -50,11 +50,13 @@ typedef struct {
 typedef struct {
   CK_SESSION_HANDLE session;
   CANOKEY canokey;
+  BYTE cardId[16];
   CMD_DH_AGREEMENT dhAgreements[CMD_MAX_DH_AGREEMENTS];
 } CMD_CONTEXT;
 
 typedef CMD_CONTEXT *CMD_CONTEXT_PTR;
 
 DWORD FillCardKeySizes(DWORD dwKeySpec, PCARD_KEY_SIZES pKeySizes);
+DWORD GenerateCardIdentifier(CMD_CONTEXT_PTR pContext);
 
 #endif // MINIDRIVER_H

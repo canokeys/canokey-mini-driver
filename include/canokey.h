@@ -1,5 +1,5 @@
-#ifndef CAONKEY_H
-#define CAONKEY_H
+#ifndef CANOKEY_H
+#define CANOKEY_H
 
 #include <pkcs11.h>
 #include <stdint.h>

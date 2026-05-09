@@ -88,6 +88,13 @@ extern void cmd_print_stack();
 
 #define CMD_NONNULL_PARAM(PTR) CMD_ENSURE_NONNULL(PTR, SCARD_E_INVALID_PARAMETER)
 
+#define CMD_CHECK_DW_FLAGS                                                                                             \
+  do {                                                                                                                 \
+    if (dwFlags != 0) {                                                                                                \
+      CMD_RETURN(SCARD_E_INVALID_PARAMETER, "dwFlags is not zero");                                                   \
+    }                                                                                                                  \
+  } while (0)
+
 #define CMD_UNUSED(...)                                                                                                \
   do {                                                                                                                 \
     ((void)(__VA_ARGS__))                                                                                              \

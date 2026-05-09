@@ -19,7 +19,6 @@ X(CardGetChallenge) \
 X(CardAuthenticateChallenge) \
 X(CardUnblockPin) \
 X(CardChangeAuthenticator) \
-X(CardDeauthenticate) \
 X(CardCreateDirectory) \
 X(CardDeleteDirectory) \
 X(CardCreateFile) \
@@ -231,6 +230,14 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
     g_pfnCspFree(context);
     C_Finalize(NULL);
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot read canokey");
+  }
+
+  DWORD dwRet = GenerateCardIdentifier(context);
+  if (dwRet != SCARD_S_SUCCESS) {
+    C_CloseSession(context->session);
+    g_pfnCspFree(context);
+    C_Finalize(NULL);
+    CMD_RETURN(dwRet, "cannot generate card identifier");
   }
 
   pCardData->pvVendorSpecific = context;

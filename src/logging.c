@@ -4,7 +4,6 @@
 
 // clang-format off
 #include <Windows.h>
-#include <assert.h>
 #include <fcntl.h>
 #include <io.h>
 #include <stdarg.h>
@@ -21,7 +20,6 @@ FILE *g_log_fp = NULL;
 
 int cmd_init_logging(const char *log_file, const int log_level) {
   static bool is_initialized = false;
-  static int log_fd;
 
   if (is_initialized || log_file == NULL) {
     return 0;
@@ -30,23 +28,25 @@ int cmd_init_logging(const char *log_file, const int log_level) {
   // create log file in shared mode
   HANDLE hFile = CreateFile(log_file, FILE_APPEND_DATA | FILE_GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
                             OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+  if (hFile == INVALID_HANDLE_VALUE) {
+    g_log_level = CMD_LOG_LEVEL_NONE;
+    return (int)GetLastError();
+  }
 
   // convert file handle to fd
-  assert(hFile != INVALID_HANDLE_VALUE);
-  log_fd = _open_osfhandle((intptr_t)hFile, _O_CREAT | _O_APPEND | _O_BINARY);
-  assert(log_fd != -1);
+  int log_fd = _open_osfhandle((intptr_t)hFile, _O_CREAT | _O_APPEND | _O_BINARY);
+  if (log_fd == -1) {
+    CloseHandle(hFile);
+    g_log_level = CMD_LOG_LEVEL_NONE;
+    return EINVAL;
+  }
   FILE *fp = _fdopen(log_fd, "a");
-  assert(fp != NULL);
+  if (fp == NULL) {
+    _close(log_fd);
+    g_log_level = CMD_LOG_LEVEL_NONE;
+    return errno;
+  }
   g_log_fp = fp;
-
-  /* DO NOT REDIRECT STDERR -- THIS DLL MIGHT BE LOADED BY OTHER PROCESSES
-  // redirect stderr to log file
-  FILE *old_stderr;
-  // stderr might be already closed - open it first
-  assert(freopen_s(&old_stderr, "NUL", "w", stderr) == 0);
-  assert(_dup2(log_fd, _fileno(stderr)) != -1);
-  assert(_close(log_fd) == 0);
-  */
 
   // set global log level
   if (log_level >= 0 && log_level < CMD_LOG_LEVEL_SIZE) {
@@ -60,6 +60,10 @@ int cmd_init_logging(const char *log_file, const int log_level) {
 }
 
 int cmd_stop_logging() {
+  if (g_log_fp == NULL) {
+    g_log_level = CMD_LOG_LEVEL_NONE;
+    return 0;
+  }
   int rc = fclose(g_log_fp);
   g_log_fp = NULL;
   g_log_level = CMD_LOG_LEVEL_NONE;
@@ -82,6 +86,9 @@ void cmd_fprintf(const int level, const bool prepend_date, FILE *const out, cons
   if (level < g_log_level) {
     return;
   }
+  if (out == NULL) {
+    return;
+  }
   if (prepend_date) {
     print_time(out);
   }
@@ -97,6 +104,9 @@ void cmd_print_hex(const int level, FILE *const out, const void *data, size_t si
   if (level < g_log_level) {
     return;
   }
+  if (out == NULL || data == NULL) {
+    return;
+  }
   for (size_t i = 0; i < size; i++) {
     fprintf(out, "%02x ", ((const unsigned char *)data)[i]);
     if (i % 16 == 15) {
@@ -108,6 +118,9 @@ void cmd_print_hex(const int level, FILE *const out, const void *data, size_t si
 
 void cmd_print_stack() {
 #ifdef CMD_VERBOSE
+  if (g_log_fp == NULL) {
+    return;
+  }
 
   const int maxStackFrames = 64;
   HANDLE process = GetCurrentProcess();

@@ -83,6 +83,9 @@ static DWORD expected_ecdh_public_magic(const SLOT *slot, ULONG *pMagic) {
   case 48:
     *pMagic = BCRYPT_ECDH_PUBLIC_P384_MAGIC;
     CMD_RET_OK;
+  case 66:
+    *pMagic = BCRYPT_ECDH_PUBLIC_P521_MAGIC;
+    CMD_RET_OK;
   default:
     CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Unsupported ECDH public key size");
   }
@@ -452,9 +455,7 @@ DWORD WINAPI CardDestroyDHAgreement(__in PCARD_DATA pCardData, __in BYTE bSecret
   CMD_LOG_FUNC("pCardData %p, bSecretAgreementIndex %u, dwFlags %x", pCardData, bSecretAgreementIndex, dwFlags);
 
   CMD_NONNULL_PARAM(pCardData);
-  if (dwFlags != 0) {
-    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported DH agreement destroy flags");
-  }
+  CMD_CHECK_DW_FLAGS;
 
   INJECT_HANDLES();
 
@@ -623,9 +624,7 @@ DWORD WINAPI CardQueryKeySizes(__in PCARD_DATA pCardData, __in DWORD dwKeySpec, 
   if (pKeySizes->dwVersion != CARD_KEY_SIZES_CURRENT_VERSION) {
     CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
   }
-  if (dwFlags != 0) {
-    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported CardQueryKeySizes flags");
-  }
+  CMD_CHECK_DW_FLAGS;
 
   return FillCardKeySizes(dwKeySpec, pKeySizes);
 }

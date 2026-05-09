@@ -230,3 +230,20 @@ EC keys in those slots       -> also ECDH-capable
 - `CardDeriveKey` returns ECDH raw secret bytes to Windows in little-endian
   order. PKCS#11 derives the X coordinate in big-endian form, so reverse the
   returned raw secret before handing it back to CNG.
+- Keep the generated no-implementation X macro in `src/context.c` honest. Once
+  an entry point has a real implementation or is intentionally left `NULL`, it
+  must be removed from `INVOKE_X_ON_NO_IMPL_FUNCS`; otherwise
+  `CardAcquireContext` will overwrite the explicit function table value with a
+  generated unsupported-feature stub.
+- For minidriver APIs that only accept `dwFlags == 0`, use
+  `CMD_CHECK_DW_FLAGS` instead of open-coded checks. For structure fields named
+  `dwFlags`, keep the validation local so the checked expression is explicit.
+- Standard read-only card plumbing still needs successful responses: expose
+  `cardcf`, `cardid`, `mscp/cmapfile`, certificate files, `CardEnumFiles`,
+  `CardGetFileInfo`, and `CardQueryFreeSpace`. `CP_CARD_GUID` and the `cardid`
+  file must be byte-for-byte identical and stable for the token, because
+  Windows uses them for cache identity.
+- On `ERROR_INSUFFICIENT_BUFFER`, set the returned length before failing so
+  Windows callers can retry with the right buffer size.
+- Logging must be best-effort. Failure to open the log file, or calling shutdown
+  without a log file, must not assert or crash the host process.

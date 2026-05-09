@@ -7,6 +7,26 @@
 #include "logging.h"
 #include "minidriver.h"
 
+static DWORD map_pkcs11_pin_error(CK_RV rv) {
+  switch (rv) {
+  case CKR_OK:
+  case CKR_USER_NOT_LOGGED_IN:
+    return SCARD_S_SUCCESS;
+  case CKR_USER_PIN_NOT_INITIALIZED:
+  case CKR_PIN_INCORRECT:
+    return SCARD_W_WRONG_CHV;
+  case CKR_PIN_LOCKED:
+    return SCARD_W_CHV_BLOCKED;
+  case CKR_SESSION_HANDLE_INVALID:
+  case CKR_CRYPTOKI_NOT_INITIALIZED:
+    return SCARD_E_INVALID_HANDLE;
+  case CKR_HOST_MEMORY:
+    return SCARD_E_NO_MEMORY;
+  default:
+    return SCARD_F_INTERNAL_ERROR;
+  }
+}
+
 /*
  * Function: CardAuthenticatePin
  *
@@ -47,6 +67,8 @@ DWORD WINAPI CardAuthenticateEx(__in PCARD_DATA pCardData, __in PIN_ID PinId, __
   CMD_NONNULL_PARAM(pCardData);
   CMD_NONNULL_PARAM(pbPinData);
   CMD_GET_CTX(pCardData, pContext);
+  (void)ppbSessionPin;
+  (void)pcbSessionPin;
 
   INJECT_HANDLES();
 
@@ -102,7 +124,11 @@ DWORD WINAPI CardDeauthenticateEx(__in PCARD_DATA pCardData, __in PIN_SET PinId,
 
   INJECT_HANDLES();
 
-  // TODO: PinId is not used
+  CMD_CHECK_DW_FLAGS;
+  if ((PinId & ROLE_USER) == 0) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid PinId");
+  }
+
   CK_RV rv = C_Logout(pContext->session);
   if (rv == CKR_USER_NOT_LOGGED_IN) {
     CMD_RET_OK;
@@ -110,7 +136,7 @@ DWORD WINAPI CardDeauthenticateEx(__in PCARD_DATA pCardData, __in PIN_SET PinId,
   if (rv != CKR_OK) {
     // If the card minidriver returns a nonzero value from this function,
     // the Base CSP/KSP resets the card
-    CMD_RETURN(rv, "C_Logout failed");
+    CMD_RETURN(map_pkcs11_pin_error(rv), "C_Logout failed");
   } else {
     CMD_RET_OK;
   }

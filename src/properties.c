@@ -5,28 +5,39 @@
 #include "logging.h"
 #include "minidriver.h"
 
-#define CMD_CHECK_DW_FLAGS                                                                                             \
-  if (dwFlags != 0) {                                                                                                  \
-    CMD_RETURN(ERROR_INVALID_PARAMETER, "dwFlags is not zero");                                                        \
-  }
+static DWORD getCardFreeSpace(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen) {
+  (void)pCardData;
 
-static DWORD getCardFreeSpace(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen) { CMD_RET_UNIMPL; }
+  *pdwDataLen = sizeof(CARD_FREE_SPACE_INFO);
+  if (cbData < sizeof(CARD_FREE_SPACE_INFO)) {
+    CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
+  }
+  PCARD_FREE_SPACE_INFO p = (PCARD_FREE_SPACE_INFO)pbData;
+  p->dwVersion = CARD_FREE_SPACE_INFO_CURRENT_VERSION;
+  p->dwBytesAvailable = 0;
+  p->dwKeyContainersAvailable = 0;
+  p->dwMaxKeyContainers = MAX_SLOT_ID;
+  CMD_RET_OK;
+}
 
 static DWORD getCardCapabilities(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen) {
+  (void)pCardData;
+
+  *pdwDataLen = sizeof(CARD_CAPABILITIES);
   if (cbData < sizeof(CARD_CAPABILITIES)) {
     CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
   }
   PCARD_CAPABILITIES p = (PCARD_CAPABILITIES)pbData;
   p->dwVersion = CARD_CAPABILITIES_CURRENT_VERSION;
-  p->fCertificateCompression = TRUE;
+  p->fCertificateCompression = FALSE;
   p->fKeyGen = FALSE;
-  *pdwDataLen = sizeof(CARD_CAPABILITIES);
   CMD_RET_OK;
 }
 
 static DWORD getCardKeysizes(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen, DWORD dwFlags) {
   (void)pCardData;
 
+  *pdwDataLen = sizeof(CARD_KEY_SIZES);
   if (cbData < sizeof(CARD_KEY_SIZES)) {
     CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
   }
@@ -35,51 +46,60 @@ static DWORD getCardKeysizes(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, P
   if (ret != SCARD_S_SUCCESS) {
     CMD_RETURN(ret, "Unsupported key size property request");
   }
-  *pdwDataLen = sizeof(CARD_KEY_SIZES);
   CMD_RET_OK;
 }
 
 static DWORD getCardReadOnly(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen) {
+  (void)pCardData;
+
+  *pdwDataLen = sizeof(BOOL);
   if (cbData < sizeof(BOOL)) {
     CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
   }
   *(BOOL *)pbData = TRUE;
-  *pdwDataLen = sizeof(BOOL);
   CMD_RET_OK;
 }
 
 static DWORD getCardCacheMode(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen) {
+  (void)pCardData;
+
+  *pdwDataLen = sizeof(DWORD);
   if (cbData < sizeof(DWORD)) {
     CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
   }
   *(DWORD *)pbData = CP_CACHE_MODE_NO_CACHE;
-  *pdwDataLen = sizeof(DWORD);
   CMD_RET_OK;
 }
 
 static DWORD getCardSupportsWinX509Enrollment(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen) {
+  (void)pCardData;
+
+  *pdwDataLen = sizeof(BOOL);
   if (cbData < sizeof(BOOL)) {
     CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
   }
   *(BOOL *)pbData = FALSE;
-  *pdwDataLen = sizeof(BOOL);
   CMD_RET_OK;
 }
 
 static DWORD getCardGuid(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen) {
-  BYTE guid[16] = {0, 1, 2, 3, 4, 5, 6, 7};
-  if (cbData < sizeof(guid)) {
+  CMD_GET_CTX(pCardData, pContext);
+
+  *pdwDataLen = sizeof(pContext->cardId);
+  if (cbData < sizeof(pContext->cardId)) {
     CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
   }
-  memcpy(pbData, guid, sizeof(guid));
-  *pdwDataLen = sizeof(guid);
+  memcpy(pbData, pContext->cardId, sizeof(pContext->cardId));
   CMD_RET_OK;
 }
 
 static DWORD getCardPinInfo(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen, DWORD dwFlags) {
+  (void)pCardData;
+
   if ((dwFlags & ROLE_USER) == 0) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "only ROLE_USER is supported");
   }
+  *pdwDataLen = sizeof(PIN_INFO);
   if (cbData < sizeof(PIN_INFO)) {
     CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
   }
@@ -94,7 +114,6 @@ static DWORD getCardPinInfo(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PD
   p->PinCachePolicy.dwVersion = PIN_CACHE_POLICY_CURRENT_VERSION;
   p->PinCachePolicy.PinCachePolicyType = PinCacheNormal; // TODO: DO NOT cache in pkcs11 layer
   p->PinCachePolicy.dwPinCachePolicyInfo = 0;
-  *pdwDataLen = sizeof(PIN_INFO);
   CMD_RET_OK;
 }
 
@@ -103,6 +122,14 @@ DWORD WINAPI CardGetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty
                              __out PDWORD pdwDataLen, __in DWORD dwFlags) {
   CMD_LOG_FUNC("CardGetProperty pCardData %p, wszProperty \"%S\", pbData %p, cbData %d, pdwDataLen %p, dwFlags %x",
                pCardData, wszProperty, pbData, cbData, pdwDataLen, dwFlags);
+
+  CMD_NONNULL_PARAM(pCardData);
+  CMD_NONNULL_PARAM(wszProperty);
+  CMD_NONNULL_PARAM(pdwDataLen);
+  *pdwDataLen = 0;
+  if (cbData != 0) {
+    CMD_NONNULL_PARAM(pbData);
+  }
 
   INJECT_HANDLES();
 
@@ -140,6 +167,7 @@ DWORD WINAPI CardGetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty
     if ((dwFlags & ROLE_USER) == 0) {
       CMD_RETURN(SCARD_E_INVALID_PARAMETER, "only ROLE_USER is supported");
     }
+    *pdwDataLen = sizeof(DWORD);
     if (cbData < sizeof(DWORD)) {
       CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
     }
@@ -157,6 +185,8 @@ DWORD WINAPI CardSetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty
   CMD_NONNULL_PARAM(pCardData);
   CMD_NONNULL_PARAM(wszProperty);
   CMD_NONNULL_PARAM(pbData);
+  (void)cbData;
+  (void)dwFlags;
 
   INJECT_HANDLES();
 
@@ -173,12 +203,11 @@ DWORD WINAPI CardGetContainerProperty(__in PCARD_DATA pCardData, __in BYTE bCont
   CMD_NONNULL_PARAM(wszProperty);
   CMD_NONNULL_PARAM(pbData);
   CMD_NONNULL_PARAM(pdwDataLen);
+  (void)bContainerIndex;
 
   INJECT_HANDLES();
 
-  if (dwFlags != 0) {
-    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid dwFlags");
-  }
+  CMD_CHECK_DW_FLAGS;
   if (wcscmp(wszProperty, CCP_PIN_IDENTIFIER) == 0) {
     if (cbData < sizeof(PIN_ID)) {
       CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");

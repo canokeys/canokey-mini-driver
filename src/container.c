@@ -60,6 +60,9 @@ static DWORD EcPublicKeyMagic(const SLOT *slot, BOOL derive, ULONG *pMagic) {
   case 48:
     *pMagic = derive ? BCRYPT_ECDH_PUBLIC_P384_MAGIC : BCRYPT_ECDSA_PUBLIC_P384_MAGIC;
     CMD_RET_OK;
+  case 66:
+    *pMagic = derive ? BCRYPT_ECDH_PUBLIC_P521_MAGIC : BCRYPT_ECDSA_PUBLIC_P521_MAGIC;
+    CMD_RET_OK;
   default:
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Unsupported EC key size");
   }
@@ -80,6 +83,7 @@ DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContaine
 
   INJECT_HANDLES();
 
+  CMD_CHECK_DW_FLAGS;
   if (pContainerInfo->dwVersion > CONTAINER_INFO_CURRENT_VERSION)
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid container info version");
 

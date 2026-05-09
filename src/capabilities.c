@@ -24,7 +24,7 @@ DWORD WINAPI CardQueryCapabilities(__in PCARD_DATA pCardData, __inout PCARD_CAPA
 
   // Set capabilities
   pCardCapabilities->fCertificateCompression = FALSE;
-  pCardCapabilities->fKeyGen = TRUE;
+  pCardCapabilities->fKeyGen = FALSE;
 
   CMD_RET_OK;
 }
