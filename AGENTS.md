@@ -165,7 +165,9 @@ Start-Sleep -Seconds 6
   It uses `CryptGetProvParam(PP_ENUMCONTAINERS)` and `NCryptEnumKeys` for API
   discovery, then signs/verifies CAPI RSA/SHA1 PKCS#1, CAPI RSA/SHA256 PKCS#1,
   CNG RSA/SHA256 PKCS#1, CNG RSA/SHA256 PSS, and CNG ECDSA P-256/SHA256. Use
-  `-SkipBuild -SkipInstall -SkipReset` for fast reruns.
+  `-SkipBuild -SkipInstall -SkipReset` for fast reruns. When a decrypt-capable
+  RSA KSP container is discovered, the script also tests CNG RSA PKCS#1 and
+  OAEP-SHA256 decrypt.
 - The current development card has useful PIV material in:
 
 ```text
@@ -183,7 +185,10 @@ ID 02 -> PIV 9C -> EC P-256 key and certificate
 
 - `scripts\sign-test.ps1` should exercise every discovered signing container.
   CAPI coverage is for RSA containers; CNG coverage is split by RSA and ECDSA
-  algorithm group.
+  algorithm group. Decrypt coverage is selected from RSA KSP keys whose
+  `NCryptEnumKeys` flags include decrypt capability or whose legacy key spec
+  is `AT_KEYEXCHANGE`; use `-DecryptKspContainer` when Windows reports unusual
+  key metadata.
 - Do not hardcode the development PIN in minidriver code. Authentication must
   enter through `CardAuthenticateEx`; signing should use the authenticated
   PKCS#11 session state.
@@ -192,6 +197,8 @@ ID 02 -> PIV 9C -> EC P-256 key and certificate
 
 - `canokey-minidriver.inf` is generated from `canokey-minidriver.inf.in`.
 - The PKCS#11 dependency is linked statically into the minidriver target.
+- `external/canokey-pkcs11` commit `1c0bb0d` adds the `C_DecryptInit` /
+  `C_Decrypt` RSA path used by `CardRSADecrypt`.
 - `CMD_DEBUG_INSTALL_DIR` and `CMD_LOG_DIR` are CMake cache variables and are
   compiled into the DLL as preprocessor definitions.
 - The minidriver uses CanoKey PKCS#11 managed mode; initialize managed mode

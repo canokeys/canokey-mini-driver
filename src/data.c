@@ -13,6 +13,27 @@
 
 static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, PDWORD pcbData);
 
+static BYTE GetFileContainerIndex(LPCSTR pszFileName) {
+  LPCSTR digits = pszFileName + 3;
+  if (*digits == '\0') {
+    return 0xff;
+  }
+
+  unsigned long value = 0;
+  while (*digits != '\0') {
+    if (*digits < '0' || *digits > '9') {
+      return 0xff;
+    }
+    value = value * 10 + (unsigned long)(*digits - '0');
+    if (value > MAX_SLOT_ID) {
+      return 0xff;
+    }
+    digits++;
+  }
+
+  return (BYTE)value;
+}
+
 // The CardReadFile function reads the entire file at the specified location into the user-supplied buffer.
 DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName, __in LPSTR pszFileName,
                           __in DWORD dwFlags, __deref_out_bcount_opt(*pcbData) PBYTE *ppbData, __out PDWORD pcbData) {
@@ -52,11 +73,25 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
     }
 
     if (strncmp(pszFileName, szUSER_KEYEXCHANGE_CERT_PREFIX, 3) == 0) {
-      CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Key exchange certificate not found");
+      BYTE slotIndex = GetFileContainerIndex(pszFileName);
+      if (slotIndex >= pContext->canokey.slotCount)
+        CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "File not found");
+      SLOT *slot = &pContext->canokey.slots[slotIndex];
+      if (!canokey_slot_can_decrypt(slot)) {
+        CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Key exchange certificate not found");
+      }
+
+      *ppbData = (PBYTE)g_pfnCspAlloc(slot->certLen);
+      CMD_ENSURE_NONNULL(*ppbData, SCARD_E_NO_MEMORY);
+
+      memcpy(*ppbData, slot->cert, slot->certLen);
+      *pcbData = slot->certLen;
+
+      CMD_RET_OK;
     }
 
     if (strncmp(pszFileName, szUSER_SIGNATURE_CERT_PREFIX, 3) == 0) {
-      BYTE slotIndex = pszFileName[4] - '0';
+      BYTE slotIndex = GetFileContainerIndex(pszFileName);
       if (slotIndex >= pContext->canokey.slotCount)
         CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "File not found");
       SLOT *slot = &pContext->canokey.slots[slotIndex];
@@ -162,6 +197,9 @@ static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, 
     // Set signature key size bits
     if (canokey_slot_can_sign(slot)) {
       rec->wSigKeySizeBits = (WORD)(slot->keyType == CKK_RSA ? slot->rsa.modulusBits : slot->ecc.cbPrivate * 8);
+    }
+    if (canokey_slot_can_decrypt(slot) && slot->keyType == CKK_RSA) {
+      rec->wKeyExchangeKeySizeBits = (WORD)slot->rsa.modulusBits;
     }
     CMD_DEBUG("Container %d: %ls, flags: %d, wSigKeySizeBits: %d, wKeyExchangeKeySizeBits: %d", i, rec->wszGuid,
               rec->bFlags, rec->wSigKeySizeBits, rec->wKeyExchangeKeySizeBits);

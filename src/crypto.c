@@ -6,7 +6,7 @@
 #include "minidriver.h"
 #include "pkcs11.h"
 
-static DWORD map_pkcs11_sign_error(CK_RV rv) {
+static DWORD map_pkcs11_crypto_error(CK_RV rv) {
   switch (rv) {
   case CKR_OK:
     return SCARD_S_SUCCESS;
@@ -23,6 +23,34 @@ static DWORD map_pkcs11_sign_error(CK_RV rv) {
   default:
     return SCARD_F_INTERNAL_ERROR;
   }
+}
+
+static DWORD map_oaep_hash_alg(LPCWSTR pszAlgId, CK_MECHANISM_TYPE *pHashAlg, CK_RSA_PKCS_MGF_TYPE *pMgf) {
+  CMD_ENSURE_NONNULL(pHashAlg, SCARD_E_INVALID_PARAMETER);
+  CMD_ENSURE_NONNULL(pMgf, SCARD_E_INVALID_PARAMETER);
+
+  if (pszAlgId == NULL || wcscmp(pszAlgId, BCRYPT_SHA1_ALGORITHM) == 0) {
+    *pHashAlg = CKM_SHA_1;
+    *pMgf = CKG_MGF1_SHA1;
+    CMD_RET_OK;
+  }
+  if (wcscmp(pszAlgId, BCRYPT_SHA256_ALGORITHM) == 0) {
+    *pHashAlg = CKM_SHA256;
+    *pMgf = CKG_MGF1_SHA256;
+    CMD_RET_OK;
+  }
+  if (wcscmp(pszAlgId, BCRYPT_SHA384_ALGORITHM) == 0) {
+    *pHashAlg = CKM_SHA384;
+    *pMgf = CKG_MGF1_SHA384;
+    CMD_RET_OK;
+  }
+  if (wcscmp(pszAlgId, BCRYPT_SHA512_ALGORITHM) == 0) {
+    *pHashAlg = CKM_SHA512;
+    *pMgf = CKG_MGF1_SHA512;
+    CMD_RET_OK;
+  }
+
+  CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Unsupported OAEP hash algorithm");
 }
 
 /*
@@ -88,13 +116,13 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
     CK_OBJECT_HANDLE hKey = (CKO_PRIVATE_KEY << 8) | slot->id;
     CK_RV rv = C_SignInit(pContext->session, &mech, hKey);
     if (rv != CKR_OK)
-      CMD_RETURN(map_pkcs11_sign_error(rv), "C_SignInit failed");
+      CMD_RETURN(map_pkcs11_crypto_error(rv), "C_SignInit failed");
 
     pCardSigningInfo->cbSignedData = paddedLen;
     rv = C_Sign(pContext->session, pCardSigningInfo->pbSignedData, paddedLen, pCardSigningInfo->pbSignedData,
                 &pCardSigningInfo->cbSignedData);
     if (rv != CKR_OK)
-      CMD_RETURN(map_pkcs11_sign_error(rv), "C_Sign failed");
+      CMD_RETURN(map_pkcs11_crypto_error(rv), "C_Sign failed");
 
     CMD_DEBUG("Signed data: %d bytes (@%p)", pCardSigningInfo->cbSignedData, pCardSigningInfo->pbSignedData);
     CMD_PRINT_HEX(pCardSigningInfo->pbSignedData, pCardSigningInfo->cbSignedData);
@@ -106,7 +134,7 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
     CK_OBJECT_HANDLE hKey = (CKO_PRIVATE_KEY << 8) | slot->id;
     CK_RV rv = C_SignInit(pContext->session, &mech, hKey);
     if (rv != CKR_OK)
-      CMD_RETURN(map_pkcs11_sign_error(rv), "C_SignInit failed");
+      CMD_RETURN(map_pkcs11_crypto_error(rv), "C_SignInit failed");
 
     pCardSigningInfo->cbSignedData = slot->ecc.cbPrivate * 2;
     pCardSigningInfo->pbSignedData = (PBYTE)g_pfnCspAlloc(pCardSigningInfo->cbSignedData);
@@ -115,13 +143,111 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
     rv = C_Sign(pContext->session, pCardSigningInfo->pbData, pCardSigningInfo->cbData, pCardSigningInfo->pbSignedData,
                 &pCardSigningInfo->cbSignedData);
     if (rv != CKR_OK)
-      CMD_RETURN(map_pkcs11_sign_error(rv), "C_Sign failed");
+      CMD_RETURN(map_pkcs11_crypto_error(rv), "C_Sign failed");
 
     CMD_DEBUG("Signed data: %d bytes (@%p)", pCardSigningInfo->cbSignedData, pCardSigningInfo->pbSignedData);
     CMD_PRINT_HEX(pCardSigningInfo->pbSignedData, pCardSigningInfo->cbSignedData);
   } else {
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Unsupported key type");
   }
+
+  CMD_RET_OK;
+}
+
+/*
+ * Function: CardRSADecrypt
+ *
+ * Purpose: Decrypt data using a key exchange key on the card.
+ */
+DWORD WINAPI CardRSADecrypt(__in PCARD_DATA pCardData, __inout PCARD_RSA_DECRYPT_INFO pInfo) {
+  CMD_LOG_FUNC("pCardData %p, pInfo %p", pCardData, pInfo);
+
+  CMD_NONNULL_PARAM(pCardData);
+  CMD_NONNULL_PARAM(pInfo);
+
+  INJECT_HANDLES();
+
+  CMD_DEBUG("CardRSADecrypt: dwVersion %d, bContainerIndex %d, dwKeySpec %d, pbData %p, cbData %d, pPaddingInfo %p, "
+            "dwPaddingType %d",
+            pInfo->dwVersion, pInfo->bContainerIndex, pInfo->dwKeySpec, pInfo->pbData, pInfo->cbData,
+            pInfo->pPaddingInfo, pInfo->dwPaddingType);
+
+  if (pInfo->dwVersion != CARD_RSA_KEY_DECRYPT_INFO_VERSION_ONE &&
+      pInfo->dwVersion != CARD_RSA_KEY_DECRYPT_INFO_VERSION_TWO)
+    CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
+
+  CMD_GET_CTX(pCardData, pContext);
+  if (pInfo->bContainerIndex >= pContext->canokey.slotCount)
+    CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
+
+  SLOT *slot = &pContext->canokey.slots[pInfo->bContainerIndex];
+  if (!canokey_slot_can_decrypt(slot)) {
+    CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Container has no key exchange key");
+  }
+  if (slot->keyType != CKK_RSA) {
+    CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Key exchange key is not RSA");
+  }
+  if (pInfo->dwKeySpec != AT_KEYEXCHANGE) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Only AT_KEYEXCHANGE is supported for RSA decrypt");
+  }
+
+  CMD_NONNULL_PARAM(pInfo->pbData);
+  DWORD modulusSize = slot->rsa.modulusBits / 8;
+  if (pInfo->cbData != modulusSize) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Encrypted data length does not match RSA modulus");
+  }
+
+  CK_RSA_PKCS_OAEP_PARAMS oaepParams = {0};
+  CK_MECHANISM mech = {CKM_RSA_PKCS, NULL, 0};
+  if (pInfo->dwVersion == CARD_RSA_KEY_DECRYPT_INFO_VERSION_ONE || pInfo->dwPaddingType == 0 ||
+      pInfo->dwPaddingType == CARD_PADDING_PKCS1) {
+    mech.mechanism = CKM_RSA_PKCS;
+  } else if (pInfo->dwPaddingType == CARD_PADDING_NONE) {
+    mech.mechanism = CKM_RSA_X_509;
+  } else if (pInfo->dwPaddingType == CARD_PADDING_OAEP) {
+    CMD_ENSURE_NONNULL(pInfo->pPaddingInfo, SCARD_E_INVALID_PARAMETER);
+    BCRYPT_OAEP_PADDING_INFO *paddingInfo = (BCRYPT_OAEP_PADDING_INFO *)pInfo->pPaddingInfo;
+    DWORD ret = map_oaep_hash_alg(paddingInfo->pszAlgId, &oaepParams.hashAlg, &oaepParams.mgf);
+    if (ret != SCARD_S_SUCCESS) {
+      CMD_RETURN(ret, "Unsupported OAEP hash algorithm");
+    }
+    oaepParams.source = CKZ_DATA_SPECIFIED;
+    oaepParams.pSourceData = paddingInfo->pbLabel;
+    oaepParams.ulSourceDataLen = paddingInfo->cbLabel;
+
+    mech.mechanism = CKM_RSA_PKCS_OAEP;
+    mech.pParameter = &oaepParams;
+    mech.ulParameterLen = sizeof(oaepParams);
+  } else {
+    CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Unsupported RSA decrypt padding type");
+  }
+
+  PBYTE encryptedData = (PBYTE)g_pfnCspAlloc(pInfo->cbData);
+  CMD_ENSURE_NONNULL(encryptedData, SCARD_E_NO_MEMORY);
+  memcpy(encryptedData, pInfo->pbData, pInfo->cbData);
+  reverse_bytes(encryptedData, pInfo->cbData);
+
+  CK_OBJECT_HANDLE hKey = (CKO_PRIVATE_KEY << 8) | slot->id;
+  CK_RV rv = C_DecryptInit(pContext->session, &mech, hKey);
+  if (rv != CKR_OK) {
+    g_pfnCspFree(encryptedData);
+    CMD_RETURN(map_pkcs11_crypto_error(rv), "C_DecryptInit failed");
+  }
+
+  CK_ULONG cbPlain = pInfo->cbData;
+  rv = C_Decrypt(pContext->session, encryptedData, pInfo->cbData, pInfo->pbData, &cbPlain);
+  g_pfnCspFree(encryptedData);
+  if (rv != CKR_OK) {
+    CMD_RETURN(map_pkcs11_crypto_error(rv), "C_Decrypt failed");
+  }
+
+  if (mech.mechanism == CKM_RSA_X_509) {
+    reverse_bytes(pInfo->pbData, cbPlain);
+  }
+  pInfo->cbData = (DWORD)cbPlain;
+
+  CMD_DEBUG("Decrypted data: %d bytes (@%p)", pInfo->cbData, pInfo->pbData);
+  CMD_PRINT_HEX(pInfo->pbData, pInfo->cbData);
 
   CMD_RET_OK;
 }

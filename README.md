@@ -19,13 +19,14 @@ progress.
 - `scripts\sign-test.ps1` exercises the minidriver through Windows CAPI/CNG
   APIs instead of parsing command output.
 - The current development card has been tested with 9A RSA-2048 signing and
-  9C EC P-256 signing. Additional PIV slot behavior is the next major work
-  item.
+  9C EC P-256 signing. The minidriver now exposes 9D as key exchange/decrypt
+  when RSA key material and a certificate are provisioned in that PIV slot.
 
 Known gaps:
 
-- Full YubiKey-style PIV slot mapping is not finished yet.
-- 9D key exchange/decryption is not exposed by the minidriver yet.
+- Full YubiKey-style PIV slot mapping still needs broader card coverage.
+- 9D key exchange/decryption is wired through the minidriver and PKCS#11, but
+  still needs hardware validation with a card that has 9D RSA material.
 - INF installation is kept for later release validation.
 - The test matrix depends on which keys and certificates are provisioned on the
   attached CanoKey.
@@ -85,7 +86,8 @@ Useful local checks:
 
 `smoke-scinfo.ps1` drives `certutil -silent -pin ... -scinfo` against the
 CanoKey reader. `sign-test.ps1` uses Windows cryptographic APIs directly to
-enumerate containers and test signing.
+enumerate containers and test signing. If a decrypt-capable RSA KSP container
+is present, it also runs CNG PKCS#1 and OAEP-SHA256 decrypt checks.
 
 INF installation is still useful for release-style validation and final
 packaging. For that flow, enable test signing mode if needed, install the

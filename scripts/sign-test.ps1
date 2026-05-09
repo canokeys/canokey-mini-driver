@@ -7,6 +7,7 @@ param(
     [string[]]$BaseCspContainer,
     [string[]]$RsaKspContainer,
     [string[]]$EccKspContainer,
+    [string[]]$DecryptKspContainer,
     [switch]$RunScinfo,
     [switch]$SkipBuild,
     [switch]$SkipInstall,
@@ -88,7 +89,11 @@ namespace CanokeyMinidriver {
         public string Container { get; set; }
         public string Algorithm { get; set; }
         public string Padding { get; set; }
-        public int SignatureLength { get; set; }
+        public int OutputLength { get; set; }
+        public int SignatureLength {
+            get { return OutputLength; }
+            set { OutputLength = value; }
+        }
         public bool Verified { get; set; }
     }
 
@@ -106,8 +111,11 @@ namespace CanokeyMinidriver {
         private const uint CRYPT_NEXT = 2;
         private const int NCRYPT_SILENT_FLAG = 0x00000040;
         private const int NCRYPT_PAD_PKCS1_FLAG = 0x00000002;
+        private const int NCRYPT_PAD_OAEP_FLAG = 0x00000004;
         private const int NCRYPT_PAD_PSS_FLAG = 0x00000008;
+        private const uint NCRYPT_ALLOW_DECRYPT_FLAG = 0x00000001;
         private static readonly byte[] TestData = Encoding.ASCII.GetBytes("canokey minidriver signing test");
+        private static readonly byte[] DecryptTestData = Encoding.ASCII.GetBytes("canokey minidriver decrypt test");
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         public struct KeyName {
@@ -136,6 +144,14 @@ namespace CanokeyMinidriver {
             [MarshalAs(UnmanagedType.LPWStr)]
             public string pszAlgId;
             public int cbSalt;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct BCRYPT_OAEP_PADDING_INFO {
+            [MarshalAs(UnmanagedType.LPWStr)]
+            public string pszAlgId;
+            public IntPtr pbLabel;
+            public int cbLabel;
         }
 
         [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
@@ -191,6 +207,12 @@ namespace CanokeyMinidriver {
 
         [DllImport("ncrypt.dll")]
         private static extern int NCryptVerifySignature(IntPtr hKey, IntPtr pPaddingInfo, byte[] pbHashValue, int cbHashValue, byte[] pbSignature, int cbSignature, int dwFlags);
+
+        [DllImport("ncrypt.dll")]
+        private static extern int NCryptEncrypt(IntPtr hKey, byte[] pbInput, int cbInput, IntPtr pPaddingInfo, byte[] pbOutput, int cbOutput, out int pcbResult, int dwFlags);
+
+        [DllImport("ncrypt.dll")]
+        private static extern int NCryptDecrypt(IntPtr hKey, byte[] pbInput, int cbInput, IntPtr pPaddingInfo, byte[] pbOutput, int cbOutput, out int pcbResult, int dwFlags);
 
         [DllImport("ncrypt.dll")]
         private static extern int NCryptFreeObject(IntPtr hObject);
@@ -375,6 +397,78 @@ namespace CanokeyMinidriver {
             }
         }
 
+        public static SignResult CngDecrypt(string container, string pin, string mode) {
+            IntPtr hProvider = IntPtr.Zero;
+            IntPtr hKey = IntPtr.Zero;
+            IntPtr pPaddingInfo = IntPtr.Zero;
+            Type paddingType = null;
+            try {
+                CheckStatus(NCryptOpenStorageProvider(out hProvider, SmartCardKsp, 0), "NCryptOpenStorageProvider");
+                CheckStatus(NCryptOpenKey(hProvider, out hKey, container, 0, NCRYPT_SILENT_FLAG), "NCryptOpenKey");
+                if (!String.IsNullOrEmpty(pin)) {
+                    byte[] pinBytes = Encoding.Unicode.GetBytes(pin + "\0");
+                    CheckStatus(NCryptSetProperty(hKey, "SmartCardPin", pinBytes, pinBytes.Length, NCRYPT_SILENT_FLAG), "NCryptSetProperty(SmartCardPin)");
+                }
+
+                string group = GetCngStringProperty(hKey, "Algorithm Group");
+                RequireGroup(group, "RSA", mode);
+
+                int flags;
+                string padding;
+                if (String.Equals(mode, "RSA_PKCS1", StringComparison.OrdinalIgnoreCase)) {
+                    flags = NCRYPT_PAD_PKCS1_FLAG;
+                    padding = "PKCS1";
+                } else if (String.Equals(mode, "RSA_OAEP_SHA256", StringComparison.OrdinalIgnoreCase)) {
+                    BCRYPT_OAEP_PADDING_INFO info = new BCRYPT_OAEP_PADDING_INFO {
+                        pszAlgId = "SHA256",
+                        pbLabel = IntPtr.Zero,
+                        cbLabel = 0
+                    };
+                    paddingType = typeof(BCRYPT_OAEP_PADDING_INFO);
+                    pPaddingInfo = AllocStruct(info, paddingType);
+                    flags = NCRYPT_PAD_OAEP_FLAG;
+                    padding = "OAEP-SHA256";
+                } else {
+                    throw new ArgumentException("Unsupported CNG decrypt mode: " + mode);
+                }
+
+                int cbCiphertext;
+                CheckStatus(NCryptEncrypt(hKey, DecryptTestData, DecryptTestData.Length, pPaddingInfo, null, 0, out cbCiphertext, flags), "NCryptEncrypt(size)");
+                byte[] ciphertext = new byte[cbCiphertext];
+                CheckStatus(NCryptEncrypt(hKey, DecryptTestData, DecryptTestData.Length, pPaddingInfo, ciphertext, ciphertext.Length, out cbCiphertext, flags), "NCryptEncrypt");
+
+                int cbPlaintext;
+                CheckStatus(NCryptDecrypt(hKey, ciphertext, cbCiphertext, pPaddingInfo, null, 0, out cbPlaintext, flags), "NCryptDecrypt(size)");
+                byte[] plaintext = new byte[cbPlaintext];
+                CheckStatus(NCryptDecrypt(hKey, ciphertext, cbCiphertext, pPaddingInfo, plaintext, plaintext.Length, out cbPlaintext, flags), "NCryptDecrypt");
+
+                if (cbPlaintext != DecryptTestData.Length) {
+                    throw new InvalidOperationException("Decrypt returned " + cbPlaintext + " bytes; expected " + DecryptTestData.Length);
+                }
+                for (int i = 0; i < DecryptTestData.Length; i++) {
+                    if (plaintext[i] != DecryptTestData[i]) {
+                        throw new InvalidOperationException("Decrypt output mismatch at byte " + i);
+                    }
+                }
+
+                return new SignResult {
+                    Provider = SmartCardKsp,
+                    Container = container,
+                    Algorithm = mode,
+                    Padding = padding,
+                    SignatureLength = cbPlaintext,
+                    Verified = true
+                };
+            } finally {
+                if (pPaddingInfo != IntPtr.Zero) {
+                    if (paddingType != null) Marshal.DestroyStructure(pPaddingInfo, paddingType);
+                    Marshal.FreeHGlobal(pPaddingInfo);
+                }
+                if (hKey != IntPtr.Zero) NCryptFreeObject(hKey);
+                if (hProvider != IntPtr.Zero) NCryptFreeObject(hProvider);
+            }
+        }
+
         private static IntPtr AcquireCapiProvider(string container, string readerName, out string openedContainer) {
             string[] candidates;
             if (String.IsNullOrEmpty(readerName)) {
@@ -472,7 +566,7 @@ function Invoke-SignCase {
             Container = $result.Container
             Algorithm = $result.Algorithm
             Padding = $result.Padding
-            SignatureBytes = $result.SignatureLength
+            OutputBytes = $result.OutputLength
             Verified = $result.Verified
             Error = $null
         }
@@ -487,7 +581,7 @@ function Invoke-SignCase {
             Container = $null
             Algorithm = $null
             Padding = $null
-            SignatureBytes = $null
+            OutputBytes = $null
             Verified = $false
             Error = $_.Exception.Message
         }
@@ -558,6 +652,14 @@ try {
             Where-Object { $_.AlgorithmGroup -match "ECDSA" } |
             Select-Object -ExpandProperty Container -Unique)
     }
+    $selectedDecryptKspContainers = @()
+    if ($DecryptKspContainer) {
+        $selectedDecryptKspContainers = @($DecryptKspContainer)
+    } else {
+        $selectedDecryptKspContainers = @($kspInfo |
+            Where-Object { $_.AlgorithmGroup -match "RSA" -and (($_.Flags -band [uint32]1) -ne 0 -or $_.LegacyKeySpec -eq 1) } |
+            Select-Object -ExpandProperty Container -Unique)
+    }
 
     Write-Host ""
     Write-Host "Discovered CAPI containers:"
@@ -580,6 +682,7 @@ try {
         SelectedBaseCspContainers = ($selectedBaseCspContainers -join ", ")
         SelectedRsaKspContainers = ($selectedRsaKspContainers -join ", ")
         SelectedEccKspContainers = ($selectedEccKspContainers -join ", ")
+        SelectedDecryptKspContainers = ($selectedDecryptKspContainers -join ", ")
     } | Format-List
 
     if ($DiscoverOnly) {
@@ -616,6 +719,14 @@ try {
     foreach ($container in $selectedEccKspContainers) {
         $results += Invoke-SignCase "CNG ECDSA P-256/SHA256 [$container]" {
             [CanokeyMinidriver.SignTestNative]::CngSign($container, $pinArg, "ECDSA_SHA256")
+        }
+    }
+    foreach ($container in $selectedDecryptKspContainers) {
+        $results += Invoke-SignCase "CNG RSA decrypt PKCS1 [$container]" {
+            [CanokeyMinidriver.SignTestNative]::CngDecrypt($container, $pinArg, "RSA_PKCS1")
+        }
+        $results += Invoke-SignCase "CNG RSA decrypt OAEP-SHA256 [$container]" {
+            [CanokeyMinidriver.SignTestNative]::CngDecrypt($container, $pinArg, "RSA_OAEP_SHA256")
         }
     }
 

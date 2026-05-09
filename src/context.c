@@ -26,7 +26,6 @@ X(CardCreateFile) \
 X(CardWriteFile) \
 X(CardDeleteFile) \
 X(CardSetContainerProperty) \
-X(CardRSADecrypt) \
 X(CardConstructDHAgreement) \
 X(CardDeriveKey) \
 X(CardDestroyDHAgreement) \
@@ -147,7 +146,7 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
   pCardData->pfnCardQueryKeySizes = CardQueryKeySizes;         // Yes
 
   pCardData->pfnCardSignData = CardSignData;     // Yes
-  pCardData->pfnCardRSADecrypt = NULL;           // Yes (opt)
+  pCardData->pfnCardRSADecrypt = CardRSADecrypt; // Yes (opt)
   pCardData->pfnCardConstructDHAgreement = NULL; // Yes (opt)
 
   // New functions in version five.
