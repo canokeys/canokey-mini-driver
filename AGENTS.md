@@ -41,11 +41,23 @@ git submodule update --init --recursive
 - `build.ps1` is build-only. Do not install, uninstall, or update drivers from
   that script. Only run `pnputil` or INF installation commands when the user
   explicitly asks for driver installation or removal.
+- For local debugging, prefer the registry-only flow in
+  `docs/development.md`: build the DLL, run the
+  `canokey-minidriver-debug-install` target, and map the CanoKey ATR to that
+  DLL in the Calais smart card registry key.
 - Build outputs are under `out/build/<arch>-Clang-<config>/`, for example:
 
 ```text
 out/build/x64-Clang-Debug/canokey-minidriver.dll
 out/build/x64-Clang-Debug/canokey-minidriver.inf
+```
+
+- The debug deployment target copies the DLL to `CMD_DEBUG_INSTALL_DIR`
+  (`C:/canokey-minidriver` by default) and creates `CMD_LOG_DIR`
+  (`C:/canokey-minidriver/logs` by default):
+
+```powershell
+cmake --build out\build\x64-Clang-Debug --target canokey-minidriver-debug-install
 ```
 
 ## Development Hygiene
@@ -85,15 +97,20 @@ git commit -s
 
 - Building the DLL/INF is safe. Installing the INF is a machine-level driver
   operation and may require test signing mode, elevated permissions, or reboot.
+- Registry-only debugging is not INF installation. It writes an HKLM Calais
+  smart card mapping to point Windows at a copied minidriver DLL. Treat the
+  registry edit as an explicit user-approved debugging step.
 - Do not enable test signing, install the driver, delete installed driver
   packages, restart Windows services, or write to system driver stores unless
   the user directly requests that action.
-- Debug builds write minidriver logs under `C:\Logs` when loaded by a host
-  process.
+- Debug builds write minidriver logs under the compiled `CMD_LOG_DIR` when
+  loaded by a host process.
 
 ## Implementation Notes
 
 - `canokey-minidriver.inf` is generated from `canokey-minidriver.inf.in`.
 - The PKCS#11 dependency is linked statically into the minidriver target.
+- `CMD_DEBUG_INSTALL_DIR` and `CMD_LOG_DIR` are CMake cache variables and are
+  compiled into the DLL as preprocessor definitions.
 - The minidriver uses CanoKey PKCS#11 managed mode; initialize managed mode
   before `C_Initialize()` when wiring card handles through this layer.

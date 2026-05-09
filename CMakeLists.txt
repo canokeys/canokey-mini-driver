@@ -21,11 +21,23 @@ file(GLOB SOURCES src/*.c)
 set(CMD_DRIVERDATE "03/09/2025")
 set(CMD_DRIVERVER ${CMAKE_PROJECT_VERSION})
 set(CMD_LIB_NAME "canokey-minidriver")
+set(CMD_DEBUG_INSTALL_DIR "C:/canokey-minidriver" CACHE PATH "Directory used for registry-only debug deployment")
+file(TO_CMAKE_PATH "${CMD_DEBUG_INSTALL_DIR}" CMD_DEBUG_INSTALL_DIR)
+string(REGEX REPLACE "/$" "" CMD_DEBUG_INSTALL_DIR "${CMD_DEBUG_INSTALL_DIR}")
+if(NOT DEFINED CMD_LOG_DIR)
+  set(CMD_LOG_DIR "${CMD_DEBUG_INSTALL_DIR}/logs" CACHE PATH "Directory used for minidriver debug logs")
+endif()
+file(TO_CMAKE_PATH "${CMD_LOG_DIR}" CMD_LOG_DIR)
+string(REGEX REPLACE "/$" "" CMD_LOG_DIR "${CMD_LOG_DIR}")
 
 add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 add_library(${CMD_LIB_NAME} SHARED ${SOURCES} ${HEADERS})
 target_include_directories(${CMD_LIB_NAME} PRIVATE include external/canokey-pkcs11/include)
 target_link_libraries(${CMD_LIB_NAME} PRIVATE "winscard.lib" canokey_pkcs11)
+target_compile_definitions(
+  ${CMD_LIB_NAME}
+  PRIVATE CMD_DEBUG_INSTALL_DIR="${CMD_DEBUG_INSTALL_DIR}"
+          CMD_LOG_DIR="${CMD_LOG_DIR}")
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   add_compile_definitions(CMD_VERBOSE DBG_NCOLOR)
@@ -45,3 +57,12 @@ endif()
 
 # export necessary symbols for BaseCSP to use
 target_link_options(${CMD_LIB_NAME} PRIVATE /DEF:${CMAKE_CURRENT_SOURCE_DIR}/${CMD_LIB_NAME}.def)
+
+add_custom_target(
+  ${CMD_LIB_NAME}-debug-install
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${CMD_DEBUG_INSTALL_DIR}"
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${CMD_LOG_DIR}"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:${CMD_LIB_NAME}>"
+          "${CMD_DEBUG_INSTALL_DIR}/$<TARGET_FILE_NAME:${CMD_LIB_NAME}>"
+  DEPENDS ${CMD_LIB_NAME}
+  COMMENT "Copying ${CMD_LIB_NAME} to ${CMD_DEBUG_INSTALL_DIR} for registry-only debugging")

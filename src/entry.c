@@ -7,8 +7,17 @@
 #include "cardmod.h"
 #include "logging.h"
 
+#ifndef CMD_DEBUG_INSTALL_DIR
+#define CMD_DEBUG_INSTALL_DIR "C:/canokey-minidriver"
+#endif
+
+#ifndef CMD_LOG_DIR
+#define CMD_LOG_DIR "C:/canokey-minidriver/logs"
+#endif
+
 static void init_logging_file(int level) {
-  CreateDirectory("C:\\Logs", NULL); // ignore errors
+  CreateDirectory(CMD_DEBUG_INSTALL_DIR, NULL); // ignore errors
+  CreateDirectory(CMD_LOG_DIR, NULL);           // ignore errors
   char log_file_name[256], time[16];
   SYSTEMTIME st;
   GetLocalTime(&st);
@@ -17,7 +26,7 @@ static void init_logging_file(int level) {
   HANDLE process = GetCurrentProcess();
   char exe_name[MAX_PATH] = {'\0'};
   GetModuleBaseName(process, NULL, exe_name, MAX_PATH);
-  sprintf_s(log_file_name, sizeof(log_file_name), "C:\\Logs\\canokey_minidriver_%s_%s_%d_%d.log", time, exe_name,
+  sprintf_s(log_file_name, sizeof(log_file_name), CMD_LOG_DIR "/canokey_minidriver_%s_%s_%d_%d.log", time, exe_name,
             (int32_t)GetCurrentProcessId(), (int32_t)GetCurrentThreadId());
   cmd_init_logging(log_file_name, level);
   CMD_INFO("Start logging to file %s...", log_file_name);

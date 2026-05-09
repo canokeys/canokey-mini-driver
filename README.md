@@ -17,24 +17,34 @@ Install Visual Studio 2022 with:
 You can configure the project with CMake (or use Visual Studio GUI).
 You must you clang-cl as frontend, or `thirdpart/dbg.h` will fail to compile.
 
-After successful build, you will get `canokey_minidriver.{inf,dll}` in your build output directory.
+After successful build, you will get `canokey-minidriver.{inf,dll}` in your build output directory.
 
 ## Test
 
-1. Before loading the mini driver, you should [enable test signing mode](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/the-testsigning-boot-configuration-option) and reboot.
-1. Right-click on `canokey_minidriver.inf` and select `Install`, then ignore any warnings.
-1. Insert your CanoKey, go to Device Manager - Smart card readers. If Microsoft driver is loaded, right-click and select "Update driver" - "Browse my computer for drivers" and select "Let me pick from a list of available drivers on my computer", then select "CanoKey Mini Driver".
-1. Unplug and reinsert your CanoKey, you should now see log files under `C:\Logs\`.
+For development, you do not need to install the INF. Windows can load the
+minidriver through the Calais smart card registry mapping:
 
-If you would like to test a new version, you **should** uninstall the old driver first.
-To do so, right-click on `canokey_minidriver.inf` and select `Uninstall`, check "Delete the driver software for this device" and click `OK`.
-Then you can install the new version and test again.
+```powershell
+.\build.ps1 -Arch x64
+cmake --build out\build\x64-Clang-Debug --target canokey-minidriver-debug-install
+```
+
+This copies the DLL to `C:\canokey-minidriver\` and creates
+`C:\canokey-minidriver\logs\`. Import the debug registry mapping described in
+[`docs/development.md`](docs/development.md), then unplug and reinsert your
+CanoKey or restart the calling application.
+
+INF installation is still useful for release-style validation and final
+packaging. For that flow, enable test signing mode if needed, install the
+generated INF, and uninstall the old driver package before testing a new
+version.
 
 ## Troubleshooting
 
 If you encounter any strange problems, you may try to (in order):
 
 - Re-plug your CanoKey.
-- Uninstall and reinstall the driver.
+- Restart the calling application.
 - Restart the `CertPropSvc` service (espcially when you cannot read or delete the log files).
+- Uninstall and reinstall the driver if you are testing the INF path.
 - Reboot your computer.
