@@ -15,7 +15,7 @@
 #define CMD_LOG_DIR "C:/canokey-minidriver/logs"
 #endif
 
-static void init_logging_file(int level) {
+static void init_logging_file(CMD_LOG_CONFIG config) {
   CreateDirectory(CMD_DEBUG_INSTALL_DIR, NULL); // ignore errors
   CreateDirectory(CMD_LOG_DIR, NULL);           // ignore errors
   char log_file_name[256], time[16];
@@ -28,9 +28,12 @@ static void init_logging_file(int level) {
   GetModuleBaseName(process, NULL, exe_name, MAX_PATH);
   sprintf_s(log_file_name, sizeof(log_file_name), CMD_LOG_DIR "/canokey_minidriver_%s_%s_%d_%d.log", time, exe_name,
             (int32_t)GetCurrentProcessId(), (int32_t)GetCurrentThreadId());
-  cmd_init_logging(log_file_name, level);
+  cmd_init_logging(log_file_name, config);
   CMD_INFO("Start logging to file %s...", log_file_name);
 #ifdef CMD_VERBOSE
+  if (!cmd_should_log(CMD_LOG_LEVEL_DEBUG)) {
+    return;
+  }
   char exe_path[MAX_PATH] = {'\0'};
   GetModuleFileNameEx(process, NULL, exe_path, MAX_PATH);
   if (!SymInitialize(process, exe_path, TRUE)) {
@@ -43,18 +46,26 @@ static void init_logging_file(int level) {
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
   (void)lpvReserved;
   switch (fdwReason) {
-  case DLL_PROCESS_ATTACH:
+  case DLL_PROCESS_ATTACH: {
     // Initialize the DLL
-    init_logging_file(CMD_LOG_LEVEL_DEBUG);
-    C_CNK_ConfigLogging(CMD_LOG_LEVEL_DEBUG, g_log_fp);
+    CMD_LOG_CONFIG logging_config = cmd_logging_config_from_env();
+    init_logging_file(logging_config);
+    C_CNK_ConfigLogging(logging_config.level, cmd_get_log_file(), logging_config.unsafe_log_apdu ? CK_TRUE : CK_FALSE);
     CMD_INFO("CanoKey Smart Card Minidriver compiled at %s %s", __DATE__, __TIME__);
     CMD_INFO("DLL loaded with handle %p", hinstDLL);
     DisableThreadLibraryCalls(hinstDLL);
     break;
+  }
   case DLL_PROCESS_DETACH:
     // Clean up resources
     CMD_INFO("DLL unloaded with handle %p, stop logging...", hinstDLL);
     CMD_INFO("========================================");
+#ifdef CMD_VERBOSE
+    if (cmd_should_log(CMD_LOG_LEVEL_DEBUG)) {
+      SymCleanup(GetCurrentProcess());
+    }
+#endif
+    C_CNK_ConfigLogging(CMD_LOG_LEVEL_NONE, NULL, CK_FALSE);
     cmd_stop_logging();
     break;
   case DLL_THREAD_ATTACH:

@@ -1,73 +1,196 @@
 #include "logging.h"
 
+#include <errno.h>
+#include <stdarg.h>
+#include <stdatomic.h>
+#include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 // clang-format off
 #include <Windows.h>
+#include <DbgHelp.h>
 #include <fcntl.h>
 #include <io.h>
-#include <stdarg.h>
-#include <DbgHelp.h>
+#include <synchapi.h>
 // clang-format on
 
 const char *g_log_level_name[CMD_LOG_LEVEL_SIZE] = {
     "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL", "NONE",
 };
 
-// default values
-int g_log_level = CMD_LOG_LEVEL_NONE;
-FILE *g_log_fp = NULL;
+static atomic_int g_log_level = CMD_LOG_LEVEL_NONE;
+static atomic_bool g_unsafe_log_apdu = false;
+static FILE *g_log_fp = NULL;
+static SRWLOCK g_log_lock = SRWLOCK_INIT;
+static bool g_logging_initialized = false;
 
-int cmd_init_logging(const char *log_file, const int log_level) {
-  static bool is_initialized = false;
+static int ascii_tolower(int ch) {
+  if (ch >= 'A' && ch <= 'Z') {
+    return ch - 'A' + 'a';
+  }
+  return ch;
+}
 
-  if (is_initialized || log_file == NULL) {
+static bool ascii_equals_ignore_case(const char *lhs, const char *rhs) {
+  if (lhs == NULL || rhs == NULL) {
+    return false;
+  }
+
+  while (*lhs != '\0' && *rhs != '\0') {
+    if (ascii_tolower((unsigned char)*lhs) != ascii_tolower((unsigned char)*rhs)) {
+      return false;
+    }
+    lhs++;
+    rhs++;
+  }
+
+  return *lhs == '\0' && *rhs == '\0';
+}
+
+static bool parse_log_level(const char *value, int *level) {
+  if (value == NULL || level == NULL) {
+    return false;
+  }
+
+  char *end = NULL;
+  long numeric = strtol(value, &end, 10);
+  if (end != value && *end == '\0' && numeric >= 0 && numeric < CMD_LOG_LEVEL_SIZE) {
+    *level = (int)numeric;
+    return true;
+  }
+
+  for (int i = 0; i < CMD_LOG_LEVEL_SIZE; i++) {
+    if (ascii_equals_ignore_case(value, g_log_level_name[i])) {
+      *level = i;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+static bool parse_bool(const char *value, bool *result) {
+  if (value == NULL || result == NULL) {
+    return false;
+  }
+
+  if (ascii_equals_ignore_case(value, "1") || ascii_equals_ignore_case(value, "true") ||
+      ascii_equals_ignore_case(value, "yes") || ascii_equals_ignore_case(value, "on")) {
+    *result = true;
+    return true;
+  }
+
+  if (ascii_equals_ignore_case(value, "0") || ascii_equals_ignore_case(value, "false") ||
+      ascii_equals_ignore_case(value, "no") || ascii_equals_ignore_case(value, "off")) {
+    *result = false;
+    return true;
+  }
+
+  return false;
+}
+
+CMD_LOG_CONFIG cmd_logging_config_from_env(void) {
+  CMD_LOG_CONFIG config = {
+      .level = CMD_LOG_LEVEL_WARN,
+      .unsafe_log_apdu = false,
+  };
+
+  int level = CMD_LOG_LEVEL_NONE;
+  const char *level_env = getenv("CNK_LOG_LEVEL");
+  if (parse_log_level(level_env, &level)) {
+    config.level = level;
+  }
+
+  bool unsafe_log_apdu = false;
+  const char *unsafe_log_apdu_env = getenv("CNK_UNSAFE_LOG_APDU");
+  if (parse_bool(unsafe_log_apdu_env, &unsafe_log_apdu)) {
+    config.unsafe_log_apdu = unsafe_log_apdu;
+  }
+
+  return config;
+}
+
+int cmd_init_logging(const char *log_file, CMD_LOG_CONFIG config) {
+  AcquireSRWLockExclusive(&g_log_lock);
+  if (g_logging_initialized) {
+    atomic_store(&g_log_level, config.level);
+    atomic_store(&g_unsafe_log_apdu, config.unsafe_log_apdu);
+    ReleaseSRWLockExclusive(&g_log_lock);
     return 0;
   }
 
-  // create log file in shared mode
+  if (config.level >= 0 && config.level < CMD_LOG_LEVEL_SIZE) {
+    atomic_store(&g_log_level, config.level);
+  } else {
+    atomic_store(&g_log_level, CMD_LOG_LEVEL_WARN);
+  }
+  atomic_store(&g_unsafe_log_apdu, config.unsafe_log_apdu);
+
+  if (atomic_load(&g_log_level) == CMD_LOG_LEVEL_NONE || log_file == NULL) {
+    g_logging_initialized = true;
+    ReleaseSRWLockExclusive(&g_log_lock);
+    return 0;
+  }
+
   HANDLE hFile = CreateFile(log_file, FILE_APPEND_DATA | FILE_GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
                             OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
   if (hFile == INVALID_HANDLE_VALUE) {
-    g_log_level = CMD_LOG_LEVEL_NONE;
+    atomic_store(&g_log_level, CMD_LOG_LEVEL_NONE);
+    ReleaseSRWLockExclusive(&g_log_lock);
     return (int)GetLastError();
   }
 
-  // convert file handle to fd
   int log_fd = _open_osfhandle((intptr_t)hFile, _O_CREAT | _O_APPEND | _O_BINARY);
   if (log_fd == -1) {
     CloseHandle(hFile);
-    g_log_level = CMD_LOG_LEVEL_NONE;
+    atomic_store(&g_log_level, CMD_LOG_LEVEL_NONE);
+    ReleaseSRWLockExclusive(&g_log_lock);
     return EINVAL;
   }
+
   FILE *fp = _fdopen(log_fd, "a");
   if (fp == NULL) {
     _close(log_fd);
-    g_log_level = CMD_LOG_LEVEL_NONE;
+    atomic_store(&g_log_level, CMD_LOG_LEVEL_NONE);
+    ReleaseSRWLockExclusive(&g_log_lock);
     return errno;
   }
+
   g_log_fp = fp;
-
-  // set global log level
-  if (log_level >= 0 && log_level < CMD_LOG_LEVEL_SIZE) {
-    g_log_level = log_level;
-  } else {
-    g_log_level = CMD_LOG_LEVEL_INFO;
-  }
-  is_initialized = true;
-
+  g_logging_initialized = true;
+  ReleaseSRWLockExclusive(&g_log_lock);
   return 0;
 }
 
 int cmd_stop_logging() {
-  if (g_log_fp == NULL) {
-    g_log_level = CMD_LOG_LEVEL_NONE;
+  AcquireSRWLockExclusive(&g_log_lock);
+  FILE *fp = g_log_fp;
+  g_log_fp = NULL;
+  g_logging_initialized = false;
+  atomic_store(&g_log_level, CMD_LOG_LEVEL_NONE);
+  atomic_store(&g_unsafe_log_apdu, false);
+  ReleaseSRWLockExclusive(&g_log_lock);
+
+  if (fp == NULL) {
     return 0;
   }
-  int rc = fclose(g_log_fp);
-  g_log_fp = NULL;
-  g_log_level = CMD_LOG_LEVEL_NONE;
-  return rc;
+  return fclose(fp);
+}
+
+FILE *cmd_get_log_file(void) {
+  AcquireSRWLockShared(&g_log_lock);
+  FILE *fp = g_log_fp;
+  ReleaseSRWLockShared(&g_log_lock);
+  return fp;
+}
+
+bool cmd_should_log(const int level) {
+  return level >= atomic_load(&g_log_level);
+}
+
+bool cmd_unsafe_log_apdu_enabled(void) {
+  return atomic_load(&g_unsafe_log_apdu);
 }
 
 static void print_time(FILE *out) {
@@ -78,35 +201,52 @@ static void print_time(FILE *out) {
     sprintf(time + 8, ".%03ld", ts.tv_nsec / 1000000);
     fprintf(out, "%s - CMD - ", time);
   } else {
-    fprintf(out, "!!:!!:!!.!!! - ");
+    fprintf(out, "!!:!!:!!.!!! - CMD - ");
   }
 }
 
-void cmd_fprintf(const int level, const bool prepend_date, FILE *const out, const char *const format, ...) {
-  if (level < g_log_level) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat-nonliteral"
+
+void cmd_printlogf(const int level, const char *const function, const char *const file, const int line,
+                   const char *const format, ...) {
+  if (!cmd_should_log(level)) {
     return;
   }
+
+  AcquireSRWLockExclusive(&g_log_lock);
+  FILE *out = g_log_fp;
   if (out == NULL) {
+    ReleaseSRWLockExclusive(&g_log_lock);
     return;
   }
-  if (prepend_date) {
-    print_time(out);
-  }
-  // print the log line
+
+  print_time(out);
+  fprintf(out, "%-20s(%-20s:L%03d)[%-5s]: ", function, file, line, g_log_level_name[level]);
+
   va_list args;
   va_start(args, format);
   vfprintf(out, format, args);
   va_end(args);
+  fprintf(out, "\n");
   fflush(out);
+  ReleaseSRWLockExclusive(&g_log_lock);
 }
 
-void cmd_print_hex(const int level, FILE *const out, const void *data, size_t size) {
-  if (level < g_log_level) {
+#pragma clang diagnostic pop
+
+void cmd_print_hex(const int level, const void *data, size_t size) {
+  if (!cmd_should_log(level) || !cmd_unsafe_log_apdu_enabled() || data == NULL) {
     return;
   }
-  if (out == NULL || data == NULL) {
+
+  AcquireSRWLockExclusive(&g_log_lock);
+  FILE *out = g_log_fp;
+  if (out == NULL) {
+    ReleaseSRWLockExclusive(&g_log_lock);
     return;
   }
+
   for (size_t i = 0; i < size; i++) {
     fprintf(out, "%02x ", ((const unsigned char *)data)[i]);
     if (i % 16 == 15) {
@@ -114,11 +254,31 @@ void cmd_print_hex(const int level, FILE *const out, const void *data, size_t si
     }
   }
   fprintf(out, "\n");
+  fflush(out);
+  ReleaseSRWLockExclusive(&g_log_lock);
 }
+
+#ifdef CMD_VERBOSE
+static void print_stack_line(const char *format, ...) {
+  AcquireSRWLockExclusive(&g_log_lock);
+  FILE *out = g_log_fp;
+  if (out == NULL) {
+    ReleaseSRWLockExclusive(&g_log_lock);
+    return;
+  }
+
+  va_list args;
+  va_start(args, format);
+  vfprintf(out, format, args);
+  va_end(args);
+  fflush(out);
+  ReleaseSRWLockExclusive(&g_log_lock);
+}
+#endif
 
 void cmd_print_stack() {
 #ifdef CMD_VERBOSE
-  if (g_log_fp == NULL) {
+  if (!cmd_should_log(CMD_LOG_LEVEL_DEBUG)) {
     return;
   }
 
@@ -126,21 +286,19 @@ void cmd_print_stack() {
   HANDLE process = GetCurrentProcess();
   DWORD pid = GetCurrentProcessId();
   DWORD tid = GetCurrentThreadId();
-  CMD_DEBUG("Stack trace begin for PID %d TID %d...\n", pid, tid);
+  CMD_DEBUG("Stack trace begin for PID %d TID %d...", pid, tid);
 
   void *stack[maxStackFrames];
   WORD frames = CaptureStackBackTrace(0, maxStackFrames, stack, NULL);
 
-  // skip the first frame (this function)
   for (WORD i = 1; i < frames; ++i) {
     DWORD64 address = (DWORD64)stack[i];
     char buffer[sizeof(SYMBOL_INFO) + MAX_SYM_NAME * sizeof(TCHAR)];
 
     if (i >= 2 && address == (DWORD64)stack[i - 1]) {
-      fprintf(g_log_fp, "\t[%02d] (repeated frame) @ %p\n", i, (PVOID)address);
+      print_stack_line("\t[%02d] (repeated frame) @ %p\n", i, (PVOID)address);
     }
 
-    // get module name
     char module[MAX_SYM_NAME];
     HMODULE hModule = NULL;
     lstrcpy(module, "");
@@ -152,33 +310,32 @@ void cmd_print_stack() {
       lstrcpy(module, "unknown module");
     }
 
-    // get symbol name
     PSYMBOL_INFO pSymbol = (PSYMBOL_INFO)buffer;
     pSymbol->SizeOfStruct = sizeof(SYMBOL_INFO);
     pSymbol->MaxNameLen = MAX_SYM_NAME;
     DWORD64 displacementSym = 0;
     BOOL symbolFound = SymFromAddr(process, address, &displacementSym, pSymbol);
     if (!symbolFound) {
-      fprintf(g_log_fp, "\t[%02d] SymFromAddr64 returned error for %s!%p: error 0x%lx\n", i, module, (PVOID)address,
-              GetLastError());
+      print_stack_line("\t[%02d] SymFromAddr64 returned error for %s!%p: error 0x%lx\n", i, module, (PVOID)address,
+                       GetLastError());
       continue;
     }
     DWORD64 offset = address - pSymbol->Address;
-    fprintf(g_log_fp, "\t[%02d] at %s!%s+0x%llx @ %p, in ", i, module, pSymbol->Name, offset, (PVOID)address);
 
-    // get line info
     IMAGEHLP_LINE64 line;
     DWORD displacementLine = 0;
     line.SizeOfStruct = sizeof(IMAGEHLP_LINE64);
     BOOL lineFound = SymGetLineFromAddr64(process, address, &displacementLine, &line);
     if (lineFound) {
-      fprintf(g_log_fp, "%s:%lu\n", line.FileName, line.LineNumber);
+      print_stack_line("\t[%02d] at %s!%s+0x%llx @ %p, in %s:%lu\n", i, module, pSymbol->Name, offset,
+                       (PVOID)address, line.FileName, line.LineNumber);
     } else {
-      fprintf(g_log_fp, "unknown line\n");
+      print_stack_line("\t[%02d] at %s!%s+0x%llx @ %p, in unknown line\n", i, module, pSymbol->Name, offset,
+                       (PVOID)address);
     }
   }
-  CMD_DEBUG("Stack trace end.\n");
+  CMD_DEBUG("Stack trace end.");
 #else
-  CMD_WARN("Stack trace is disabled in non-debug mode.\n");
+  return;
 #endif
 }

@@ -11,43 +11,45 @@ enum CMD_LOG_LEVEL {
   CMD_LOG_LEVEL_TRACE = 0,
   CMD_LOG_LEVEL_DEBUG,
   CMD_LOG_LEVEL_INFO,
-  CMD_LOG_LEVEL_WARNING,
+  CMD_LOG_LEVEL_WARN,
   CMD_LOG_LEVEL_ERROR,
   CMD_LOG_LEVEL_FATAL,
   CMD_LOG_LEVEL_NONE,
   CMD_LOG_LEVEL_SIZE,
 };
 
+typedef struct {
+  int level;
+  bool unsafe_log_apdu;
+} CMD_LOG_CONFIG;
+
 extern const char *g_log_level_name[CMD_LOG_LEVEL_SIZE];
 
-extern FILE *g_log_fp;
-extern int g_log_level;
-
-extern int cmd_init_logging(const char *log_file, const int log_level);
+extern CMD_LOG_CONFIG cmd_logging_config_from_env(void);
+extern int cmd_init_logging(const char *log_file, CMD_LOG_CONFIG config);
 extern int cmd_stop_logging();
-extern void cmd_fprintf(const int level, const bool prepend_date, FILE *const out, const char *const format, ...);
-extern void cmd_print_hex(const int level, FILE *const out, const void *data, size_t size);
+extern FILE *cmd_get_log_file(void);
+extern bool cmd_should_log(const int level);
+extern bool cmd_unsafe_log_apdu_enabled(void);
+extern void cmd_printlogf(const int level, const char *function, const char *file, const int line, const char *format,
+                          ...);
+extern void cmd_print_hex(const int level, const void *data, size_t size);
 extern void cmd_print_stack();
-
-#define CMD_PRINTLOGF_IMPL(level, format, ...)                                                                         \
-  cmd_fprintf(level, true, g_log_fp, "%-20s(%-20s:L%03d)[%-5s]: ", __FUNCTION__, __FILE__, __LINE__,                   \
-              g_log_level_name[level]);                                                                                \
-  cmd_fprintf(level, false, g_log_fp, format "\n", ##__VA_ARGS__)
 
 #define CMD_PRINTLOGF(level, format, ...)                                                                              \
   do {                                                                                                                 \
-    if (__builtin_expect(level < g_log_level, true)) {                                                                 \
+    if (__builtin_expect(!cmd_should_log((level)), true)) {                                                            \
       break;                                                                                                           \
     }                                                                                                                  \
-    CMD_PRINTLOGF_IMPL(level, format, ##__VA_ARGS__);                                                                  \
+    cmd_printlogf((level), __FUNCTION__, __FILE__, __LINE__, format, ##__VA_ARGS__);                                   \
   } while (0)
 #define CMD_TRACE(format, ...) CMD_PRINTLOGF(CMD_LOG_LEVEL_TRACE, format, ##__VA_ARGS__)
 #define CMD_DEBUG(format, ...) CMD_PRINTLOGF(CMD_LOG_LEVEL_DEBUG, format, ##__VA_ARGS__)
 #define CMD_INFO(format, ...) CMD_PRINTLOGF(CMD_LOG_LEVEL_INFO, format, ##__VA_ARGS__)
-#define CMD_WARN(format, ...) CMD_PRINTLOGF(CMD_LOG_LEVEL_WARNING, format, ##__VA_ARGS__)
+#define CMD_WARN(format, ...) CMD_PRINTLOGF(CMD_LOG_LEVEL_WARN, format, ##__VA_ARGS__)
 #define CMD_ERROR(format, ...) CMD_PRINTLOGF(CMD_LOG_LEVEL_ERROR, format, ##__VA_ARGS__)
 #define CMD_FATAL(format, ...) CMD_PRINTLOGF(CMD_LOG_LEVEL_FATAL, format, ##__VA_ARGS__)
-#define CMD_PRINT_HEX(data, size) cmd_print_hex(CMD_LOG_LEVEL_DEBUG, g_log_fp, (data), (size));
+#define CMD_PRINT_HEX(data, size) cmd_print_hex(CMD_LOG_LEVEL_DEBUG, (data), (size));
 
 #ifdef CMD_VERBOSE
 #define FUNC_TRACE(CALL) dbg(CALL)

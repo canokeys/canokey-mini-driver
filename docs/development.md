@@ -79,8 +79,18 @@ cmake -S . -B out\build\x64-Clang-Debug -G Ninja `
 
 ## Logging
 
-Debug builds define `CMD_VERBOSE`, initialize minidriver logging from
-`DllMain`, and pass the same `FILE *` to `canokey-pkcs11` through
+The minidriver and managed `canokey-pkcs11` logging use the same environment
+variables:
+
+- `CNK_LOG_LEVEL`: one of `trace`, `debug`, `info`, `warn`, `error`, `fatal`,
+  `none`, or the corresponding numeric log level. The default is `warn`.
+- `CNK_UNSAFE_LOG_APDU`: set to `1`, `true`, `yes`, or `on` to enable raw
+  APDU/hex dumps. Leave this unset unless you explicitly need sensitive wire
+  data in the logs.
+
+Debug builds define `CMD_VERBOSE`. If `CNK_LOG_LEVEL` enables logging, the
+minidriver creates a log file from `DllMain` and passes the same `FILE *`,
+level, and unsafe-APDU flag to `canokey-pkcs11` through
 `C_CNK_ConfigLogging()`.
 
 Log files are named like:
@@ -97,6 +107,15 @@ C:\canokey-minidriver\logs\
 
 The log directory is compiled into the DLL through `CMD_LOG_DIR`, so if you
 change it, rebuild the DLL and rerun `canokey-minidriver-debug-install`.
+
+For verbose local APDU debugging in PowerShell, set the environment for the
+host process before running the probe:
+
+```powershell
+$env:CNK_LOG_LEVEL = "debug"
+$env:CNK_UNSAFE_LOG_APDU = "1"
+.\scripts\smoke-scinfo.ps1 -SkipBuild -SkipInstall -SkipReset
+```
 
 ## Automated Smoke Test
 

@@ -103,8 +103,11 @@ git commit -s
 - Do not enable test signing, install the driver, delete installed driver
   packages, restart Windows services, or write to system driver stores unless
   the user directly requests that action.
-- Debug builds write minidriver logs under the compiled `CMD_LOG_DIR` when
-  loaded by a host process.
+- Logging follows the `canokey-pkcs11` convention. `CNK_LOG_LEVEL` controls
+  minidriver and managed PKCS#11 log verbosity (`warn` by default), and
+  `CNK_UNSAFE_LOG_APDU=1` is required before raw APDU/hex dumps are written.
+  The minidriver passes the parsed level, log file, and unsafe flag to
+  `C_CNK_ConfigLogging(level, file, unsafe_log_apdu)`.
 
 ## Local Debug Loop
 
@@ -247,3 +250,5 @@ EC keys in those slots       -> also ECDH-capable
   Windows callers can retry with the right buffer size.
 - Logging must be best-effort. Failure to open the log file, or calling shutdown
   without a log file, must not assert or crash the host process.
+- Keep minidriver logging thread-safe. Emit a complete log line while holding
+  the logging lock, and avoid exposing mutable logging globals to callers.

@@ -14,7 +14,8 @@ installation, and broader PIV slot coverage are still in progress.
 
 - Debug loading works by copying `canokey-minidriver.dll` to
   `C:\canokey-minidriver\` and registering that path under the CanoKey ATR.
-- Debug logs are written under `C:\canokey-minidriver\logs\` by default.
+- Logging is controlled by `CNK_LOG_LEVEL`; log files are created under
+  `C:\canokey-minidriver\logs\` when the level is not `none`.
 - `certutil -scinfo` can see the card and current certificates.
 - `scripts\crypto-test.ps1` exercises the minidriver through Windows CAPI/CNG
   APIs instead of parsing command output. The same checks can be run in focused
