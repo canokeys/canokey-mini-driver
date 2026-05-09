@@ -98,6 +98,34 @@ C:\canokey-minidriver\logs\
 The log directory is compiled into the DLL through `CMD_LOG_DIR`, so if you
 change it, rebuild the DLL and rerun `canokey-minidriver-debug-install`.
 
+## Automated Smoke Test
+
+For the current development card, target the CanoKey reader directly and pass
+the test PIN on the command line:
+
+```powershell
+certutil -silent -pin 123456 -scinfo "canokeys.org OpenPGP PIV OATH 0"
+```
+
+Specifying the reader name keeps `certutil` from probing Windows Hello or other
+smart-card readers. Passing `-pin` avoids the Windows PIN prompt during repeated
+debug runs. This is only appropriate for the local development key and its test
+PIN.
+
+The repository also has a convenience wrapper for the current debug loop:
+
+```powershell
+.\scripts\smoke-scinfo.ps1
+```
+
+By default it builds x64 Debug, runs the debug-install target, resets the
+development board through `COM3`, and then runs the targeted `certutil` command
+above.
+
+The current WIP minidriver may still make `certutil` exit with
+`NTE_BAD_KEYSET` after the useful CanoKey probes have completed. The wrapper
+treats that specific result as non-fatal unless `-StrictExitCode` is passed.
+
 ## INF Installation
 
 INF installation is still useful for release-style validation, PnP/device

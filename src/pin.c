@@ -60,11 +60,11 @@ DWORD WINAPI CardAuthenticateEx(__in PCARD_DATA pCardData, __in PIN_ID PinId, __
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Session PIN not supported");
   }
 
-  //if (cbPinData < sizeof(PIN_INFO)) {
-  //  CMD_RETURN(SCARD_E_INVALID_PARAMETER, "cbPinData is too small");
-  //}
+  // if (cbPinData < sizeof(PIN_INFO)) {
+  //   CMD_RETURN(SCARD_E_INVALID_PARAMETER, "cbPinData is too small");
+  // }
 
-  //PPIN_INFO pPinInfo = (PPIN_INFO)pbPinData;
+  // PPIN_INFO pPinInfo = (PPIN_INFO)pbPinData;
 
   BYTE pinTries = 0;
   CK_RV rv = C_CNK_Login(pContext->session, CKU_USER, pbPinData, cbPinData, &pinTries);
@@ -104,6 +104,9 @@ DWORD WINAPI CardDeauthenticateEx(__in PCARD_DATA pCardData, __in PIN_SET PinId,
 
   // TODO: PinId is not used
   CK_RV rv = C_Logout(pContext->session);
+  if (rv == CKR_USER_NOT_LOGGED_IN) {
+    CMD_RET_OK;
+  }
   if (rv != CKR_OK) {
     // If the card minidriver returns a nonzero value from this function,
     // the Base CSP/KSP resets the card

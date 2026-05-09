@@ -1,4 +1,5 @@
 #include <Windows.h>
+#include <string.h>
 
 #include "cardmod.h"
 #include "logging.h"
@@ -215,14 +216,28 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot initialize canokey-pkcs11");
   }
   CMD_CONTEXT_PTR context = g_pfnCspAlloc(sizeof(CMD_CONTEXT));
+  if (context == NULL) {
+    C_Finalize(NULL);
+    CMD_RETURN(SCARD_E_NO_MEMORY, "cannot allocate context");
+  }
+  memset(context, 0, sizeof(*context));
+
   ret = C_OpenSession(0, CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, &context->session);
   if (ret != CKR_OK) {
+    g_pfnCspFree(context);
+    C_Finalize(NULL);
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot open session");
   }
+
+  ret = read_canokey(context->session, &context->canokey);
+  if (ret != CKR_OK) {
+    C_CloseSession(context->session);
+    g_pfnCspFree(context);
+    C_Finalize(NULL);
+    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot read canokey");
+  }
+
   pCardData->pvVendorSpecific = context;
-
-  read_canokey(context->session, &context->canokey);
-
   CMD_RET_OK;
 }
 
@@ -230,9 +245,18 @@ DWORD CardDeleteContext(__inout PCARD_DATA pCardData) {
   CMD_LOG_FUNC("pCardData %p", pCardData);
   CMD_NONNULL_PARAM(pCardData);
   if (pCardData->pvVendorSpecific) {
-    pCardData->pfnCspFree(pCardData->pvVendorSpecific);
+    CMD_CONTEXT_PTR context = (CMD_CONTEXT_PTR)pCardData->pvVendorSpecific;
+    CK_RV rv = C_CloseSession(context->session);
+    if (rv != CKR_OK && rv != CKR_SESSION_HANDLE_INVALID && rv != CKR_CRYPTOKI_NOT_INITIALIZED) {
+      CMD_WARN("C_CloseSession failed: 0x%lx", rv);
+    }
+    pCardData->pfnCspFree(context);
     pCardData->pvVendorSpecific = NULL;
+
+    rv = C_Finalize(NULL);
+    if (rv != CKR_OK && rv != CKR_CRYPTOKI_NOT_INITIALIZED) {
+      CMD_WARN("C_Finalize failed: 0x%lx", rv);
+    }
   }
-  C_Finalize(NULL);
   CMD_RET_OK;
 }

@@ -106,6 +106,70 @@ git commit -s
 - Debug builds write minidriver logs under the compiled `CMD_LOG_DIR` when
   loaded by a host process.
 
+## Local Debug Loop
+
+- The current preferred smoke test is:
+
+```powershell
+.\build.ps1 -Arch x64
+cmake --build out\build\x64-Clang-Debug --target canokey-minidriver-debug-install
+certutil -silent -pin 123456 -scinfo "canokeys.org OpenPGP PIV OATH 0"
+```
+
+- The test/debug CanoKey can be USB-reset through the helper board on `COM3`.
+  To make Windows unload/reload the smart card stack after copying a new DLL,
+  open `COM3`, write `reset ciu` followed by a carriage return/newline, then
+  wait a few seconds before running the next probe. This simulates unplugging
+  and replugging the device without touching the INF.
+- Use `COM3` for this reset path. Do not fall back to `COM4`. If opening
+  `COM3` fails with `Access denied` or `not currently available`, check for an
+  existing serial monitor/debugger holding the port before retrying.
+- The working PowerShell reset snippet is:
+
+```powershell
+$port = New-Object System.IO.Ports.SerialPort 'COM3',38400,'None',8,'One'
+$port.NewLine = "`r`n"
+$port.Open()
+$port.WriteLine('reset ciu')
+Start-Sleep -Milliseconds 300
+$port.Close()
+Start-Sleep -Seconds 6
+```
+
+- The scripted version of the same build/install/reset/scinfo loop is:
+
+```powershell
+.\scripts\smoke-scinfo.ps1
+```
+
+- The smoke wrapper treats the current WIP `certutil` trailing
+  `NTE_BAD_KEYSET` result as non-fatal. Pass `-StrictExitCode` when the exact
+  `certutil` process exit code matters.
+- Logs are written under `C:/canokey-minidriver/logs` by default. The most useful
+  files are usually from `certutil.exe`, `CredentialUIBroker.exe`, and
+  `svchost.exe`.
+- Prefer passing the CanoKey reader name to `certutil -scinfo`. Plain
+  `certutil /scinfo` enumerates every smart-card reader and may also exercise
+  Windows Hello, which adds irrelevant prompts and failures.
+- For the current development card, `certutil -pin 123456` suppresses the
+  Windows PIN UI. This is a local test convenience only; do not hardcode or
+  document real user PINs.
+- `certutil /scinfo` exercises the real Windows path. In the observed flow,
+  Windows loads the DLL from the Calais registry mapping, calls
+  `CardAcquireContext`, reads `mscp/cmapfile` and `mscp/kscNN`, prompts through
+  `CredentialUIBroker.exe`, then reaches `CardAuthenticateEx` and
+  `CardSignData`.
+- The current development card has useful PIV material in:
+
+```text
+ID 01 -> PIV 9A -> RSA-2048 key and certificate
+ID 02 -> PIV 9C -> EC P-256 key and certificate
+```
+
+- Do not hardcode the development PIN in minidriver code. Authentication must
+  enter through `CardAuthenticateEx`; signing should use the authenticated
+  PKCS#11 session state.
+
 ## Implementation Notes
 
 - `canokey-minidriver.inf` is generated from `canokey-minidriver.inf.in`.
@@ -114,3 +178,7 @@ git commit -s
   compiled into the DLL as preprocessor definitions.
 - The minidriver uses CanoKey PKCS#11 managed mode; initialize managed mode
   before `C_Initialize()` when wiring card handles through this layer.
+- `CardAcquireContext` owns one PKCS#11 session in `CMD_CONTEXT`. Always close
+  that session in `CardDeleteContext` before finalizing PKCS#11; otherwise
+  repeated Windows probes can exhaust the session table and fail later
+  acquisitions with `CKR_HOST_MEMORY` / "No free session slots available".

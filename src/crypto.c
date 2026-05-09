@@ -6,6 +6,25 @@
 #include "minidriver.h"
 #include "pkcs11.h"
 
+static DWORD map_pkcs11_sign_error(CK_RV rv) {
+  switch (rv) {
+  case CKR_OK:
+    return SCARD_S_SUCCESS;
+  case CKR_USER_NOT_LOGGED_IN:
+    return SCARD_W_SECURITY_VIOLATION;
+  case CKR_PIN_INCORRECT:
+    return SCARD_W_WRONG_CHV;
+  case CKR_PIN_LOCKED:
+    return SCARD_W_CHV_BLOCKED;
+  case CKR_HOST_MEMORY:
+    return SCARD_E_NO_MEMORY;
+  case CKR_BUFFER_TOO_SMALL:
+    return ERROR_INSUFFICIENT_BUFFER;
+  default:
+    return SCARD_F_INTERNAL_ERROR;
+  }
+}
+
 /*
  * Function: CardSignData
  *
@@ -48,23 +67,18 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
     CMD_DEBUG("Padding data: %d bytes (@%p)", paddedLen, pCardSigningInfo->pbSignedData);
     CMD_PRINT_HEX(pCardSigningInfo->pbSignedData, paddedLen);
 
-    // Login
-    CK_RV rv = C_Login(pContext->session, CKU_USER, "123456", 6);
-    if (rv != CKR_OK && rv != CKR_USER_ALREADY_LOGGED_IN)
-      CMD_RETURN(rv, "C_Login failed");
-
     // Sign
     CK_MECHANISM mech = {CKM_RSA_X_509, NULL, 0};
     CK_OBJECT_HANDLE hKey = (CKO_PRIVATE_KEY << 8) | slot->id;
-    rv = C_SignInit(pContext->session, &mech, hKey);
+    CK_RV rv = C_SignInit(pContext->session, &mech, hKey);
     if (rv != CKR_OK)
-      CMD_RETURN(rv, "C_SignInit failed");
+      CMD_RETURN(map_pkcs11_sign_error(rv), "C_SignInit failed");
 
     pCardSigningInfo->cbSignedData = paddedLen;
     rv = C_Sign(pContext->session, pCardSigningInfo->pbSignedData, paddedLen, pCardSigningInfo->pbSignedData,
                 &pCardSigningInfo->cbSignedData);
     if (rv != CKR_OK)
-      CMD_RETURN(rv, "C_Sign failed");
+      CMD_RETURN(map_pkcs11_sign_error(rv), "C_Sign failed");
 
     CMD_DEBUG("Signed data: %d bytes (@%p)", pCardSigningInfo->cbSignedData, pCardSigningInfo->pbSignedData);
     CMD_PRINT_HEX(pCardSigningInfo->pbSignedData, pCardSigningInfo->cbSignedData);
@@ -74,17 +88,12 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
   } else {
     // if (pCardSigningInfo->dwVersion != CARD_SIGNING_INFO_BASIC_VERSION)
     //   CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
-    // Login
-    CK_RV rv = C_Login(pContext->session, CKU_USER, "123456", 6);
-    if (rv != CKR_OK && rv != CKR_USER_ALREADY_LOGGED_IN)
-      CMD_RETURN(rv, "C_Login failed");
-
     // Sign
     CK_MECHANISM mech = {CKM_ECDSA, NULL, 0};
     CK_OBJECT_HANDLE hKey = (CKO_PRIVATE_KEY << 8) | slot->id;
-    rv = C_SignInit(pContext->session, &mech, hKey);
+    CK_RV rv = C_SignInit(pContext->session, &mech, hKey);
     if (rv != CKR_OK)
-      CMD_RETURN(rv, "C_SignInit failed");
+      CMD_RETURN(map_pkcs11_sign_error(rv), "C_SignInit failed");
 
     pCardSigningInfo->cbSignedData = slot->ecc.cbPrivate * 2;
     pCardSigningInfo->pbSignedData = (PBYTE)g_pfnCspAlloc(pCardSigningInfo->cbSignedData);
@@ -93,7 +102,7 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
     rv = C_Sign(pContext->session, pCardSigningInfo->pbData, pCardSigningInfo->cbData, pCardSigningInfo->pbSignedData,
                 &pCardSigningInfo->cbSignedData);
     if (rv != CKR_OK)
-      CMD_RETURN(rv, "C_Sign failed");
+      CMD_RETURN(map_pkcs11_sign_error(rv), "C_Sign failed");
 
     CMD_DEBUG("Signed data: %d bytes (@%p)", pCardSigningInfo->cbSignedData, pCardSigningInfo->pbSignedData);
     CMD_PRINT_HEX(pCardSigningInfo->pbSignedData, pCardSigningInfo->cbSignedData);
