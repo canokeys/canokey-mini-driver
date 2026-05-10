@@ -241,7 +241,9 @@ EC keys in those slots       -> also ECDH-capable
   `ROLE_ADMIN` maps to the PIV management key / `CKU_SO`, and `CMD_ROLE_PUK`
   maps to the PIV PUK only for unblock/reset. Do not support standalone
   `CardAuthenticateEx(CMD_ROLE_PUK)` or PUK changes unless the product design
-  explicitly changes.
+  explicitly changes. PIV PUK reset can set a new PIN even when the PIN is not
+  blocked; `scripts/pin-test.ps1` covers this by using the PUK to set a
+  temporary PIN and then restoring the development PIN.
 - Microsoft Smart Card KSP key creation chooses a minidriver container index
   from `mscp/cmapfile`; public KSP properties select provider/reader, not a
   PIV slot directly. Keep container indexes stable: `0..5` map to PIV object

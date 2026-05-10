@@ -26,6 +26,9 @@ installation, and broader PIV slot coverage are still in progress.
 - Windows PIN management is partially supported: the user PIN can be changed
   with the current PIN, and the user PIN can be unblocked/reset with the PIV
   PUK. PUK changes are intentionally not exposed yet.
+- `scripts/pin-test.ps1` exercises the minidriver PIN contract directly. It
+  temporarily changes the development PIN and restores it; by default it also
+  uses the PUK to reset the PIN even when the PIN is not blocked.
 - Smart Card KSP creation through Windows still needs more validation. Direct
   minidriver creation works; KSP creation probes `cardcf` and `cmapfile` before
   selecting a container, then needs a management-key path for PIV key writes.

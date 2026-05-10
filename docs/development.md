@@ -153,6 +153,19 @@ successful change. `CardChangeAuthenticatorEx(PIN_CHANGE_FLAG_UNBLOCK)` and
 unblocked user PIN is deauthenticated as required by the Windows minidriver
 contract. Nonzero retry-count changes and PUK changes are not supported.
 
+For local regression testing:
+
+```powershell
+.\scripts\pin-test.ps1
+```
+
+This directly loads the debug minidriver, validates `CP_CARD_LIST_PINS` and
+`CP_CARD_PIN_INFO`, changes the development PIN to a temporary value and back,
+then uses the PIV PUK to reset the PIN to a temporary value and changes it back
+again. PIV permits PUK-based PIN reset even when the PIN is not blocked, so the
+test does not intentionally block the PIN. Use `-SkipPukReset` to avoid
+exercising the PUK path.
+
 Debug builds define `CMD_VERBOSE`. When `LogPath` enables logging, the
 minidriver creates one log file per host process from `DllMain` and passes the
 same `FILE *`, level, and sensitive-data flag to `canokey-pkcs11` through
