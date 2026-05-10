@@ -91,9 +91,9 @@ layers.
 
 ## Proposed PKCS#11 Work
 
-Add one of these two interfaces in `canokey-pkcs11`.
-
-Preferred: model PIV data objects as `CKO_DATA`.
+Model selected PIV data objects as `CKO_DATA`, but keep the writable surface
+intentionally narrow. This is not meant to become a fully mutable generic PIV
+object store.
 
 - `C_FindObjects` should be able to find selected PIV data objects with
   `CKA_CLASS = CKO_DATA`.
@@ -104,17 +104,24 @@ Preferred: model PIV data objects as `CKO_DATA`.
 - `CKA_VALUE` should return the raw GET DATA payload.
 - For PIN-protected tags such as `5FC109`, return a login/security error if
   the PIN has not been verified.
+- `CKA_MODIFIABLE` should be `CK_FALSE`, because modification through
+  `C_SetAttributeValue` is not supported.
+- `CKA_DESTROYABLE` should be `CK_FALSE`, because `C_DestroyObject` does not
+  currently delete PIV data objects.
+- `CKA_COPYABLE` should be `CK_FALSE`, because `C_CopyObject` is not supported.
 
-Minimal alternative: add CanoKey vendor extensions such as:
+Writing should use `C_CreateObject(CKO_DATA)` only:
 
-```c
-C_CNK_GetPivData(hSession, tag, buffer, length)
-C_CNK_PutPivData(hSession, tag, buffer, length)
-```
+- The caller must be authenticated as SO.
+- The template must include `CKA_CLASS = CKO_DATA`, the PIV object identifier,
+  and `CKA_VALUE`.
+- Internally this performs PIV PUT DATA.
+- If the PIV data object already exists, overwrite it with the new value.
 
-The standard `CKO_DATA` route is preferable because it keeps this feature close
-to normal PKCS#11 object semantics and avoids expanding minidriver-specific
-vendor APIs.
+Keep `C_SetAttributeValue` simple: return `CKR_ATTRIBUTE_READ_ONLY` for PIV
+token objects, including `CKO_DATA`. This matches the current direction of
+YKCS11 more closely than pretending PIV objects are generally mutable PKCS#11
+objects.
 
 ## Proposed Minidriver Work
 
