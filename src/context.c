@@ -16,14 +16,11 @@
 X(CardDeleteContainer) \
 X(CardGetChallenge) \
 X(CardAuthenticateChallenge) \
-X(CardUnblockPin) \
-X(CardChangeAuthenticator) \
 X(CardCreateDirectory) \
 X(CardDeleteDirectory) \
 X(CardDeleteFile) \
 X(CardSetContainerProperty) \
 X(CardGetChallengeEx) \
-X(CardChangeAuthenticatorEx) \
 X(MDImportSessionKey) \
 X(MDEncryptData) \
 X(CardImportSessionKey) \
@@ -115,27 +112,27 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
   }
 
   // Set function pointers in pCardData
-  pCardData->pfnCardDeleteContext = CardDeleteContext;         // Yes
-  pCardData->pfnCardQueryCapabilities = CardQueryCapabilities; // Yes
-  pCardData->pfnCardDeleteContainer = NULL;                    // No
-  pCardData->pfnCardCreateContainer = CardCreateContainer;     // Yes
-  pCardData->pfnCardGetContainerInfo = CardGetContainerInfo;   // Yes
-  pCardData->pfnCardAuthenticatePin = CardAuthenticatePin;     // Yes
-  pCardData->pfnCardGetChallenge = NULL;                       // No (opt)
-  pCardData->pfnCardAuthenticateChallenge = NULL;              // No (opt)
-  pCardData->pfnCardUnblockPin = NULL;                         // No (opt)
-  pCardData->pfnCardChangeAuthenticator = NULL;                // No (opt)
-  pCardData->pfnCardDeauthenticate = NULL;                     // No (opt, NULL means Base CSP may reset the card)
-  pCardData->pfnCardCreateDirectory = NULL;                    // No
-  pCardData->pfnCardDeleteDirectory = NULL;                    // No
-  pCardData->pfnCardCreateFile = CardCreateFile;               // Yes
-  pCardData->pfnCardReadFile = CardReadFile;                   // Yes
-  pCardData->pfnCardWriteFile = CardWriteFile;                 // Yes
-  pCardData->pfnCardDeleteFile = NULL;                         // No
-  pCardData->pfnCardEnumFiles = CardEnumFiles;                 // Yes
-  pCardData->pfnCardGetFileInfo = CardGetFileInfo;             // Yes
-  pCardData->pfnCardQueryFreeSpace = CardQueryFreeSpace;       // Yes
-  pCardData->pfnCardQueryKeySizes = CardQueryKeySizes;         // Yes
+  pCardData->pfnCardDeleteContext = CardDeleteContext;             // Yes
+  pCardData->pfnCardQueryCapabilities = CardQueryCapabilities;     // Yes
+  pCardData->pfnCardDeleteContainer = NULL;                        // No
+  pCardData->pfnCardCreateContainer = CardCreateContainer;         // Yes
+  pCardData->pfnCardGetContainerInfo = CardGetContainerInfo;       // Yes
+  pCardData->pfnCardAuthenticatePin = CardAuthenticatePin;         // Yes
+  pCardData->pfnCardGetChallenge = NULL;                           // No (opt)
+  pCardData->pfnCardAuthenticateChallenge = NULL;                  // No (opt)
+  pCardData->pfnCardUnblockPin = CardUnblockPin;                   // Yes (opt)
+  pCardData->pfnCardChangeAuthenticator = CardChangeAuthenticator; // Yes
+  pCardData->pfnCardDeauthenticate = NULL;                         // No (opt, NULL means Base CSP may reset the card)
+  pCardData->pfnCardCreateDirectory = NULL;                        // No
+  pCardData->pfnCardDeleteDirectory = NULL;                        // No
+  pCardData->pfnCardCreateFile = CardCreateFile;                   // Yes
+  pCardData->pfnCardReadFile = CardReadFile;                       // Yes
+  pCardData->pfnCardWriteFile = CardWriteFile;                     // Yes
+  pCardData->pfnCardDeleteFile = NULL;                             // No
+  pCardData->pfnCardEnumFiles = CardEnumFiles;                     // Yes
+  pCardData->pfnCardGetFileInfo = CardGetFileInfo;                 // Yes
+  pCardData->pfnCardQueryFreeSpace = CardQueryFreeSpace;           // Yes
+  pCardData->pfnCardQueryKeySizes = CardQueryKeySizes;             // Yes
 
   pCardData->pfnCardSignData = CardSignData;                         // Yes
   pCardData->pfnCardRSADecrypt = CardRSADecrypt;                     // Yes (opt)
@@ -147,14 +144,14 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
   // pCardData->pfnCspGetDHAgreement;
 
   // version 6 additions below here
-  pCardData->pfnCardGetChallengeEx = NULL;                           // No (opt)
-  pCardData->pfnCardAuthenticateEx = CardAuthenticateEx;             // Yes
-  pCardData->pfnCardChangeAuthenticatorEx = NULL;                    // No (opt)
-  pCardData->pfnCardDeauthenticateEx = CardDeauthenticateEx;         // Yes
-  pCardData->pfnCardGetContainerProperty = CardGetContainerProperty; // Yes
-  pCardData->pfnCardSetContainerProperty = NULL;                     // No
-  pCardData->pfnCardGetProperty = CardGetProperty;                   // Yes
-  pCardData->pfnCardSetProperty = CardSetProperty;                   // Yes
+  pCardData->pfnCardGetChallengeEx = NULL;                             // No (opt)
+  pCardData->pfnCardAuthenticateEx = CardAuthenticateEx;               // Yes
+  pCardData->pfnCardChangeAuthenticatorEx = CardChangeAuthenticatorEx; // Yes (opt)
+  pCardData->pfnCardDeauthenticateEx = CardDeauthenticateEx;           // Yes
+  pCardData->pfnCardGetContainerProperty = CardGetContainerProperty;   // Yes
+  pCardData->pfnCardSetContainerProperty = NULL;                       // No
+  pCardData->pfnCardGetProperty = CardGetProperty;                     // Yes
+  pCardData->pfnCardSetProperty = CardSetProperty;                     // Yes
 
   // version 7 additions below here
   // pCardData->pfnCspUnpadData;

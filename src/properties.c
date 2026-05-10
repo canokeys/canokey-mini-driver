@@ -95,8 +95,8 @@ static DWORD getCardGuid(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWOR
 static DWORD getCardPinInfo(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen, DWORD dwFlags) {
   (void)pCardData;
 
-  if (dwFlags != ROLE_USER && dwFlags != ROLE_ADMIN) {
-    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "only ROLE_USER and ROLE_ADMIN are supported");
+  if (dwFlags != ROLE_USER && dwFlags != ROLE_ADMIN && dwFlags != CMD_ROLE_PUK) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "only ROLE_USER, ROLE_ADMIN, and CMD_ROLE_PUK are supported");
   }
   *pdwDataLen = sizeof(PIN_INFO);
   if (cbData < sizeof(PIN_INFO)) {
@@ -114,10 +114,16 @@ static DWORD getCardPinInfo(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PD
     p->dwUnblockPermission = PIN_SET_NONE;
     p->PinCachePolicy.PinCachePolicyType = PinCacheNone;
     p->PinCachePolicy.dwPinCachePolicyInfo = 0;
+  } else if (dwFlags == CMD_ROLE_PUK) {
+    p->PinPurpose = UnblockOnlyPin;
+    p->dwChangePermission = PIN_SET_NONE;
+    p->dwUnblockPermission = PIN_SET_NONE;
+    p->PinCachePolicy.PinCachePolicyType = PinCacheNone;
+    p->PinCachePolicy.dwPinCachePolicyInfo = 0;
   } else {
     p->PinPurpose = PrimaryCardPin;
-    p->dwChangePermission = CREATE_PIN_SET(ROLE_ADMIN);  // TODO: check
-    p->dwUnblockPermission = CREATE_PIN_SET(ROLE_ADMIN); // TODO: check
+    p->dwChangePermission = CREATE_PIN_SET(ROLE_USER);
+    p->dwUnblockPermission = CREATE_PIN_SET(CMD_ROLE_PUK);
     const CMD_CONFIG *config = cmd_get_config();
     if (config->has_pin_cache_timeout) {
       p->PinCachePolicy.PinCachePolicyType = PinCacheTimed;
@@ -137,7 +143,7 @@ static DWORD getCardListPins(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, P
   if (cbData < sizeof(PIN_SET)) {
     CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
   }
-  *(PIN_SET *)pbData = CREATE_PIN_SET(ROLE_USER) | CREATE_PIN_SET(ROLE_ADMIN);
+  *(PIN_SET *)pbData = CREATE_PIN_SET(ROLE_USER) | CREATE_PIN_SET(ROLE_ADMIN) | CREATE_PIN_SET(CMD_ROLE_PUK);
   CMD_RET_OK;
 }
 

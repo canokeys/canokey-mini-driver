@@ -237,6 +237,11 @@ EC keys in those slots       -> also ECDH-capable
   `ROLE_USER`; PIN-never keys must be able to sign, decrypt, or derive without
   a user PIN, while PIN-once/PIN-always keys should return the PKCS#11
   login-required error path when no PIN is cached.
+- PIN management is intentionally narrow. `ROLE_USER` maps to the PIV PIN,
+  `ROLE_ADMIN` maps to the PIV management key / `CKU_SO`, and `CMD_ROLE_PUK`
+  maps to the PIV PUK only for unblock/reset. Do not support standalone
+  `CardAuthenticateEx(CMD_ROLE_PUK)` or PUK changes unless the product design
+  explicitly changes.
 - Microsoft Smart Card KSP key creation chooses a minidriver container index
   from `mscp/cmapfile`; public KSP properties select provider/reader, not a
   PIV slot directly. Keep container indexes stable: `0..5` map to PIV object

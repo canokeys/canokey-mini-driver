@@ -23,6 +23,9 @@ installation, and broader PIV slot coverage are still in progress.
 - Runtime sign/decrypt/ECDH operations honor the stored PIV PIN policy through
   `canokey-pkcs11`: PIN-never keys can operate without a user PIN, while
   PIN-once and PIN-always keys still require PIN login.
+- Windows PIN management is partially supported: the user PIN can be changed
+  with the current PIN, and the user PIN can be unblocked/reset with the PIV
+  PUK. PUK changes are intentionally not exposed yet.
 - Smart Card KSP creation through Windows still needs more validation. Direct
   minidriver creation works; KSP creation probes `cardcf` and `cmapfile` before
   selecting a container, then needs a management-key path for PIV key writes.

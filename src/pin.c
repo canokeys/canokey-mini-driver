@@ -9,6 +9,9 @@
 
 #define CMD_MANAGEMENT_KEY_LEN 24
 
+static CK_RV login_with_role(CMD_CONTEXT_PTR pContext, CK_USER_TYPE userType, PBYTE loginData, CK_ULONG loginDataLen,
+                             BYTE *pPinTries);
+
 static DWORD map_pkcs11_pin_error(CK_RV rv) {
   switch (rv) {
   case CKR_OK:
@@ -43,6 +46,18 @@ static DWORD map_pkcs11_login_error(CK_RV rv, BYTE pinTries) {
   return map_pkcs11_pin_error(rv);
 }
 
+static void maybe_set_attempts_remaining(PDWORD pcAttemptsRemaining, BYTE pinTries) {
+  if (pcAttemptsRemaining != NULL) {
+    *pcAttemptsRemaining = pinTries;
+  }
+}
+
+static void set_attempts_unknown(PDWORD pcAttemptsRemaining) {
+  if (pcAttemptsRemaining != NULL) {
+    *pcAttemptsRemaining = (DWORD)-1;
+  }
+}
+
 static int hex_digit_value(BYTE ch) {
   if (ch >= '0' && ch <= '9') {
     return ch - '0';
@@ -54,6 +69,51 @@ static int hex_digit_value(BYTE ch) {
     return ch - 'A' + 10;
   }
   return -1;
+}
+
+static DWORD logout_after_pin_update(CMD_CONTEXT_PTR pContext) {
+  CK_RV rv = C_Logout(pContext->session);
+  pContext->authenticatedPins = PIN_SET_NONE;
+  if (rv != CKR_OK && rv != CKR_USER_NOT_LOGGED_IN) {
+    CMD_RETURN(map_pkcs11_pin_error(rv), "C_Logout after PIN update failed");
+  }
+  CMD_RET_OK;
+}
+
+static DWORD change_user_pin(CMD_CONTEXT_PTR pContext, PBYTE pbOldPin, DWORD cbOldPin, PBYTE pbNewPin, DWORD cbNewPin,
+                             PDWORD pcAttemptsRemaining) {
+  CMD_ENSURE_NONNULL(pbOldPin, SCARD_E_INVALID_PARAMETER);
+  CMD_ENSURE_NONNULL(pbNewPin, SCARD_E_INVALID_PARAMETER);
+  set_attempts_unknown(pcAttemptsRemaining);
+
+  CK_RV rv = C_SetPIN(pContext->session, pbOldPin, cbOldPin, pbNewPin, cbNewPin);
+  if (rv != CKR_OK) {
+    CMD_RETURN(map_pkcs11_pin_error(rv), "C_SetPIN failed");
+  }
+
+  BYTE pinTries = 0;
+  rv = login_with_role(pContext, CKU_USER, pbNewPin, cbNewPin, &pinTries);
+  if (rv != CKR_OK && rv != CKR_USER_ALREADY_LOGGED_IN) {
+    CMD_RETURN(map_pkcs11_login_error(rv, pinTries), "C_CNK_Login after C_SetPIN failed");
+  }
+  maybe_set_attempts_remaining(pcAttemptsRemaining, pinTries);
+  SET_PIN(pContext->authenticatedPins, ROLE_USER);
+  CMD_RET_OK;
+}
+
+static DWORD unblock_user_pin(CMD_CONTEXT_PTR pContext, PBYTE pbPuk, DWORD cbPuk, PBYTE pbNewPin, DWORD cbNewPin,
+                              PDWORD pcAttemptsRemaining) {
+  CMD_ENSURE_NONNULL(pbPuk, SCARD_E_INVALID_PARAMETER);
+  CMD_ENSURE_NONNULL(pbNewPin, SCARD_E_INVALID_PARAMETER);
+
+  BYTE pinTries = 0;
+  CK_RV rv = C_CNK_UnblockPIN(pContext->session, pbPuk, cbPuk, pbNewPin, cbNewPin, &pinTries);
+  maybe_set_attempts_remaining(pcAttemptsRemaining, pinTries);
+  if (rv != CKR_OK) {
+    CMD_RETURN(map_pkcs11_login_error(rv, pinTries), "C_CNK_UnblockPIN failed");
+  }
+
+  return logout_after_pin_update(pContext);
 }
 
 static DWORD decode_management_key(PBYTE pbPinData, DWORD cbPinData, BYTE managementKey[CMD_MANAGEMENT_KEY_LEN],
@@ -266,4 +326,126 @@ DWORD WINAPI CardDeauthenticateEx(__in PCARD_DATA pCardData, __in PIN_SET PinId,
     pContext->authenticatedPins = PIN_SET_NONE;
     CMD_RET_OK;
   }
+}
+
+/*
+ * Function: CardUnblockPin
+ *
+ * Purpose: Unblock or reset the user PIN using the PIV PUK.
+ */
+DWORD WINAPI CardUnblockPin(__in PCARD_DATA pCardData, __in LPWSTR pwszUserId,
+                            __in_bcount(cbAuthenticationData) PBYTE pbAuthenticationData,
+                            __in DWORD cbAuthenticationData, __in_bcount(cbNewPinData) PBYTE pbNewPinData,
+                            __in DWORD cbNewPinData, __in DWORD cRetryCount, __in DWORD dwFlags) {
+  CMD_LOG_FUNC("pCardData %p, pwszUserId %S, pbAuthenticationData %p, cbAuthenticationData %d, pbNewPinData %p, "
+               "cbNewPinData %d, cRetryCount %d, dwFlags %x",
+               pCardData, pwszUserId, pbAuthenticationData, cbAuthenticationData, pbNewPinData, cbNewPinData,
+               cRetryCount, dwFlags);
+
+  CMD_NONNULL_PARAM(pCardData);
+  CMD_NONNULL_PARAM(pwszUserId);
+  CMD_GET_CTX(pCardData, pContext);
+  (void)cRetryCount;
+
+  INJECT_HANDLES();
+
+  if (dwFlags != CARD_AUTHENTICATE_PIN_PIN) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Only PIN-based unblock is supported");
+  }
+  if (cRetryCount != 0) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Changing retry count is not supported");
+  }
+
+  if (wcscmp(pwszUserId, wszCARD_USER_USER) != 0) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Only user PIN unblock is supported");
+  }
+
+  return unblock_user_pin(pContext, pbAuthenticationData, cbAuthenticationData, pbNewPinData, cbNewPinData, NULL);
+}
+
+/*
+ * Function: CardChangeAuthenticator
+ *
+ * Purpose: Change the user PIN using the current user PIN.
+ */
+DWORD WINAPI CardChangeAuthenticator(__in PCARD_DATA pCardData, __in LPWSTR pwszUserId,
+                                     __in_bcount(cbCurrentAuthenticator) PBYTE pbCurrentAuthenticator,
+                                     __in DWORD cbCurrentAuthenticator,
+                                     __in_bcount(cbNewAuthenticator) PBYTE pbNewAuthenticator,
+                                     __in DWORD cbNewAuthenticator, __in DWORD cRetryCount, __in DWORD dwFlags,
+                                     __out_opt PDWORD pcAttemptsRemaining) {
+  CMD_LOG_FUNC("pCardData %p, pwszUserId %S, pbCurrentAuthenticator %p, cbCurrentAuthenticator %d, "
+               "pbNewAuthenticator %p, cbNewAuthenticator %d, cRetryCount %d, dwFlags %x, pcAttemptsRemaining %p",
+               pCardData, pwszUserId, pbCurrentAuthenticator, cbCurrentAuthenticator, pbNewAuthenticator,
+               cbNewAuthenticator, cRetryCount, dwFlags, pcAttemptsRemaining);
+
+  CMD_NONNULL_PARAM(pCardData);
+  CMD_NONNULL_PARAM(pwszUserId);
+  CMD_GET_CTX(pCardData, pContext);
+  (void)cRetryCount;
+
+  INJECT_HANDLES();
+
+  if (dwFlags != CARD_AUTHENTICATE_PIN_PIN) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Only PIN-based change is supported");
+  }
+  if (cRetryCount != 0) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Changing retry count is not supported");
+  }
+
+  if (wcscmp(pwszUserId, wszCARD_USER_USER) != 0) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Only user PIN change is supported");
+  }
+
+  return change_user_pin(pContext, pbCurrentAuthenticator, cbCurrentAuthenticator, pbNewAuthenticator,
+                         cbNewAuthenticator, pcAttemptsRemaining);
+}
+
+/*
+ * Function: CardChangeAuthenticatorEx
+ *
+ * Purpose: Change the user PIN or unblock it with the PIV PUK.
+ */
+DWORD WINAPI CardChangeAuthenticatorEx(__in PCARD_DATA pCardData, __in DWORD dwFlags, __in PIN_ID dwAuthenticatingPinId,
+                                       __in_bcount(cbAuthenticatingPinData) PBYTE pbAuthenticatingPinData,
+                                       __in DWORD cbAuthenticatingPinData, __in PIN_ID dwTargetPinId,
+                                       __in_bcount(cbTargetData) PBYTE pbTargetData, __in DWORD cbTargetData,
+                                       __in DWORD cRetryCount, __out_opt PDWORD pcAttemptsRemaining) {
+  CMD_LOG_FUNC("pCardData %p, dwFlags %x, dwAuthenticatingPinId %d, pbAuthenticatingPinData %p, "
+               "cbAuthenticatingPinData %d, dwTargetPinId %d, pbTargetData %p, cbTargetData %d, cRetryCount %d, "
+               "pcAttemptsRemaining %p",
+               pCardData, dwFlags, dwAuthenticatingPinId, pbAuthenticatingPinData, cbAuthenticatingPinData,
+               dwTargetPinId, pbTargetData, cbTargetData, cRetryCount, pcAttemptsRemaining);
+
+  CMD_NONNULL_PARAM(pCardData);
+  CMD_GET_CTX(pCardData, pContext);
+  (void)cRetryCount;
+
+  INJECT_HANDLES();
+
+  if (cRetryCount != 0) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Changing retry count is not supported");
+  }
+
+  if (dwTargetPinId != ROLE_USER) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Only user PIN target is supported");
+  }
+
+  if (dwFlags == PIN_CHANGE_FLAG_CHANGEPIN) {
+    if (dwAuthenticatingPinId != ROLE_USER) {
+      CMD_RETURN(SCARD_E_INVALID_PARAMETER, "User PIN change requires ROLE_USER authentication data");
+    }
+    return change_user_pin(pContext, pbAuthenticatingPinData, cbAuthenticatingPinData, pbTargetData, cbTargetData,
+                           pcAttemptsRemaining);
+  }
+
+  if (dwFlags == PIN_CHANGE_FLAG_UNBLOCK) {
+    if (dwAuthenticatingPinId != CMD_ROLE_PUK) {
+      CMD_RETURN(SCARD_E_INVALID_PARAMETER, "User PIN unblock requires CMD_ROLE_PUK authentication data");
+    }
+    return unblock_user_pin(pContext, pbAuthenticatingPinData, cbAuthenticatingPinData, pbTargetData, cbTargetData,
+                            pcAttemptsRemaining);
+  }
+
+  CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported PIN change flags");
 }

@@ -6,6 +6,8 @@
 #include "pkcs11.h"
 #include "pkcs11_canokey.h"
 
+#define CMD_ROLE_PUK 3
+
 // Global function pointers for data caching mechanisms
 extern PFN_CSP_CACHE_ADD_FILE g_pfnCspCacheAddFile;
 extern PFN_CSP_CACHE_LOOKUP_FILE g_pfnCspCacheLookupFile;

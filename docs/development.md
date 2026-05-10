@@ -135,6 +135,24 @@ cached user PIN. The test scripts' `-NoPin` switch is therefore useful for
 checking PIN-never keys, but existing 9A/9C/9D/82/83 keys with the default
 PIN-once policy should still fail without a PIN.
 
+The minidriver exposes three PIN identifiers to Windows:
+
+- `ROLE_USER`: the PIV user PIN. It can be authenticated, changed with the
+  current PIN, and unblocked/reset with the PIV PUK.
+- `ROLE_ADMIN`: the PIV management key. It can be authenticated explicitly for
+  development/provisioning flows, but cannot be changed through Windows PIN
+  APIs.
+- `CMD_ROLE_PUK`: the PIV PUK. It is an unblock-only secret advertised through
+  `CP_CARD_PIN_INFO`; it is not a login role and cannot be changed through the
+  minidriver.
+
+`CardChangeAuthenticatorEx(PIN_CHANGE_FLAG_CHANGEPIN)` maps to
+`C_SetPIN()` for `ROLE_USER`, and leaves the user PIN authenticated after a
+successful change. `CardChangeAuthenticatorEx(PIN_CHANGE_FLAG_UNBLOCK)` and
+`CardUnblockPin()` map to `C_CNK_UnblockPIN()`, then immediately log out so the
+unblocked user PIN is deauthenticated as required by the Windows minidriver
+contract. Nonzero retry-count changes and PUK changes are not supported.
+
 Debug builds define `CMD_VERBOSE`. When `LogPath` enables logging, the
 minidriver creates one log file per host process from `DllMain` and passes the
 same `FILE *`, level, and sensitive-data flag to `canokey-pkcs11` through
