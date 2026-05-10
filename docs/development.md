@@ -269,7 +269,8 @@ management operations on behalf of Windows. CanoKey will need an equivalent
 card-side PIN-protected management-key mechanism, or a local development-only
 configuration such as an explicit management-key registry value, before normal
 Windows KSP enrollment can generate/import PIV keys without a separate
-provisioning tool.
+provisioning tool. See `docs/pin-only-management-key.md` for the current
+research notes and proposed PKCS#11/minidriver split.
 
 Certificate files (`kscN` and `kxcN`) are different from key generation.
 Windows expects user certificate files to behave like everyone-read/user-write

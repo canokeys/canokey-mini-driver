@@ -287,6 +287,10 @@ EC keys in those slots       -> also ECDH-capable
   minidriver can recover an on-card PIN-protected management key and use it for
   PIV management operations. Without an equivalent CanoKey mechanism, keep any
   registry-stored management key limited to development/debug workflows.
+  Read `docs/pin-only-management-key.md` before implementing this path. The
+  preferred boundary is that `canokey-pkcs11` exposes PIN-protected PIV data
+  objects through PKCS#11 or a narrow extension; the minidriver should not issue
+  raw PC/SC APDUs.
 - Certificate files (`kscN`/`kxcN`) must remain Windows-friendly for
   enumeration: report `EveryoneReadUserWriteAc` for file info. The actual PIV
   certificate write is still a management operation, so require `ROLE_ADMIN`
