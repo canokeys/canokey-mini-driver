@@ -209,9 +209,12 @@ The repository also has a convenience wrapper for the current debug loop:
 .\scripts\smoke-scinfo.ps1
 ```
 
-By default it builds x64 Debug, runs the debug-install target, resets the
-development board through `COM3`, and then runs the targeted `certutil` command
-above.
+By default it builds x64 Debug, runs the debug-install target, probes available
+serial ports with the DevKit `status` command, resets through the responding
+control port, and then runs the targeted `certutil` command above. COM numbers
+are not stable across reconnects and firmware updates. A port that opens but
+does not answer `status` is normally the UART interface. Use `-ComPort` only to
+override discovery; the selected port is still validated before reset.
 
 `certutil -scinfo` is a broad Windows smoke test: it exercises certificate
 enumeration, public-key matching, PIN authentication, and private-key signing
@@ -240,7 +243,8 @@ The crypto tests use Windows CryptoAPI/CNG APIs directly instead of parsing
 - CNG RSA OAEP-SHA256 decrypt for discovered key-exchange RSA containers
 
 Like the smoke wrapper, it defaults to building x64 Debug, running the debug
-install target, resetting the board on `COM3`, and passing the local test PIN.
+install target, discovering and resetting the DevKit control port, and passing
+the local test PIN.
 Use `-SkipBuild -SkipInstall -SkipReset` for a fast rerun against the currently
 loaded DLL, and `-DiscoverOnly` to list containers without signing.
 

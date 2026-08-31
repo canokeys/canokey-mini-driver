@@ -17,11 +17,61 @@ function Find-CMake {
     throw "cmake was not found in PATH or Visual Studio."
 }
 
+function Test-CiuControlPort {
+    param([string]$PortName)
+
+    $port = New-Object System.IO.Ports.SerialPort $PortName,115200,'None',8,'One'
+    try {
+        $port.NewLine = "`r`n"
+        $port.ReadTimeout = 750
+        $port.Open()
+        $port.DiscardInBuffer()
+        $port.WriteLine("status")
+        for ($line = 0; $line -lt 3; $line++) {
+            $response = $port.ReadLine()
+            if ($response.StartsWith("OK ") -and $response.Contains("ciu_power=")) {
+                return $true
+            }
+        }
+        return $false
+    } catch {
+        return $false
+    } finally {
+        if ($port.IsOpen) {
+            $port.Close()
+        }
+        $port.Dispose()
+    }
+}
+
+function Resolve-CiuControlPort {
+    param([string]$PortName)
+
+    $candidates = if ([string]::IsNullOrWhiteSpace($PortName)) {
+        @([System.IO.Ports.SerialPort]::GetPortNames() | Sort-Object)
+    } else {
+        @($PortName)
+    }
+
+    foreach ($candidate in $candidates) {
+        if (Test-CiuControlPort $candidate) {
+            return $candidate
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($PortName)) {
+        throw "No DevKit control port responded to the status command."
+    }
+    throw "$PortName is not a responding DevKit control port."
+}
+
 function Invoke-ComReset {
     param([string]$PortName)
 
-    Write-Host "Resetting CanoKey through $PortName..."
-    $port = New-Object System.IO.Ports.SerialPort $PortName,38400,'None',8,'One'
+    $resolvedPort = Resolve-CiuControlPort $PortName
+
+    Write-Host "Resetting CanoKey through $resolvedPort..."
+    $port = New-Object System.IO.Ports.SerialPort $resolvedPort,115200,'None',8,'One'
     try {
         $port.NewLine = "`r`n"
         $port.Open()
@@ -31,6 +81,7 @@ function Invoke-ComReset {
         if ($port.IsOpen) {
             $port.Close()
         }
+        $port.Dispose()
     }
     Start-Sleep -Seconds 6
 }
@@ -59,7 +110,7 @@ function Invoke-CertutilScinfo {
 }
 
 if (-not ("CanokeyMinidriver.SignTestNative" -as [type])) {
-    Add-Type -TypeDefinition @'
+    Add-Type -IgnoreWarnings -WarningAction SilentlyContinue -TypeDefinition @'
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;

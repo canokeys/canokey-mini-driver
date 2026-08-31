@@ -121,18 +121,21 @@ cmake --build out\build\x64-Clang-Debug --target canokey-minidriver-debug-instal
 certutil -silent -pin 123456 -scinfo "canokeys.org OpenPGP PIV OATH 0"
 ```
 
-- The test/debug CanoKey can be USB-reset through the helper board on `COM3`.
-  To make Windows unload/reload the smart card stack after copying a new DLL,
-  open `COM3`, write `reset ciu` followed by a carriage return/newline, then
-  wait a few seconds before running the next probe. This simulates unplugging
-  and replugging the device without touching the INF.
-- Use `COM3` for this reset path. Do not fall back to `COM4`. If opening
-  `COM3` fails with `Access denied` or `not currently available`, check for an
-  existing serial monitor/debugger holding the port before retrying.
-- The working PowerShell reset snippet is:
+- The test/debug CanoKey can be USB-reset through the helper board. Do not
+  identify the control interface by a hardcoded COM number: Windows can assign
+  a different number after reconnecting or flashing. Probe available serial
+  ports at 115200 baud with `status` and select the one whose response starts
+  with `OK` and contains `ciu_power=`. A port that opens but times out is
+  normally the DevKit UART, not the control interface.
+- After identifying the control port, write `reset ciu` followed by CRLF and
+  wait a few seconds. This simulates unplugging and replugging the device
+  without touching the INF. `scripts/minidriver-test-common.ps1` implements
+  this discovery; pass `-ComPort` only as an explicit override, which is still
+  validated with `status`.
+- The essential PowerShell reset sequence after discovery is:
 
 ```powershell
-$port = New-Object System.IO.Ports.SerialPort 'COM3',38400,'None',8,'One'
+$port = New-Object System.IO.Ports.SerialPort $detectedPort,115200,'None',8,'One'
 $port.NewLine = "`r`n"
 $port.Open()
 $port.WriteLine('reset ciu')

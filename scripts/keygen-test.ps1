@@ -5,7 +5,9 @@ param(
     [byte]$ContainerIndex = 4,
     [ValidateSet("ECDSA_P256", "ECDHE_P256", "RSA_SIGN_2048", "RSA_SIGN_3072", "RSA_SIGN_4096")]
     [string]$KeySpec = "ECDSA_P256",
-    [string]$ManagementKey = "010203040506070801020304050607080102030405060708"
+    [string]$ManagementKey = "010203040506070801020304050607080102030405060708",
+    [string]$Pin = "123456",
+    [switch]$UsePinProtectedManagementKey
 )
 
 $ErrorActionPreference = "Stop"
@@ -134,6 +136,10 @@ namespace CanokeyMinidriver {
         private delegate uint CardGetContainerInfo(ref CARD_DATA cardData, byte containerIndex, uint flags,
             ref CONTAINER_INFO containerInfo);
 
+        [UnmanagedFunctionPointer(CallingConvention.Winapi, CharSet = CharSet.Unicode)]
+        private delegate uint CardGetProperty(ref CARD_DATA cardData, string property, [Out] byte[] output,
+            uint outputLen, out uint resultLen, uint flags);
+
         private static readonly CspAlloc AllocCallback = Alloc;
         private static readonly CspReAlloc ReAllocCallback = ReAlloc;
         private static readonly CspFree FreeCallback = Free;
@@ -169,10 +175,11 @@ namespace CanokeyMinidriver {
             public uint KeySize { get; set; }
             public uint SignaturePublicKeyBytes { get; set; }
             public uint KeyExchangePublicKeyBytes { get; set; }
+            public uint AuthenticatedPins { get; set; }
         }
 
         public static Result Generate(string dllPath, string readerName, byte containerIndex, uint keySpec,
-            uint keySize, byte[] managementKey) {
+            uint keySize, byte[] managementKey, byte[] userPin, bool usePinProtectedManagementKey) {
             IntPtr module = IntPtr.Zero;
             IntPtr context = IntPtr.Zero;
             IntPtr card = IntPtr.Zero;
@@ -218,8 +225,25 @@ namespace CanokeyMinidriver {
                 CheckCard(acquire(ref data, 0), "CardAcquireContext");
 
                 CardAuthenticateEx authenticate = Marshal.GetDelegateForFunctionPointer<CardAuthenticateEx>(data.pfnCardAuthenticateEx);
-                CheckCard(authenticate(ref data, ROLE_ADMIN, 0, managementKey, (uint)managementKey.Length,
-                    IntPtr.Zero, IntPtr.Zero, IntPtr.Zero), "CardAuthenticateEx(ROLE_ADMIN)");
+                byte[] authenticationData = usePinProtectedManagementKey ? userPin : managementKey;
+                uint authenticationRole = usePinProtectedManagementKey ? ROLE_USER : ROLE_ADMIN;
+                CheckCard(authenticate(ref data, authenticationRole, 0, authenticationData, (uint)authenticationData.Length,
+                    IntPtr.Zero, IntPtr.Zero, IntPtr.Zero), usePinProtectedManagementKey
+                        ? "CardAuthenticateEx(ROLE_USER)" : "CardAuthenticateEx(ROLE_ADMIN)");
+
+                byte[] authenticatedState = new byte[4];
+                uint authenticatedStateLen;
+                CardGetProperty getProperty = Marshal.GetDelegateForFunctionPointer<CardGetProperty>(data.pfnCardGetProperty);
+                CheckCard(getProperty(ref data, "Authenticated State", authenticatedState, (uint)authenticatedState.Length,
+                    out authenticatedStateLen, 0), "CardGetProperty(CP_CARD_AUTHENTICATED_STATE)");
+                if (authenticatedStateLen != authenticatedState.Length) {
+                    throw new InvalidOperationException("Unexpected authenticated-state length.");
+                }
+                uint authenticatedPins = BitConverter.ToUInt32(authenticatedState, 0);
+                if (usePinProtectedManagementKey && (authenticatedPins & ((1u << (int)ROLE_USER) | (1u << (int)ROLE_ADMIN))) !=
+                    ((1u << (int)ROLE_USER) | (1u << (int)ROLE_ADMIN))) {
+                    throw new InvalidOperationException("PIN-protected login did not authenticate USER and ADMIN roles.");
+                }
 
                 CardCreateContainerEx create = Marshal.GetDelegateForFunctionPointer<CardCreateContainerEx>(data.pfnCardCreateContainerEx);
                 CheckCard(create(ref data, containerIndex, CARD_CREATE_CONTAINER_KEY_GEN, keySpec, keySize,
@@ -234,7 +258,8 @@ namespace CanokeyMinidriver {
                     KeySpec = keySpec,
                     KeySize = keySize,
                     SignaturePublicKeyBytes = info.cbSigPublicKey,
-                    KeyExchangePublicKeyBytes = info.cbKeyExPublicKey
+                    KeyExchangePublicKeyBytes = info.cbKeyExPublicKey,
+                    AuthenticatedPins = authenticatedPins
                 };
             } finally {
                 if (data.pfnCardDeleteContext != IntPtr.Zero) {
@@ -321,19 +346,21 @@ $specMap = @{
 }
 
 $resolvedDll = (Resolve-Path -LiteralPath $DllPath).ProviderPath
-$mgmtKey = Convert-HexStringToBytes $ManagementKey
-if ($mgmtKey.Length -ne 24) {
-    throw "Management key must decode to 24 bytes."
-}
+$mgmtKey = if ($UsePinProtectedManagementKey) { [byte[]]::new(0) } else { Convert-HexStringToBytes $ManagementKey }
+if (-not $UsePinProtectedManagementKey -and $mgmtKey.Length -ne 24) { throw "Management key must decode to 24 bytes." }
+$userPin = [Text.Encoding]::UTF8.GetBytes($Pin)
 
 $selected = $specMap[$KeySpec]
 Write-Host "Generating $KeySpec in container index $ContainerIndex using $resolvedDll"
+Write-Host $(if ($UsePinProtectedManagementKey) { "Authentication: USER PIN + protected management key" } else { "Authentication: explicit management key" })
 $result = [CanokeyMinidriver.KeygenTestNative]::Generate(
     $resolvedDll,
     $ReaderName,
     $ContainerIndex,
     [uint32]$selected.KeySpec,
     [uint32]$selected.KeySize,
-    $mgmtKey)
+    $mgmtKey,
+    $userPin,
+    $UsePinProtectedManagementKey.IsPresent)
 
 $result | Format-List

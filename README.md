@@ -29,11 +29,14 @@ installation, and broader PIV slot coverage are still in progress.
 - `scripts/pin-test.ps1` exercises the minidriver PIN contract directly. It
   temporarily changes the development PIN and restores it; by default it also
   uses the PUK to reset the PIN even when the PIN is not blocked.
-- Smart Card KSP creation through Windows still needs more validation. Direct
-  minidriver creation works; KSP creation probes `cardcf` and `cmapfile` before
-  selecting a container, then needs a management-key path for PIV key writes.
-  A YubiKey-style PIN-protected management key is the likely production model;
-  local development can use explicit minidriver provisioning calls.
+- Smart Card KSP creation can use a YubiKey-compatible PIN-protected management
+  key. After user PIN authentication, the minidriver reads the protected PIV
+  object through PKCS#11 and enables management-authorized key writes without
+  storing the management key in the registry.
+- The bundled PKCS#11 3.2 interface supports ML-DSA-65 and ML-KEM-768 across
+  all 24 PIV key slots. Current Windows CPDK headers cannot represent these
+  algorithms, so CSP/KSP exposure remains classic-only; see
+  [`docs/pqc.md`](docs/pqc.md).
 - `certutil -scinfo` can see the card and current certificates.
 - `scripts\crypto-test.ps1` exercises the minidriver through Windows CAPI/CNG
   APIs instead of parsing command output. The same checks can be run in focused
@@ -44,7 +47,8 @@ installation, and broader PIV slot coverage are still in progress.
 
 Known gaps:
 
-- Full YubiKey-style PIV slot mapping still needs broader card coverage.
+- Windows CSP/KSP container mapping remains limited to the classic slots and
+  algorithms defined by the current CPDK contract.
 - ECDH currently supports raw secret derivation only (`BCRYPT_KDF_RAW_SECRET` /
   PKCS#11 `CKD_NULL`). Higher-level KDF parameter lists are not implemented yet.
 - INF installation is kept for later release validation.
