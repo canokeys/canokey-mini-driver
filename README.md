@@ -33,6 +33,11 @@ installation, and broader PIV slot coverage are still in progress.
   key. After user PIN authentication, the minidriver reads the protected PIV
   object through PKCS#11 and enables management-authorized key writes without
   storing the management key in the registry.
+- `CardCreateContainerEx` supports RSA and P-256/P-384 generation and private
+  key import. RSA imports use CAPI `PRIVATEKEYBLOB`; EC imports use
+  `BCRYPT_ECCPRIVATE_BLOB`. `scripts\keygen-test.ps1 -Import` covers direct
+  minidriver import, and `scripts\ksp-keygen-test.ps1` covers real Microsoft
+  Smart Card KSP enrollment followed by signature verification.
 - The bundled PKCS#11 3.2 interface supports ML-DSA-65 and ML-KEM-768 across
   all 24 PIV key slots. Current Windows CPDK headers cannot represent these
   algorithms, so CSP/KSP exposure remains classic-only; see

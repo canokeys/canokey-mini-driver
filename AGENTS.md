@@ -208,6 +208,14 @@ EC keys in those slots       -> also ECDH-capable
 - Do not hardcode the development PIN in minidriver code. Authentication must
   enter through `CardAuthenticateEx`; signing should use the authenticated
   PKCS#11 session state.
+- `CardCreateContainerEx` supports classic RSA and EC generation/import for
+  `ROLE_USER`. RSA import consumes a CAPI `PRIVATEKEYBLOB` and converts its
+  little-endian CRT components to PKCS#11 big-endian attributes. EC import
+  consumes a `BCRYPT_ECCPRIVATE_BLOB` (`X || Y || d`, big-endian). Validate
+  either blob with the Windows software crypto provider before writing it.
+- For EC on-card generation, accept the CPDK-standard `dwKeySize == 0` as well
+  as the explicit curve size used by local tests. Only `ROLE_USER` may create
+  containers; `ROLE_ADMIN` creation returns `SCARD_W_SECURITY_VIOLATION`.
 
 ## Implementation Notes
 

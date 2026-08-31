@@ -3,11 +3,12 @@ param(
     [string]$DllPath = (Join-Path $PSScriptRoot "..\out\build\x64-Clang-Debug\canokey-minidriver.dll"),
     [ValidateRange(0, 5)]
     [byte]$ContainerIndex = 4,
-    [ValidateSet("ECDSA_P256", "ECDHE_P256", "RSA_SIGN_2048", "RSA_SIGN_3072", "RSA_SIGN_4096")]
+    [ValidateSet("ECDSA_P256", "ECDSA_P384", "ECDHE_P256", "ECDHE_P384", "RSA_SIGN_2048", "RSA_SIGN_3072", "RSA_SIGN_4096", "RSA_KEYX_2048", "RSA_KEYX_3072", "RSA_KEYX_4096")]
     [string]$KeySpec = "ECDSA_P256",
     [string]$ManagementKey = "010203040506070801020304050607080102030405060708",
     [string]$Pin = "123456",
-    [switch]$UsePinProtectedManagementKey
+    [switch]$UsePinProtectedManagementKey,
+    [switch]$Import
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,6 +17,7 @@ if (-not ("CanokeyMinidriver.KeygenTestNative" -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;
+using System.Security.Cryptography;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -29,8 +31,30 @@ namespace CanokeyMinidriver {
         private const uint CARD_DATA_CURRENT_VERSION = 7;
         private const uint ROLE_ADMIN = 2;
         private const uint ROLE_USER = 1;
+        private const uint AT_KEYEXCHANGE = 1;
+        private const uint AT_SIGNATURE = 2;
+        private const uint AT_ECDSA_P256 = 3;
+        private const uint AT_ECDSA_P384 = 4;
+        private const uint AT_ECDHE_P256 = 6;
+        private const uint AT_ECDHE_P384 = 7;
         private const uint CARD_CREATE_CONTAINER_KEY_GEN = 1;
+        private const uint CARD_CREATE_CONTAINER_KEY_IMPORT = 2;
         private const uint CONTAINER_INFO_CURRENT_VERSION = 1;
+        private const uint PRIVATEKEYBLOB = 0x07;
+        private const uint PUBLICKEYBLOB = 0x06;
+        private const uint CUR_BLOB_VERSION = 0x02;
+        private const uint CALG_RSA_SIGN = 0x00002400;
+        private const uint CALG_RSA_KEYX = 0x0000a400;
+        private const uint RSA1 = 0x31415352;
+        private const uint RSA2 = 0x32415352;
+        private const uint BCRYPT_ECDH_PUBLIC_P256_MAGIC = 0x314b4345;
+        private const uint BCRYPT_ECDH_PRIVATE_P256_MAGIC = 0x324b4345;
+        private const uint BCRYPT_ECDH_PUBLIC_P384_MAGIC = 0x334b4345;
+        private const uint BCRYPT_ECDH_PRIVATE_P384_MAGIC = 0x344b4345;
+        private const uint BCRYPT_ECDSA_PUBLIC_P256_MAGIC = 0x31534345;
+        private const uint BCRYPT_ECDSA_PRIVATE_P256_MAGIC = 0x32534345;
+        private const uint BCRYPT_ECDSA_PUBLIC_P384_MAGIC = 0x33534345;
+        private const uint BCRYPT_ECDSA_PRIVATE_P384_MAGIC = 0x34534345;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct CARD_DATA {
@@ -170,21 +194,148 @@ namespace CanokeyMinidriver {
         private static extern uint SCardReleaseContext(IntPtr context);
 
         public sealed class Result {
+            public string Operation { get; set; }
             public byte ContainerIndex { get; set; }
             public uint KeySpec { get; set; }
             public uint KeySize { get; set; }
             public uint SignaturePublicKeyBytes { get; set; }
             public uint KeyExchangePublicKeyBytes { get; set; }
             public uint AuthenticatedPins { get; set; }
+            public bool PublicKeyMatches { get; set; }
+        }
+
+        public static byte[] CreateImportBlob(uint keySpec, uint keySize, out byte[] expectedPublicBlob) {
+            if (keySpec == AT_SIGNATURE || keySpec == AT_KEYEXCHANGE) {
+                using (RSA rsa = RSA.Create()) {
+                    rsa.KeySize = checked((int)keySize);
+                    return CreateRsaImportBlob(rsa.ExportParameters(true), keySpec, keySize, out expectedPublicBlob);
+                }
+            }
+
+            ECCurve curve = keySpec == AT_ECDSA_P384 || keySpec == AT_ECDHE_P384
+                ? ECCurve.NamedCurves.nistP384 : ECCurve.NamedCurves.nistP256;
+            ECParameters parameters;
+            if (keySpec == AT_ECDHE_P256 || keySpec == AT_ECDHE_P384) {
+                using (ECDiffieHellman key = ECDiffieHellman.Create(curve)) {
+                    parameters = key.ExportParameters(true);
+                }
+            } else {
+                using (ECDsa key = ECDsa.Create(curve)) {
+                    parameters = key.ExportParameters(true);
+                }
+            }
+            return CreateEcImportBlob(parameters, keySpec, out expectedPublicBlob);
+        }
+
+        private static byte[] CreateRsaImportBlob(RSAParameters parameters, uint keySpec, uint keySize,
+            out byte[] expectedPublicBlob) {
+            int modulusBytes = checked((int)keySize / 8);
+            int componentBytes = modulusBytes / 2;
+            uint algorithm = keySpec == AT_KEYEXCHANGE ? CALG_RSA_KEYX : CALG_RSA_SIGN;
+            uint exponent = 0;
+            foreach (byte value in parameters.Exponent) exponent = (exponent << 8) | value;
+
+            expectedPublicBlob = new byte[20 + modulusBytes];
+            expectedPublicBlob[0] = (byte)PUBLICKEYBLOB;
+            expectedPublicBlob[1] = (byte)CUR_BLOB_VERSION;
+            WriteUInt32(expectedPublicBlob, 4, algorithm);
+            WriteUInt32(expectedPublicBlob, 8, RSA1);
+            WriteUInt32(expectedPublicBlob, 12, keySize);
+            WriteUInt32(expectedPublicBlob, 16, exponent);
+            CopyBigEndianAsLittleEndian(parameters.Modulus, expectedPublicBlob, 20, modulusBytes);
+
+            byte[] privateBlob = new byte[20 + modulusBytes * 2 + componentBytes * 5];
+            privateBlob[0] = (byte)PRIVATEKEYBLOB;
+            privateBlob[1] = (byte)CUR_BLOB_VERSION;
+            WriteUInt32(privateBlob, 4, algorithm);
+            WriteUInt32(privateBlob, 8, RSA2);
+            WriteUInt32(privateBlob, 12, keySize);
+            WriteUInt32(privateBlob, 16, exponent);
+            int offset = 20;
+            CopyBigEndianAsLittleEndian(parameters.Modulus, privateBlob, offset, modulusBytes);
+            offset += modulusBytes;
+            CopyBigEndianAsLittleEndian(parameters.P, privateBlob, offset, componentBytes);
+            offset += componentBytes;
+            CopyBigEndianAsLittleEndian(parameters.Q, privateBlob, offset, componentBytes);
+            offset += componentBytes;
+            CopyBigEndianAsLittleEndian(parameters.DP, privateBlob, offset, componentBytes);
+            offset += componentBytes;
+            CopyBigEndianAsLittleEndian(parameters.DQ, privateBlob, offset, componentBytes);
+            offset += componentBytes;
+            CopyBigEndianAsLittleEndian(parameters.InverseQ, privateBlob, offset, componentBytes);
+            offset += componentBytes;
+            CopyBigEndianAsLittleEndian(parameters.D, privateBlob, offset, modulusBytes);
+            return privateBlob;
+        }
+
+        private static byte[] CreateEcImportBlob(ECParameters parameters, uint keySpec, out byte[] expectedPublicBlob) {
+            int keyBytes = parameters.D.Length;
+            uint publicMagic;
+            uint privateMagic;
+            switch (keySpec) {
+            case AT_ECDSA_P256:
+                publicMagic = BCRYPT_ECDSA_PUBLIC_P256_MAGIC;
+                privateMagic = BCRYPT_ECDSA_PRIVATE_P256_MAGIC;
+                break;
+            case AT_ECDHE_P256:
+                publicMagic = BCRYPT_ECDH_PUBLIC_P256_MAGIC;
+                privateMagic = BCRYPT_ECDH_PRIVATE_P256_MAGIC;
+                break;
+            case AT_ECDSA_P384:
+                publicMagic = BCRYPT_ECDSA_PUBLIC_P384_MAGIC;
+                privateMagic = BCRYPT_ECDSA_PRIVATE_P384_MAGIC;
+                break;
+            case AT_ECDHE_P384:
+                publicMagic = BCRYPT_ECDH_PUBLIC_P384_MAGIC;
+                privateMagic = BCRYPT_ECDH_PRIVATE_P384_MAGIC;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException("keySpec");
+            }
+
+            expectedPublicBlob = new byte[8 + keyBytes * 2];
+            WriteUInt32(expectedPublicBlob, 0, publicMagic);
+            WriteUInt32(expectedPublicBlob, 4, (uint)keyBytes);
+            Buffer.BlockCopy(parameters.Q.X, 0, expectedPublicBlob, 8, keyBytes);
+            Buffer.BlockCopy(parameters.Q.Y, 0, expectedPublicBlob, 8 + keyBytes, keyBytes);
+
+            byte[] privateBlob = new byte[8 + keyBytes * 3];
+            WriteUInt32(privateBlob, 0, privateMagic);
+            WriteUInt32(privateBlob, 4, (uint)keyBytes);
+            Buffer.BlockCopy(parameters.Q.X, 0, privateBlob, 8, keyBytes);
+            Buffer.BlockCopy(parameters.Q.Y, 0, privateBlob, 8 + keyBytes, keyBytes);
+            Buffer.BlockCopy(parameters.D, 0, privateBlob, 8 + keyBytes * 2, keyBytes);
+            return privateBlob;
+        }
+
+        private static void CopyBigEndianAsLittleEndian(byte[] source, byte[] destination, int offset, int length) {
+            for (int i = 0; i < length; i++) {
+                destination[offset + i] = i < source.Length ? source[source.Length - 1 - i] : (byte)0;
+            }
+        }
+
+        private static void WriteUInt32(byte[] output, int offset, uint value) {
+            output[offset] = (byte)value;
+            output[offset + 1] = (byte)(value >> 8);
+            output[offset + 2] = (byte)(value >> 16);
+            output[offset + 3] = (byte)(value >> 24);
+        }
+
+        private static bool ByteArraysEqual(byte[] left, byte[] right) {
+            if (left == null || right == null || left.Length != right.Length) return false;
+            for (int i = 0; i < left.Length; i++) if (left[i] != right[i]) return false;
+            return true;
         }
 
         public static Result Generate(string dllPath, string readerName, byte containerIndex, uint keySpec,
-            uint keySize, byte[] managementKey, byte[] userPin, bool usePinProtectedManagementKey) {
+            uint keySize, byte[] managementKey, byte[] userPin, bool usePinProtectedManagementKey,
+            byte[] keyData, byte[] expectedPublicBlob) {
             IntPtr module = IntPtr.Zero;
             IntPtr context = IntPtr.Zero;
             IntPtr card = IntPtr.Zero;
             IntPtr atr = IntPtr.Zero;
             IntPtr cardName = IntPtr.Zero;
+            GCHandle keyDataHandle = default(GCHandle);
             CARD_DATA data = new CARD_DATA();
 
             try {
@@ -246,22 +397,46 @@ namespace CanokeyMinidriver {
                 }
 
                 CardCreateContainerEx create = Marshal.GetDelegateForFunctionPointer<CardCreateContainerEx>(data.pfnCardCreateContainerEx);
-                CheckCard(create(ref data, containerIndex, CARD_CREATE_CONTAINER_KEY_GEN, keySpec, keySize,
-                    IntPtr.Zero, ROLE_USER), "CardCreateContainerEx");
+                uint createFlags = keyData == null ? CARD_CREATE_CONTAINER_KEY_GEN : CARD_CREATE_CONTAINER_KEY_IMPORT;
+                IntPtr keyDataPointer = IntPtr.Zero;
+                if (keyData != null) {
+                    keyDataHandle = GCHandle.Alloc(keyData, GCHandleType.Pinned);
+                    keyDataPointer = keyDataHandle.AddrOfPinnedObject();
+                }
+                CheckCard(create(ref data, containerIndex, createFlags, keySpec, keySize,
+                    keyDataPointer, ROLE_USER), "CardCreateContainerEx");
 
                 CONTAINER_INFO info = new CONTAINER_INFO { dwVersion = CONTAINER_INFO_CURRENT_VERSION };
                 CardGetContainerInfo getInfo = Marshal.GetDelegateForFunctionPointer<CardGetContainerInfo>(data.pfnCardGetContainerInfo);
                 CheckCard(getInfo(ref data, containerIndex, 0, ref info), "CardGetContainerInfo");
 
+                IntPtr publicKeyPointer = keySpec == AT_KEYEXCHANGE || keySpec == AT_ECDHE_P256 || keySpec == AT_ECDHE_P384
+                    ? info.pbKeyExPublicKey : info.pbSigPublicKey;
+                uint publicKeyLength = keySpec == AT_KEYEXCHANGE || keySpec == AT_ECDHE_P256 || keySpec == AT_ECDHE_P384
+                    ? info.cbKeyExPublicKey : info.cbSigPublicKey;
+                bool publicKeyMatches = expectedPublicBlob == null;
+                if (expectedPublicBlob != null && publicKeyPointer != IntPtr.Zero) {
+                    byte[] actualPublicBlob = new byte[checked((int)publicKeyLength)];
+                    Marshal.Copy(publicKeyPointer, actualPublicBlob, 0, checked((int)publicKeyLength));
+                    publicKeyMatches = ByteArraysEqual(actualPublicBlob, expectedPublicBlob);
+                }
+                if (info.pbSigPublicKey != IntPtr.Zero) Free(info.pbSigPublicKey);
+                if (info.pbKeyExPublicKey != IntPtr.Zero) Free(info.pbKeyExPublicKey);
+                if (!publicKeyMatches) throw new InvalidOperationException("Imported public key does not match card metadata.");
+
                 return new Result {
+                    Operation = keyData == null ? "Generate" : "Import",
                     ContainerIndex = containerIndex,
                     KeySpec = keySpec,
                     KeySize = keySize,
                     SignaturePublicKeyBytes = info.cbSigPublicKey,
                     KeyExchangePublicKeyBytes = info.cbKeyExPublicKey,
-                    AuthenticatedPins = authenticatedPins
+                    AuthenticatedPins = authenticatedPins,
+                    PublicKeyMatches = publicKeyMatches
                 };
             } finally {
+                if (keyDataHandle.IsAllocated) keyDataHandle.Free();
+                if (keyData != null) Array.Clear(keyData, 0, keyData.Length);
                 if (data.pfnCardDeleteContext != IntPtr.Zero) {
                     CardDeleteContext deleteContext = Marshal.GetDelegateForFunctionPointer<CardDeleteContext>(data.pfnCardDeleteContext);
                     deleteContext(ref data);
@@ -339,10 +514,15 @@ function Convert-HexStringToBytes {
 
 $specMap = @{
     ECDSA_P256    = @{ KeySpec = 3; KeySize = 256 }
+    ECDSA_P384    = @{ KeySpec = 4; KeySize = 384 }
     ECDHE_P256    = @{ KeySpec = 6; KeySize = 256 }
+    ECDHE_P384    = @{ KeySpec = 7; KeySize = 384 }
     RSA_SIGN_2048 = @{ KeySpec = 2; KeySize = 2048 }
     RSA_SIGN_3072 = @{ KeySpec = 2; KeySize = 3072 }
     RSA_SIGN_4096 = @{ KeySpec = 2; KeySize = 4096 }
+    RSA_KEYX_2048 = @{ KeySpec = 1; KeySize = 2048 }
+    RSA_KEYX_3072 = @{ KeySpec = 1; KeySize = 3072 }
+    RSA_KEYX_4096 = @{ KeySpec = 1; KeySize = 4096 }
 }
 
 $resolvedDll = (Resolve-Path -LiteralPath $DllPath).ProviderPath
@@ -351,16 +531,28 @@ if (-not $UsePinProtectedManagementKey -and $mgmtKey.Length -ne 24) { throw "Man
 $userPin = [Text.Encoding]::UTF8.GetBytes($Pin)
 
 $selected = $specMap[$KeySpec]
-Write-Host "Generating $KeySpec in container index $ContainerIndex using $resolvedDll"
+$keyData = $null
+$expectedPublicBlob = $null
+if ($Import) {
+    $keyData = [CanokeyMinidriver.KeygenTestNative]::CreateImportBlob(
+        [uint32]$selected.KeySpec,
+        [uint32]$selected.KeySize,
+        [ref]$expectedPublicBlob)
+}
+$verb = if ($Import) { "Importing" } else { "Generating" }
+$requestKeySize = if (-not $Import -and $KeySpec -match '^ECD') { 0 } else { [uint32]$selected.KeySize }
+Write-Host "$verb $KeySpec in container index $ContainerIndex using $resolvedDll"
 Write-Host $(if ($UsePinProtectedManagementKey) { "Authentication: USER PIN + protected management key" } else { "Authentication: explicit management key" })
 $result = [CanokeyMinidriver.KeygenTestNative]::Generate(
     $resolvedDll,
     $ReaderName,
     $ContainerIndex,
     [uint32]$selected.KeySpec,
-    [uint32]$selected.KeySize,
+    [uint32]$requestKeySize,
     $mgmtKey,
     $userPin,
-    $UsePinProtectedManagementKey.IsPresent)
+    $UsePinProtectedManagementKey.IsPresent,
+    $keyData,
+    $expectedPublicBlob)
 
 $result | Format-List

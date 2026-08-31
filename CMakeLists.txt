@@ -33,7 +33,7 @@ string(REGEX REPLACE "/$" "" CMD_DEBUG_LOG_DIR "${CMD_DEBUG_LOG_DIR}")
 add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 add_library(${CMD_LIB_NAME} SHARED ${SOURCES} ${HEADERS})
 target_include_directories(${CMD_LIB_NAME} PRIVATE include external/canokey-pkcs11/include)
-target_link_libraries(${CMD_LIB_NAME} PRIVATE "Advapi32.lib" "winscard.lib" canokey_pkcs11)
+target_link_libraries(${CMD_LIB_NAME} PRIVATE "Advapi32.lib" "Bcrypt.lib" "winscard.lib" canokey_pkcs11)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   add_compile_definitions(CMD_VERBOSE DBG_NCOLOR)

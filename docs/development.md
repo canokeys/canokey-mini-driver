@@ -289,23 +289,20 @@ that new smart-card containers can require UI, and local testing showed
 container selection, so keep both writes tolerant even though the authoritative
 state comes from CanoKey metadata.
 
-Local testing also showed that the KSP does not automatically ask for
-`ROLE_ADMIN` when `CardCreateContainer` fails because the underlying PIV
-operation needs the management key. The KSP authenticates `ROLE_USER`, chooses
-the next container from `mscp/cmapfile`, and then calls `CardCreateContainer`.
-For CanoKey/PIV, key generation and private-key import therefore need an
-explicit management-key path, such as a provisioning/debug tool that calls
-`CardAuthenticateEx(ROLE_ADMIN)` first, or a later secure configuration bridge.
+The KSP authenticates `ROLE_USER`, chooses the next container from
+`mscp/cmapfile`, and then calls `CardCreateContainer*`; it does not separately
+request `ROLE_ADMIN`. CanoKey bridges this with the PIN-protected management
+key stored in the PIV printed-information object. After successful user PIN
+authentication, the minidriver reads that protected object through PKCS#11,
+verifies and caches the management key in the same session, and marks both USER
+and ADMIN authenticated. Normal KSP enrollment can then generate or import the
+PIV key without a registry secret or a separate provisioning login.
 
-YubiKey appears to bridge this gap with its "protect management key with PIN"
-model: the management key is stored on-card in a PIN-protected object, so the
-minidriver can recover it after the normal user PIN prompt and then perform PIV
-management operations on behalf of Windows. CanoKey will need an equivalent
-card-side PIN-protected management-key mechanism, or a local development-only
-configuration such as an explicit management-key registry value, before normal
-Windows KSP enrollment can generate/import PIV keys without a separate
-provisioning tool. See `docs/pin-only-management-key.md` for the current
-research notes and proposed PKCS#11/minidriver split.
+`CardCreateContainerEx` accepts RSA CAPI `PRIVATEKEYBLOB` imports and CNG
+`BCRYPT_ECCPRIVATE_BLOB` imports for P-256/P-384. The focused direct test is
+`scripts\keygen-test.ps1 -Import`; `scripts\ksp-keygen-test.ps1` exercises
+non-silent `NCryptFinalizeKey` through Microsoft Smart Card KSP and verifies a
+signature with the resulting key.
 
 Certificate files (`kscN` and `kxcN`) are different from key generation.
 Windows expects user certificate files to behave like everyone-read/user-write

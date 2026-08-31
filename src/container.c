@@ -11,6 +11,9 @@ typedef struct {
   RSAPUBKEY rsapubkey;
 } PUBRSAKEYSTRUCT_BASE;
 
+#define MAX_RSA_CRT_COMPONENT_BYTES 256
+#define RSA_CRT_COMPONENT_COUNT 5
+
 static DWORD map_pkcs11_container_error(CK_RV rv) {
   switch (rv) {
   case CKR_OK:
@@ -48,7 +51,7 @@ static BOOL container_index_is_piv_9d(BYTE bContainerIndex) {
 static DWORD validate_create_container_request(BYTE bContainerIndex, DWORD dwFlags, DWORD dwKeySpec, DWORD dwKeySize,
                                                PBYTE pbKeyData) {
   if (bContainerIndex >= MAX_SLOT_ID) {
-    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid container index");
+    CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
   }
   if (dwFlags != CARD_CREATE_CONTAINER_KEY_GEN && dwFlags != CARD_CREATE_CONTAINER_KEY_IMPORT) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid container creation flags");
@@ -76,19 +79,27 @@ static DWORD validate_create_container_request(BYTE bContainerIndex, DWORD dwFla
     CMD_RET_OK;
   case AT_ECDSA_P256:
   case AT_ECDHE_P256:
-    if (dwKeySize != 256) {
+    if (dwKeySize != 0 && dwKeySize != 256) {
       CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported P-256 key size");
     }
     CMD_RET_OK;
   case AT_ECDSA_P384:
   case AT_ECDHE_P384:
-    if (dwKeySize != 384) {
+    if (dwKeySize != 0 && dwKeySize != 384) {
       CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported P-384 key size");
     }
     CMD_RET_OK;
   default:
     CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Unsupported key spec");
   }
+}
+
+static DWORD refresh_container_metadata(CMD_CONTEXT_PTR pContext) {
+  CK_RV rv = read_canokey(pContext->session, &pContext->canokey);
+  if (rv != CKR_OK) {
+    CMD_RETURN(map_pkcs11_container_error(rv), "Failed to refresh CanoKey metadata");
+  }
+  return GenerateCardIdentifier(pContext);
 }
 
 static DWORD ec_params_for_key_spec(DWORD dwKeySpec, const CK_BYTE **ppParams, CK_ULONG *pParamsLen) {
@@ -168,16 +179,208 @@ static DWORD create_keypair(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWOR
     CMD_RETURN(map_pkcs11_container_error(rv), "C_GenerateKeyPair failed");
   }
 
-  rv = read_canokey(pContext->session, &pContext->canokey);
-  if (rv != CKR_OK) {
-    CMD_RETURN(map_pkcs11_container_error(rv), "Failed to refresh CanoKey metadata");
+  return refresh_container_metadata(pContext);
+}
+
+static void reverse_copy(CK_BYTE *destination, const CK_BYTE *source, CK_ULONG length) {
+  for (CK_ULONG i = 0; i < length; i++) {
+    destination[i] = source[length - 1 - i];
   }
-  DWORD ret = GenerateCardIdentifier(pContext);
-  if (ret != SCARD_S_SUCCESS) {
-    CMD_RETURN(ret, "Failed to refresh card identifier");
+}
+
+static BOOL validate_rsa_private_blob(const BYTE *blob, DWORD blobLen) {
+  HCRYPTPROV provider = 0;
+  HCRYPTKEY key = 0;
+  BOOL valid = FALSE;
+  if (CryptAcquireContext(&provider, NULL, NULL, PROV_RSA_AES, CRYPT_VERIFYCONTEXT)) {
+    valid = CryptImportKey(provider, blob, blobLen, 0, 0, &key);
+  }
+  if (key != 0) {
+    CryptDestroyKey(key);
+  }
+  if (provider != 0) {
+    CryptReleaseContext(provider, 0);
+  }
+  return valid;
+}
+
+static BOOL validate_ec_private_blob(DWORD dwKeySpec, const BYTE *blob, DWORD blobLen) {
+  BCRYPT_ALG_HANDLE provider = NULL;
+  BCRYPT_KEY_HANDLE key = NULL;
+  LPCWSTR algorithm =
+      (dwKeySpec == AT_ECDHE_P256 || dwKeySpec == AT_ECDHE_P384) ? BCRYPT_ECDH_ALGORITHM : BCRYPT_ECDSA_ALGORITHM;
+  NTSTATUS status = BCryptOpenAlgorithmProvider(&provider, algorithm, NULL, 0);
+  if (BCRYPT_SUCCESS(status)) {
+    status = BCryptImportKeyPair(provider, NULL, BCRYPT_ECCPRIVATE_BLOB, &key, (PUCHAR)blob, blobLen, 0);
+  }
+  if (key != NULL) {
+    BCryptDestroyKey(key);
+  }
+  if (provider != NULL) {
+    BCryptCloseAlgorithmProvider(provider, 0);
+  }
+  return BCRYPT_SUCCESS(status);
+}
+
+static void append_import_policies(CK_ATTRIBUTE *templ, CK_ULONG *pCount, CK_BYTE *pPinPolicy, CK_BYTE *pTouchPolicy) {
+  const CMD_CONFIG *config = cmd_get_config();
+  *pTouchPolicy = (CK_BYTE)config->new_key_touch_policy;
+  if (config->has_new_key_pin_policy) {
+    *pPinPolicy = (CK_BYTE)config->new_key_pin_policy;
+    templ[(*pCount)++] = (CK_ATTRIBUTE){CKA_CNK_PIV_PIN_POLICY, pPinPolicy, sizeof(*pPinPolicy)};
+  }
+  templ[(*pCount)++] = (CK_ATTRIBUTE){CKA_CNK_PIV_TOUCH_POLICY, pTouchPolicy, sizeof(*pTouchPolicy)};
+}
+
+static DWORD import_rsa_key(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWORD dwKeySpec, DWORD dwKeySize,
+                            const BYTE *pbKeyData) {
+  PUBRSAKEYSTRUCT_BASE header;
+  memcpy(&header, pbKeyData, sizeof(header));
+
+  ALG_ID expectedAlg = dwKeySpec == AT_KEYEXCHANGE ? CALG_RSA_KEYX : CALG_RSA_SIGN;
+  if (header.publickeystruc.bType != PRIVATEKEYBLOB || header.publickeystruc.bVersion != CUR_BLOB_VERSION ||
+      header.publickeystruc.reserved != 0 || header.publickeystruc.aiKeyAlg != expectedAlg ||
+      header.rsapubkey.magic != 0x32415352 || header.rsapubkey.bitlen != dwKeySize ||
+      header.rsapubkey.pubexp != 65537) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid RSA private key blob header");
   }
 
-  CMD_RET_OK;
+  CK_ULONG modulusLen = dwKeySize / 8;
+  CK_ULONG componentLen = modulusLen / 2;
+  if (componentLen == 0 || componentLen > MAX_RSA_CRT_COMPONENT_BYTES) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid RSA private key blob size");
+  }
+  DWORD blobLen = (DWORD)(sizeof(header) + modulusLen * 2 + componentLen * RSA_CRT_COMPONENT_COUNT);
+  if (!validate_rsa_private_blob(pbKeyData, blobLen)) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "RSA private key blob validation failed");
+  }
+
+  const CK_BYTE *component = pbKeyData + sizeof(header) + modulusLen;
+  CK_BYTE components[RSA_CRT_COMPONENT_COUNT][MAX_RSA_CRT_COMPONENT_BYTES] = {0};
+  for (CK_ULONG i = 0; i < RSA_CRT_COMPONENT_COUNT; i++) {
+    reverse_copy(components[i], component, componentLen);
+    component += componentLen;
+  }
+
+  CK_OBJECT_CLASS objectClass = CKO_PRIVATE_KEY;
+  CK_KEY_TYPE keyType = CKK_RSA;
+  CK_BYTE objectId = container_index_to_object_id(bContainerIndex);
+  CK_BBOOL token = CK_TRUE;
+  CK_BBOOL privateKey = CK_TRUE;
+  CK_BYTE pinPolicy = 0;
+  CK_BYTE touchPolicy = 0;
+  CK_ATTRIBUTE templ[12];
+  CK_ULONG count = 0;
+  templ[count++] = (CK_ATTRIBUTE){CKA_CLASS, &objectClass, sizeof(objectClass)};
+  templ[count++] = (CK_ATTRIBUTE){CKA_KEY_TYPE, &keyType, sizeof(keyType)};
+  templ[count++] = (CK_ATTRIBUTE){CKA_ID, &objectId, sizeof(objectId)};
+  templ[count++] = (CK_ATTRIBUTE){CKA_TOKEN, &token, sizeof(token)};
+  templ[count++] = (CK_ATTRIBUTE){CKA_PRIVATE, &privateKey, sizeof(privateKey)};
+  templ[count++] = (CK_ATTRIBUTE){CKA_PRIME_1, components[0], componentLen};
+  templ[count++] = (CK_ATTRIBUTE){CKA_PRIME_2, components[1], componentLen};
+  templ[count++] = (CK_ATTRIBUTE){CKA_EXPONENT_1, components[2], componentLen};
+  templ[count++] = (CK_ATTRIBUTE){CKA_EXPONENT_2, components[3], componentLen};
+  templ[count++] = (CK_ATTRIBUTE){CKA_COEFFICIENT, components[4], componentLen};
+  append_import_policies(templ, &count, &pinPolicy, &touchPolicy);
+
+  CK_OBJECT_HANDLE privateKeyHandle = CK_INVALID_HANDLE;
+  CK_RV rv = C_CreateObject(pContext->session, templ, count, &privateKeyHandle);
+  SecureZeroMemory(components, sizeof(components));
+  if (rv != CKR_OK) {
+    CMD_RETURN(map_pkcs11_container_error(rv), "C_CreateObject RSA import failed");
+  }
+  return refresh_container_metadata(pContext);
+}
+
+static DWORD ecc_private_magic_for_key_spec(DWORD dwKeySpec, ULONG *pMagic, ULONG *pKeyBytes) {
+  CMD_ENSURE_NONNULL(pMagic, SCARD_E_INVALID_PARAMETER);
+  CMD_ENSURE_NONNULL(pKeyBytes, SCARD_E_INVALID_PARAMETER);
+
+  switch (dwKeySpec) {
+  case AT_ECDSA_P256:
+    *pMagic = BCRYPT_ECDSA_PRIVATE_P256_MAGIC;
+    *pKeyBytes = 32;
+    CMD_RET_OK;
+  case AT_ECDHE_P256:
+    *pMagic = BCRYPT_ECDH_PRIVATE_P256_MAGIC;
+    *pKeyBytes = 32;
+    CMD_RET_OK;
+  case AT_ECDSA_P384:
+    *pMagic = BCRYPT_ECDSA_PRIVATE_P384_MAGIC;
+    *pKeyBytes = 48;
+    CMD_RET_OK;
+  case AT_ECDHE_P384:
+    *pMagic = BCRYPT_ECDH_PRIVATE_P384_MAGIC;
+    *pKeyBytes = 48;
+    CMD_RET_OK;
+  default:
+    CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Unsupported EC private key blob type");
+  }
+}
+
+static DWORD import_ec_key(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWORD dwKeySpec, DWORD dwKeySize,
+                           const BYTE *pbKeyData) {
+  BCRYPT_ECCKEY_BLOB header;
+  memcpy(&header, pbKeyData, sizeof(header));
+
+  ULONG expectedMagic = 0;
+  ULONG expectedKeyBytes = 0;
+  DWORD ret = ecc_private_magic_for_key_spec(dwKeySpec, &expectedMagic, &expectedKeyBytes);
+  if (ret != SCARD_S_SUCCESS) {
+    return ret;
+  }
+  if (header.dwMagic != expectedMagic || header.cbKey != expectedKeyBytes ||
+      (dwKeySize != 0 && dwKeySize != expectedKeyBytes * 8)) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid EC private key blob header");
+  }
+  DWORD blobLen = (DWORD)(sizeof(header) + expectedKeyBytes * 3);
+  if (!validate_ec_private_blob(dwKeySpec, pbKeyData, blobLen)) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "EC private key blob validation failed");
+  }
+
+  const CK_BYTE *ecParams = NULL;
+  CK_ULONG ecParamsLen = 0;
+  ret = ec_params_for_key_spec(dwKeySpec, &ecParams, &ecParamsLen);
+  if (ret != SCARD_S_SUCCESS) {
+    return ret;
+  }
+
+  CK_BYTE privateScalar[48] = {0};
+  memcpy(privateScalar, pbKeyData + sizeof(header) + expectedKeyBytes * 2, expectedKeyBytes);
+
+  CK_OBJECT_CLASS objectClass = CKO_PRIVATE_KEY;
+  CK_KEY_TYPE keyType = CKK_EC;
+  CK_BYTE objectId = container_index_to_object_id(bContainerIndex);
+  CK_BBOOL token = CK_TRUE;
+  CK_BBOOL privateKey = CK_TRUE;
+  CK_BYTE pinPolicy = 0;
+  CK_BYTE touchPolicy = 0;
+  CK_ATTRIBUTE templ[9];
+  CK_ULONG count = 0;
+  templ[count++] = (CK_ATTRIBUTE){CKA_CLASS, &objectClass, sizeof(objectClass)};
+  templ[count++] = (CK_ATTRIBUTE){CKA_KEY_TYPE, &keyType, sizeof(keyType)};
+  templ[count++] = (CK_ATTRIBUTE){CKA_ID, &objectId, sizeof(objectId)};
+  templ[count++] = (CK_ATTRIBUTE){CKA_TOKEN, &token, sizeof(token)};
+  templ[count++] = (CK_ATTRIBUTE){CKA_PRIVATE, &privateKey, sizeof(privateKey)};
+  templ[count++] = (CK_ATTRIBUTE){CKA_EC_PARAMS, (CK_BYTE_PTR)ecParams, ecParamsLen};
+  templ[count++] = (CK_ATTRIBUTE){CKA_VALUE, privateScalar, expectedKeyBytes};
+  append_import_policies(templ, &count, &pinPolicy, &touchPolicy);
+
+  CK_OBJECT_HANDLE privateKeyHandle = CK_INVALID_HANDLE;
+  CK_RV rv = C_CreateObject(pContext->session, templ, count, &privateKeyHandle);
+  SecureZeroMemory(privateScalar, sizeof(privateScalar));
+  if (rv != CKR_OK) {
+    CMD_RETURN(map_pkcs11_container_error(rv), "C_CreateObject EC import failed");
+  }
+  return refresh_container_metadata(pContext);
+}
+
+static DWORD import_key(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWORD dwKeySpec, DWORD dwKeySize,
+                        const BYTE *pbKeyData) {
+  if (dwKeySpec == AT_SIGNATURE || dwKeySpec == AT_KEYEXCHANGE) {
+    return import_rsa_key(pContext, bContainerIndex, dwKeySpec, dwKeySize, pbKeyData);
+  }
+  return import_ec_key(pContext, bContainerIndex, dwKeySpec, dwKeySize, pbKeyData);
 }
 
 static DWORD AllocRsaPublicKeyBlob(const SLOT *slot, ALG_ID keyAlg, PBYTE *ppbKey, PDWORD pcbKey) {
@@ -254,7 +457,7 @@ DWORD WINAPI CardCreateContainer(__in PCARD_DATA pCardData, __in BYTE bContainer
   }
 
   if (dwFlags == CARD_CREATE_CONTAINER_KEY_IMPORT) {
-    CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Key import is not implemented yet");
+    return import_key(pContext, bContainerIndex, dwKeySpec, dwKeySize, pbKeyData);
   }
 
   return create_keypair(pContext, bContainerIndex, dwKeySpec, dwKeySize);
@@ -266,7 +469,10 @@ DWORD WINAPI CardCreateContainerEx(__in PCARD_DATA pCardData, __in BYTE bContain
   CMD_LOG_FUNC("pCardData %p, bContainerIndex %d, dwFlags %x, dwKeySpec %x, dwKeySize %d, pbKeyData %p, PinId %d",
                pCardData, bContainerIndex, dwFlags, dwKeySpec, dwKeySize, pbKeyData, PinId);
 
-  if (PinId != ROLE_USER && PinId != ROLE_ADMIN) {
+  if (PinId == ROLE_ADMIN) {
+    CMD_RETURN(SCARD_W_SECURITY_VIOLATION, "Administrators cannot create user key containers");
+  }
+  if (PinId != ROLE_USER) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid PinId");
   }
 

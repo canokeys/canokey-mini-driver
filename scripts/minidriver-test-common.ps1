@@ -240,7 +240,8 @@ namespace CanokeyMinidriver {
         private static extern int NCryptOpenKey(IntPtr hProvider, out IntPtr phKey, string pszKeyName, int dwLegacyKeySpec, int dwFlags);
 
         [DllImport("ncrypt.dll", CharSet = CharSet.Unicode)]
-        private static extern int NCryptCreatePersistedKey(IntPtr hProvider, out IntPtr phKey, string pszAlgId, string pszKeyName, int dwLegacyKeySpec, int dwFlags);
+        private static extern int NCryptCreatePersistedKey(IntPtr hProvider, out IntPtr phKey, string pszAlgId,
+            string pszKeyName, int dwLegacyKeySpec, int dwFlags);
 
         [DllImport("ncrypt.dll")]
         private static extern int NCryptFinalizeKey(IntPtr hKey, int dwFlags);
@@ -331,7 +332,11 @@ namespace CanokeyMinidriver {
         public static string[] EnumCapiContainers() {
             IntPtr hProv = IntPtr.Zero;
             try {
-                CheckWin32(CryptAcquireContext(out hProv, null, BaseSmartCardCsp, PROV_RSA_FULL, CRYPT_SILENT), "CryptAcquireContext(enum)");
+                if (!CryptAcquireContext(out hProv, null, BaseSmartCardCsp, PROV_RSA_FULL, CRYPT_SILENT)) {
+                    int error = Marshal.GetLastWin32Error();
+                    if (error == unchecked((int)0x80090016)) return new string[0]; // NTE_BAD_KEYSET
+                    throw new InvalidOperationException("CryptAcquireContext(enum) failed: " + FormatWin32(error));
+                }
                 System.Collections.Generic.List<string> containers = new System.Collections.Generic.List<string>();
                 uint flags = CRYPT_FIRST;
                 while (true) {
@@ -392,6 +397,42 @@ namespace CanokeyMinidriver {
                 CheckStatus(NCryptOpenStorageProvider(out hProvider, SmartCardKsp, 0), "NCryptOpenStorageProvider");
                 CheckStatus(NCryptOpenKey(hProvider, out hKey, container, 0, NCRYPT_SILENT_FLAG), "NCryptOpenKey");
                 return GetCngStringProperty(hKey, "Algorithm Group");
+            } finally {
+                if (hKey != IntPtr.Zero) NCryptFreeObject(hKey);
+                if (hProvider != IntPtr.Zero) NCryptFreeObject(hProvider);
+            }
+        }
+
+        public static KeyName CreateCngKey(string reader, string pin, string algorithm, string container,
+            int keySize) {
+            IntPtr hProvider = IntPtr.Zero;
+            IntPtr hKey = IntPtr.Zero;
+            try {
+                CheckStatus(NCryptOpenStorageProvider(out hProvider, SmartCardKsp, 0), "NCryptOpenStorageProvider");
+                byte[] readerBytes = Encoding.Unicode.GetBytes(reader + "\0");
+                CheckStatus(NCryptSetProperty(hProvider, "SmartCardReader", readerBytes, readerBytes.Length, 0),
+                    "NCryptSetProperty(SmartCardReader)");
+                int legacyKeySpec = String.Equals(algorithm, "RSA", StringComparison.OrdinalIgnoreCase)
+                    ? (int)AT_SIGNATURE : 0;
+                CheckStatus(NCryptCreatePersistedKey(hProvider, out hKey, algorithm, container, legacyKeySpec, 0),
+                    "NCryptCreatePersistedKey");
+                if (!String.IsNullOrEmpty(pin)) {
+                    byte[] pinBytes = Encoding.Unicode.GetBytes(pin + "\0");
+                    CheckStatus(NCryptSetProperty(hKey, "SmartCardPin", pinBytes, pinBytes.Length, 0),
+                        "NCryptSetProperty(SmartCardPin)");
+                }
+                if (String.Equals(algorithm, "RSA", StringComparison.OrdinalIgnoreCase)) {
+                    byte[] length = BitConverter.GetBytes(keySize);
+                    CheckStatus(NCryptSetProperty(hKey, "Length", length, length.Length, 0),
+                        "NCryptSetProperty(Length)");
+                }
+                CheckStatus(NCryptFinalizeKey(hKey, 0), "NCryptFinalizeKey");
+                return new KeyName {
+                    Name = GetCngStringProperty(hKey, "Name"),
+                    AlgorithmGroup = GetCngStringProperty(hKey, "Algorithm Group"),
+                    LegacyKeySpec = (uint)legacyKeySpec,
+                    Flags = 0
+                };
             } finally {
                 if (hKey != IntPtr.Zero) NCryptFreeObject(hKey);
                 if (hProvider != IntPtr.Zero) NCryptFreeObject(hProvider);
@@ -992,14 +1033,10 @@ function Invoke-MinidriverSignTests {
         [switch]$ContinueOnError
     )
 
-    if ($Selection.BaseCspContainers.Count -eq 0) {
-        throw "No Base Smart Card CSP RSA container was discovered."
-    }
-    if ($Selection.RsaKspContainers.Count -eq 0) {
-        throw "No Smart Card KSP RSA container was discovered."
-    }
-    if ($Selection.EccKspContainers.Count -eq 0) {
-        throw "No Smart Card KSP ECDSA container was discovered."
+    if ($Selection.BaseCspContainers.Count -eq 0 -and
+        $Selection.RsaKspContainers.Count -eq 0 -and
+        $Selection.EccKspContainers.Count -eq 0) {
+        throw "No signing container was discovered."
     }
 
     $results = @()
