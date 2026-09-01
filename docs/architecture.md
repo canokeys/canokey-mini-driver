@@ -99,3 +99,16 @@ The primary local loop is:
 Run `crypto-test.ps1` when the card has every required container. It treats a
 missing RSA 9D key-exchange container as a failed precondition; do not overwrite
 9D solely to satisfy that matrix without explicit intent.
+
+## Refactoring Boundaries
+
+The minidriver source files remain aligned with cardmod responsibilities and
+are small enough to keep those entry points together. Error translation stays
+local to PIN, crypto, data-write, and provisioning paths because the same
+PKCS#11 error can require different Windows semantics in each API family.
+
+Shared policy or ownership logic belongs in a common module: container-index
+mapping lives in `canokey.c`, post-write inventory refresh lives in `data.c`,
+and only allocation/free/padding callbacks that are actually consumed are
+retained globally. Do not centralize error maps merely because their switch
+statements overlap.

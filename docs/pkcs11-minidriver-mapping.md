@@ -120,29 +120,30 @@ C_DeriveKey   // 用 CKM_ECDH1_DERIVE 派生共享密钥
 ```c
 C_GenerateKeyPair     // 卡上生成密钥对
 C_CreateObject        // 导入密钥（key import 场景）
-C_DestroyObject       // 删除容器
-C_SetAttributeValue   // 修改对象属性（可选，用于更新 label 等）
+C_DestroyObject       // 仅销毁 host session secret；不删除 PIV container
+C_SetAttributeValue   // 仅修改 session secret 的受限元数据
 ```
 
 ### 2.7 明确不需要实现的函数
 
-下列函数对 minidriver 场景不需要，可以返回 `CKR_FUNCTION_NOT_SUPPORTED`：
+下列函数目前没有完整语义，可以返回 `CKR_FUNCTION_NOT_SUPPORTED`：
 
 ```
-C_EncryptInit / C_Encrypt / C_EncryptUpdate / C_EncryptFinal
+C_EncryptUpdate / C_EncryptFinal
 C_DecryptUpdate / C_DecryptFinal
-C_DigestInit / C_Digest / C_DigestUpdate / C_DigestKey / C_DigestFinal
-C_VerifyInit / C_Verify / C_VerifyUpdate / C_VerifyFinal
 C_SignRecoverInit / C_SignRecover
 C_VerifyRecoverInit / C_VerifyRecover
 C_DigestEncryptUpdate / C_DecryptDigestUpdate
 C_SignEncryptUpdate / C_DecryptVerifyUpdate
-C_GenerateKey / C_WrapKey / C_UnwrapKey
+C_WrapKey / C_UnwrapKey
 C_GetOperationState / C_SetOperationState
-C_CopyObject / C_GetObjectSize
-C_InitToken / C_InitPIN / C_SetPIN
-C_WaitForSlotEvent
+C_InitToken / C_InitPIN
 ```
+
+`C_Encrypt`、Digest、Verify、`C_GenerateKey`、`C_CopyObject`、
+`C_GetObjectSize`、`C_SetPIN` 已实现。`C_WaitForSlotEvent` 在 standalone
+模式使用 PC/SC 通知；managed mode 由 Windows 持有 card lifecycle，因此返回
+`CKR_FUNCTION_NOT_SUPPORTED`。
 
 `C_GenerateRandom` is implemented in the statically linked PKCS#11 layer for
 firmware PIV version 6.0+. The Windows cardmod contract has no generic RNG DDI,
