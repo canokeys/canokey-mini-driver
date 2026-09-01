@@ -28,7 +28,9 @@ installation, and broader PIV slot coverage are still in progress.
   PIN-once and PIN-always keys still require PIN login.
 - Windows PIN management is partially supported: the user PIN can be changed
   with the current PIN, and the user PIN can be unblocked/reset with the PIV
-  PUK. PUK changes are intentionally not exposed yet.
+  PUK on cards that are not configured for PIN-managed management-key recovery.
+  PIN-managed mode permanently blocks the PUK; PUK changes are intentionally
+  not exposed.
 - `scripts/pin-test.ps1` exercises the minidriver PIN contract directly. It
   temporarily changes the development PIN and restores it; by default it also
   uses the PUK to reset the PIN even when the PIN is not blocked.
@@ -49,9 +51,10 @@ installation, and broader PIV slot coverage are still in progress.
 - `scripts\crypto-test.ps1` exercises the minidriver through Windows CAPI/CNG
   APIs instead of parsing command output. The same checks can be run in focused
   groups with `sign-test.ps1`, `decrypt-test.ps1`, and `derive-test.ps1`.
-- The current development card has been tested with 9A RSA-2048 signing, 9C
-  EC P-256 signing plus ECDH raw-secret derivation, and 9D RSA-2048 signing
-  plus key exchange/decryption.
+- Historical hardware coverage includes 9A RSA-2048 signing, 9C EC P-256
+  signing plus ECDH raw-secret derivation, and 9D RSA-2048 signing plus key
+  exchange/decryption. Provisioning tests replace slots, so this is test
+  coverage rather than the current card inventory.
 
 Known gaps:
 
@@ -74,6 +77,12 @@ Install Visual Studio 2022 with:
 - Windows Driver Kit (download from [here](https://learn.microsoft.com/en-us/windows-hardware/drivers/download-the-wdk))
 
 ### Build with CMake
+
+Initialize the PKCS#11 dependency after a fresh checkout:
+
+```powershell
+git submodule update --init --recursive
+```
 
 You can configure the project with CMake (or use Visual Studio GUI).
 You must use `clang-cl` as the frontend, or `external/dbg.h` will fail to

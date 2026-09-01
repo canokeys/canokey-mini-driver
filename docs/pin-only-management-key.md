@@ -30,11 +30,11 @@ obtains the key from PRINTED after PIN verification and authenticates the
 management key for that session. PIN-derived exists for compatibility and is
 not the preferred model.
 
-Yubico also documents an important security tradeoff: their SDK blocks the PUK
-when setting PIN-only mode, so an administrator with only the PUK cannot reset
-the user's PIN and then gain control of the PIN-protected management key. That
-is a product/security-policy decision. For CanoKey development, do not block PUK
-automatically until the behavior is intentionally designed and tested.
+Yubico blocks the PUK when setting PIN-only mode so a PUK holder cannot reset
+the user's PIN and then recover the PIN-protected management key. CanoKey uses
+the same security requirement. Writing the ADMIN DATA `PukBlocked` bit is not
+sufficient: provisioning must drive the actual PUK retry counter to zero and
+confirm it before managed login is enabled.
 
 The Yubico .NET SDK `PinProtectedData` implementation stores its data in PIV
 data tag `0x005FC109`, the PRINTED storage area. Its format is a Yubico-defined
@@ -52,7 +52,8 @@ with management key:
 ```
 
 The SDK accepts management key lengths of 16, 24, or 32 bytes. The current
-CanoKey path uses a 24-byte 3DES management key.
+CanoKey path uses a 24-byte key; the algorithm is read from slot `0x9B`
+metadata and may be AES-192 or 3DES on compatible firmware.
 
 Yubico ADMIN DATA records whether the PUK is blocked, whether the management
 key is stored in a protected area, an optional salt for PIN-derived mode, and
@@ -83,7 +84,9 @@ PKCS#11 data objects, the minidriver can stay out of PC/SC and use
 provides `C_CNK_LoginPinManaged()` for the complete runtime authentication
 flow. The extension verifies the USER PIN, requires the PIN-protected bit in
 ADMIN DATA (`5FFF00`), strictly parses the management key from PRINTED
-(`5FC109`), authenticates and caches it, and clears every temporary buffer.
+(`5FC109`), authenticates and caches it, and clears every temporary buffer. It
+also requires ADMIN DATA to declare PUK blocking and checks the actual PUK
+retry counter. A nonzero counter returns `CKR_ACTION_PROHIBITED`.
 
 The minidriver calls this extension after normal USER authentication. It does
 not issue `SCardTransmit`, parse these TLVs, or receive the raw management key.
@@ -147,8 +150,16 @@ management key and authenticate it. Provisioning needs more:
 - Optionally generate a new random management key.
 - Change the on-card management key if the card supports that operation.
 - Write the PIN-protected management-key payload to PRINTED.
-- Write consistent ADMIN DATA.
-- Decide whether to block PUK.
+- Permanently block the PUK with wrong, valid-length verification attempts and
+  confirm that metadata reports zero retries.
+- Write consistent ADMIN DATA with PUK-blocked and PIN-protected bits only
+  after the PUK is actually blocked.
+
+`canokey-pkcs11/scripts/finalize-pin-managed.ps1` is a narrow repair tool for
+development cards whose PRINTED and ADMIN DATA are already configured but whose
+PUK was not actually blocked. It calls `C_CNK_FinalizePinManaged()` and requires
+an explicit permanent-block acknowledgement. A future full provisioning tool
+should own the complete ordered workflow above.
 
 For development keys, it is acceptable to configure this with an external tool
 first and keep the minidriver runtime path read-only. Production provisioning

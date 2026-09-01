@@ -105,8 +105,8 @@ C_CNK_LoginPinManaged
 `C_CNK_LoginPinManaged` is a narrow CanoKey extension. After successful user
 PIN verification, it validates PIV ADMIN DATA, reads the PIN-protected PRINTED
 object, parses the management-key payload, authenticates the management key,
-and clears all temporary key material. The raw management key never crosses
-into the minidriver.
+checks that the PUK retry counter is zero, and clears all temporary key
+material. The raw management key never crosses into the minidriver.
 
 ### 3.3 Cryptographic Operations
 
@@ -358,15 +358,16 @@ agreement slot.
 
 ### 7.1 `cardid`
 
-`cardid` is the stable 16-byte token identifier. Its contents must be
-byte-for-byte identical to `CP_CARD_GUID`; Windows uses the pair for cache
-identity.
+`cardid` is a stable 16-byte digest of the PIV CHUID, with token serial as a
+fallback when CHUID is absent. It does not depend on mutable key or certificate
+inventory. Its contents must be byte-for-byte identical to `CP_CARD_GUID`;
+Windows uses the pair for cache identity.
 
 ### 7.2 `cardcf`
 
 The root `cardcf` file is a valid `CARD_CACHE_FILE_FORMAT`. The minidriver
-accepts well-formed same-version writes as cache synchronization. It does not
-treat this file as authoritative token state.
+reports `CP_CACHE_MODE_NO_CACHE`, accepts well-formed same-version compatibility
+writes, and intentionally does not persist freshness fields.
 
 ### 7.3 `mscp/cmapfile`
 
@@ -374,17 +375,18 @@ treat this file as authoritative token state.
 `CONTAINER_MAP_RECORD` reports the stable container name, valid/default flags,
 signature key size, and key-exchange key size.
 
-Windows may write the map during enrollment. The minidriver validates and
-accepts it as cache synchronization, then continues to derive authoritative
-state from token metadata.
+Windows may write the map during enrollment. The minidriver validates its
+record-aligned length and discards the contents; submitted records are never
+used to choose a PIV slot. Stable slot policy and live token metadata remain
+authoritative.
 
 ### 7.4 Certificate Files
 
 Certificate filenames follow the standard container convention:
 
 ```text
-mscp/ksc00, mscp/ksc01, ...  signature certificates
-mscp/kxc00, mscp/kxc01, ...  key-exchange certificates
+mscp/ksc0, mscp/ksc1, ...  signature certificates
+mscp/kxc0, mscp/kxc1, ...  key-exchange certificates
 ```
 
 Reads return the DER certificate bytes from the matching PIV object. File info

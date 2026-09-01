@@ -32,6 +32,7 @@ namespace CanokeyMinidriver {
         private const uint PIN_INFO_CURRENT_VERSION = 6;
         private const uint PIN_CACHE_POLICY_CURRENT_VERSION = 6;
         private const uint SCARD_S_SUCCESS = 0;
+        private const uint SCARD_W_SECURITY_VIOLATION = 0x8010006A;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct CARD_DATA {
@@ -196,6 +197,7 @@ namespace CanokeyMinidriver {
             public uint UnblockPermission { get; set; }
             public uint CachePolicyType { get; set; }
             public uint CachePolicyInfo { get; set; }
+            public uint VerifyStrength { get; set; }
         }
 
         public sealed class Result {
@@ -206,6 +208,7 @@ namespace CanokeyMinidriver {
             public uint ChangeBackAttempts { get; set; }
             public uint PukResetAttempts { get; set; }
             public bool PukResetTested { get; set; }
+            public bool PukResetBlockedByPolicy { get; set; }
         }
 
         public static Result Run(string dllPath, string readerName, byte[] pin, byte[] temporaryPin, byte[] puk, bool skipPukReset) {
@@ -271,9 +274,11 @@ namespace CanokeyMinidriver {
 
                 CardChangeAuthenticator change = Marshal.GetDelegateForFunctionPointer<CardChangeAuthenticator>(data.pfnCardChangeAuthenticator);
                 uint changeAttempts;
+                // The card mutation can succeed even if the post-change login
+                // fails, so cleanup must assume the temporary PIN in advance.
+                pinMayBeTemporary = true;
                 CheckCard(change(ref data, "user", pin, (uint)pin.Length, temporaryPin, (uint)temporaryPin.Length,
                     0, CARD_AUTHENTICATE_PIN_PIN, out changeAttempts), "CardChangeAuthenticator(user)");
-                pinMayBeTemporary = true;
 
                 uint changeBackAttempts;
                 CheckCard(change(ref data, "user", temporaryPin, (uint)temporaryPin.Length, pin, (uint)pin.Length,
@@ -282,19 +287,25 @@ namespace CanokeyMinidriver {
 
                 uint pukAttempts = 0;
                 bool pukTested = false;
+                bool pukResetBlockedByPolicy = false;
                 if (!skipPukReset) {
                     CardChangeAuthenticatorEx changeEx =
                         Marshal.GetDelegateForFunctionPointer<CardChangeAuthenticatorEx>(data.pfnCardChangeAuthenticatorEx);
-                    CheckCard(changeEx(ref data, PIN_CHANGE_FLAG_UNBLOCK, CMD_ROLE_PUK, puk, (uint)puk.Length,
-                        ROLE_USER, temporaryPin, (uint)temporaryPin.Length, 0, out pukAttempts),
-                        "CardChangeAuthenticatorEx(PUK reset to temporary PIN)");
                     pinMayBeTemporary = true;
-                    pukTested = true;
+                    uint unblockStatus = changeEx(ref data, PIN_CHANGE_FLAG_UNBLOCK, CMD_ROLE_PUK, puk, (uint)puk.Length,
+                        ROLE_USER, temporaryPin, (uint)temporaryPin.Length, 0, out pukAttempts);
+                    if (unblockStatus == SCARD_W_SECURITY_VIOLATION) {
+                        pinMayBeTemporary = false;
+                        pukResetBlockedByPolicy = true;
+                    } else {
+                        CheckCard(unblockStatus, "CardChangeAuthenticatorEx(PUK reset to temporary PIN)");
+                        pukTested = true;
 
-                    CheckCard(change(ref data, "user", temporaryPin, (uint)temporaryPin.Length, pin, (uint)pin.Length,
-                        0, CARD_AUTHENTICATE_PIN_PIN, out changeBackAttempts),
-                        "CardChangeAuthenticator(user restore after PUK reset)");
-                    pinMayBeTemporary = false;
+                        CheckCard(change(ref data, "user", temporaryPin, (uint)temporaryPin.Length, pin, (uint)pin.Length,
+                            0, CARD_AUTHENTICATE_PIN_PIN, out changeBackAttempts),
+                            "CardChangeAuthenticator(user restore after PUK reset)");
+                        pinMayBeTemporary = false;
+                    }
                 }
 
                 return new Result {
@@ -304,7 +315,8 @@ namespace CanokeyMinidriver {
                     ChangeByOldPinAttempts = changeAttempts,
                     ChangeBackAttempts = changeBackAttempts,
                     PukResetAttempts = pukAttempts,
-                    PukResetTested = pukTested
+                    PukResetTested = pukTested,
+                    PukResetBlockedByPolicy = pukResetBlockedByPolicy
                 };
             } finally {
                 if (pinMayBeTemporary && acquired) {
@@ -357,6 +369,9 @@ namespace CanokeyMinidriver {
                 CheckCard(getProperty(ref data, "PIN Information", buffer, (uint)size, out returnedLen, pinId),
                     "CardGetProperty(CP_CARD_PIN_INFO " + pinId + ")");
                 PIN_INFO info = Marshal.PtrToStructure<PIN_INFO>(buffer);
+                CheckCard(getProperty(ref data, "PIN Strength Verify", buffer, sizeof(uint), out returnedLen, pinId),
+                    "CardGetProperty(CP_CARD_PIN_STRENGTH_VERIFY " + pinId + ")");
+                uint verifyStrength = (uint)Marshal.ReadInt32(buffer);
                 return new PinInfoResult {
                     PinId = pinId,
                     PinType = info.PinType,
@@ -364,7 +379,8 @@ namespace CanokeyMinidriver {
                     ChangePermission = info.dwChangePermission,
                     UnblockPermission = info.dwUnblockPermission,
                     CachePolicyType = info.PinCachePolicy.PinCachePolicyType,
-                    CachePolicyInfo = info.PinCachePolicy.dwPinCachePolicyInfo
+                    CachePolicyInfo = info.PinCachePolicy.dwPinCachePolicyInfo,
+                    VerifyStrength = verifyStrength
                 };
             } finally {
                 Marshal.FreeHGlobal(buffer);
@@ -450,5 +466,5 @@ $result = [CanokeyMinidriver.PinTestNative]::Run(
     $pukBytes,
     [bool]$SkipPukReset)
 
-$result | Format-List PinSet, AuthenticateAttempts, ChangeByOldPinAttempts, ChangeBackAttempts, PukResetAttempts, PukResetTested
+$result | Format-List PinSet, AuthenticateAttempts, ChangeByOldPinAttempts, ChangeBackAttempts, PukResetAttempts, PukResetTested, PukResetBlockedByPolicy
 $result.PinInfos | Format-Table -AutoSize

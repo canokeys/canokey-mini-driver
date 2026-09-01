@@ -206,8 +206,7 @@ namespace CanokeyMinidriver {
 
         public static byte[] CreateImportBlob(uint keySpec, uint keySize, out byte[] expectedPublicBlob) {
             if (keySpec == AT_SIGNATURE || keySpec == AT_KEYEXCHANGE) {
-                using (RSA rsa = RSA.Create()) {
-                    rsa.KeySize = checked((int)keySize);
+                using (RSA rsa = RSA.Create(checked((int)keySize))) {
                     return CreateRsaImportBlob(rsa.ExportParameters(true), keySpec, keySize, out expectedPublicBlob);
                 }
             }
@@ -375,6 +374,15 @@ namespace CanokeyMinidriver {
                 CardAcquireContext acquire = Marshal.GetDelegateForFunctionPointer<CardAcquireContext>(acquirePtr);
                 CheckCard(acquire(ref data, 0), "CardAcquireContext");
 
+                CardGetProperty getProperty = Marshal.GetDelegateForFunctionPointer<CardGetProperty>(data.pfnCardGetProperty);
+                byte[] cardIdBefore = new byte[16];
+                uint cardIdLen;
+                CheckCard(getProperty(ref data, "Card Identifier", cardIdBefore, (uint)cardIdBefore.Length,
+                    out cardIdLen, 0), "CardGetProperty(CP_CARD_GUID before mutation)");
+                if (cardIdLen != cardIdBefore.Length) {
+                    throw new InvalidOperationException("Unexpected card identifier length.");
+                }
+
                 CardAuthenticateEx authenticate = Marshal.GetDelegateForFunctionPointer<CardAuthenticateEx>(data.pfnCardAuthenticateEx);
                 byte[] authenticationData = usePinProtectedManagementKey ? userPin : managementKey;
                 uint authenticationRole = usePinProtectedManagementKey ? ROLE_USER : ROLE_ADMIN;
@@ -384,7 +392,6 @@ namespace CanokeyMinidriver {
 
                 byte[] authenticatedState = new byte[4];
                 uint authenticatedStateLen;
-                CardGetProperty getProperty = Marshal.GetDelegateForFunctionPointer<CardGetProperty>(data.pfnCardGetProperty);
                 CheckCard(getProperty(ref data, "Authenticated State", authenticatedState, (uint)authenticatedState.Length,
                     out authenticatedStateLen, 0), "CardGetProperty(CP_CARD_AUTHENTICATED_STATE)");
                 if (authenticatedStateLen != authenticatedState.Length) {
@@ -406,6 +413,13 @@ namespace CanokeyMinidriver {
                 CheckCard(create(ref data, containerIndex, createFlags, keySpec, keySize,
                     keyDataPointer, ROLE_USER), "CardCreateContainerEx");
 
+                byte[] cardIdAfter = new byte[16];
+                CheckCard(getProperty(ref data, "Card Identifier", cardIdAfter, (uint)cardIdAfter.Length,
+                    out cardIdLen, 0), "CardGetProperty(CP_CARD_GUID after mutation)");
+                if (cardIdLen != cardIdAfter.Length || !ByteArraysEqual(cardIdBefore, cardIdAfter)) {
+                    throw new InvalidOperationException("Card identifier changed after provisioning.");
+                }
+
                 CONTAINER_INFO info = new CONTAINER_INFO { dwVersion = CONTAINER_INFO_CURRENT_VERSION };
                 CardGetContainerInfo getInfo = Marshal.GetDelegateForFunctionPointer<CardGetContainerInfo>(data.pfnCardGetContainerInfo);
                 CheckCard(getInfo(ref data, containerIndex, 0, ref info), "CardGetContainerInfo");
@@ -423,6 +437,16 @@ namespace CanokeyMinidriver {
                 if (info.pbSigPublicKey != IntPtr.Zero) Free(info.pbSigPublicKey);
                 if (info.pbKeyExPublicKey != IntPtr.Zero) Free(info.pbKeyExPublicKey);
                 if (!publicKeyMatches) throw new InvalidOperationException("Imported public key does not match card metadata.");
+
+                CardDeleteContext deleteContext = Marshal.GetDelegateForFunctionPointer<CardDeleteContext>(data.pfnCardDeleteContext);
+                CheckCard(deleteContext(ref data), "CardDeleteContext(before identity reacquire)");
+                CheckCard(acquire(ref data, 0), "CardAcquireContext(identity reacquire)");
+                getProperty = Marshal.GetDelegateForFunctionPointer<CardGetProperty>(data.pfnCardGetProperty);
+                CheckCard(getProperty(ref data, "Card Identifier", cardIdAfter, (uint)cardIdAfter.Length,
+                    out cardIdLen, 0), "CardGetProperty(CP_CARD_GUID after reacquire)");
+                if (cardIdLen != cardIdAfter.Length || !ByteArraysEqual(cardIdBefore, cardIdAfter)) {
+                    throw new InvalidOperationException("Card identifier changed after reacquiring the card context.");
+                }
 
                 return new Result {
                     Operation = keyData == null ? "Generate" : "Import",

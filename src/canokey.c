@@ -183,8 +183,6 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
       CMD_DEBUG("No public key found for slot %d", i);
       continue;
     }
-    slot->present = CK_TRUE;
-
     CK_ATTRIBUTE attr[] = {
         {CKA_KEY_TYPE, &slot->keyType, sizeof(slot->keyType)},
         {CKA_MODULUS, slot->rsa.modulus, sizeof(slot->rsa.modulus)},
@@ -207,7 +205,14 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
       CMD_PRINT_HEX(slot->ecc.x, slot->ecc.cbPrivate);
       CMD_PRINT_HEX(slot->ecc.y, slot->ecc.cbPrivate);
       CMD_DEBUG("Slot %d: keyType = CKK_EC, cbPrivate = %d", i, slot->ecc.cbPrivate);
+    } else {
+      // PKCS#11 exposes PQ and future algorithms, but current cardmod headers
+      // cannot represent them. Keep the fixed Windows slot empty rather than
+      // failing all classic container discovery.
+      CMD_DEBUG("Slot %d: unsupported Windows key type 0x%lx, skipping", i, slot->keyType);
+      continue;
     }
+    slot->present = CK_TRUE;
 
     objectClass = CKO_CERTIFICATE;
     rv = C_FindObjectsInit(session, templates, 2);

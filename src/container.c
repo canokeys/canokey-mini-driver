@@ -128,6 +128,7 @@ static DWORD create_keypair(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWOR
   CK_OBJECT_HANDLE publicKey = CK_INVALID_HANDLE;
   CK_OBJECT_HANDLE privateKeyHandle = CK_INVALID_HANDLE;
   CK_MECHANISM mechanism = {0};
+  CK_ULONG modulusBits = 0;
   CK_ATTRIBUTE publicTemplate[5];
   CK_ULONG publicCount = 0;
   const CMD_CONFIG *config = cmd_get_config();
@@ -151,7 +152,7 @@ static DWORD create_keypair(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWOR
   privateTemplate[privateCount++] = (CK_ATTRIBUTE){CKA_CNK_PIV_TOUCH_POLICY, &touchPolicy, sizeof(touchPolicy)};
 
   if (dwKeySpec == AT_SIGNATURE || dwKeySpec == AT_KEYEXCHANGE) {
-    CK_ULONG modulusBits = dwKeySize;
+    modulusBits = dwKeySize;
     mechanism.mechanism = CKM_RSA_PKCS_KEY_PAIR_GEN;
     publicTemplate[publicCount++] = (CK_ATTRIBUTE){CKA_MODULUS_BITS, &modulusBits, sizeof(modulusBits)};
   } else {

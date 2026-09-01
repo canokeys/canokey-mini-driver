@@ -6,6 +6,7 @@
 #include <Windows.h>
 
 #include <pkcs11.h>
+#include <pkcs11_canokey.h>
 
 #include "cardmod.h"
 #include "logging.h"
@@ -71,47 +72,56 @@ static DWORD AllocCacheFile(PBYTE *ppbData, PDWORD pcbData) {
   return AllocCopy(&cache, sizeof(cache), ppbData, pcbData);
 }
 
-static CK_RV DigestUpdateSlotPublicKey(CK_SESSION_HANDLE session, const SLOT *slot) {
-  if (!canokey_slot_has_key(slot)) {
-    return CKR_OK;
-  }
-  if (slot->keyType == CKK_RSA) {
-    return C_DigestUpdate(session, (CK_BYTE_PTR)slot->rsa.modulus, slot->rsa.modulusBits / 8);
-  }
-  if (slot->keyType == CKK_EC) {
-    CK_RV rv = C_DigestUpdate(session, (CK_BYTE_PTR)slot->ecc.x, slot->ecc.cbPrivate);
-    if (rv != CKR_OK) {
-      return rv;
-    }
-    return C_DigestUpdate(session, (CK_BYTE_PTR)slot->ecc.y, slot->ecc.cbPrivate);
-  }
-  return CKR_KEY_TYPE_INCONSISTENT;
+static DWORD HashCardIdentity(CK_SESSION_HANDLE session, CK_BYTE_PTR identity, CK_ULONG identityLen, BYTE cardId[16]) {
+  CK_MECHANISM mech = {CKM_SHA_1, NULL, 0};
+  CK_BYTE digest[20];
+  CK_ULONG digestLen = sizeof(digest);
+  CK_RV rv = C_DigestInit(session, &mech);
+  if (rv != CKR_OK)
+    return SCARD_F_INTERNAL_ERROR;
+  rv = C_Digest(session, identity, identityLen, digest, &digestLen);
+  if (rv != CKR_OK || digestLen < 16)
+    return SCARD_F_INTERNAL_ERROR;
+  memcpy(cardId, digest, 16);
+  SecureZeroMemory(digest, sizeof(digest));
+  return SCARD_S_SUCCESS;
 }
 
 DWORD GenerateCardIdentifier(CMD_CONTEXT_PTR pContext) {
   CMD_ENSURE_NONNULL(pContext, SCARD_E_INVALID_PARAMETER);
 
-  CK_MECHANISM mech = {CKM_SHA_1, NULL, 0};
-  CK_BYTE digest[20];
-  CK_ULONG digestLen = sizeof(digest);
-  CK_RV rv = C_DigestInit(pContext->session, &mech);
-  if (rv != CKR_OK) {
-    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "C_DigestInit failed");
+  // CHUID is the PIV card identity and remains unchanged by key/certificate
+  // provisioning. Hashing public keys here would change Windows cache identity
+  // whenever a container is replaced.
+  static CK_BYTE chuidTag[] = {0x5F, 0xC1, 0x02};
+  CK_ULONG chuidLen = 0;
+  CK_RV rv = C_CNK_GetPivData(pContext->session, chuidTag, sizeof(chuidTag), NULL, &chuidLen);
+  if (rv == CKR_OK && chuidLen > 0) {
+    CK_BYTE_PTR chuid = g_pfnCspAlloc(chuidLen);
+    CMD_ENSURE_NONNULL(chuid, SCARD_E_NO_MEMORY);
+    CK_ULONG available = chuidLen;
+    rv = C_CNK_GetPivData(pContext->session, chuidTag, sizeof(chuidTag), chuid, &available);
+    DWORD result =
+        rv == CKR_OK ? HashCardIdentity(pContext->session, chuid, available, pContext->cardId) : SCARD_F_INTERNAL_ERROR;
+    g_pfnCspFree(chuid);
+    if (result != SCARD_S_SUCCESS)
+      CMD_RETURN(result, "Failed to derive card identifier from PIV CHUID");
+    CMD_RET_OK;
   }
+  if (rv != CKR_DATA_INVALID && rv != CKR_OBJECT_HANDLE_INVALID)
+    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to read PIV CHUID");
 
-  for (CK_ULONG i = 0; i < pContext->canokey.slotCount; i++) {
-    rv = DigestUpdateSlotPublicKey(pContext->session, &pContext->canokey.slots[i]);
-    if (rv != CKR_OK) {
-      CMD_RETURN(SCARD_F_INTERNAL_ERROR, "C_DigestUpdate failed");
-    }
-  }
-
-  rv = C_DigestFinal(pContext->session, digest, &digestLen);
-  if (rv != CKR_OK || digestLen < sizeof(pContext->cardId)) {
-    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "C_DigestFinal failed");
-  }
-
-  memcpy(pContext->cardId, digest, sizeof(pContext->cardId));
+  CK_SESSION_INFO sessionInfo;
+  CK_TOKEN_INFO tokenInfo;
+  rv = C_GetSessionInfo(pContext->session, &sessionInfo);
+  if (rv == CKR_OK)
+    rv = C_GetTokenInfo(sessionInfo.slotID, &tokenInfo);
+  if (rv != CKR_OK)
+    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to read stable token serial");
+  DWORD result =
+      HashCardIdentity(pContext->session, tokenInfo.serialNumber, sizeof(tokenInfo.serialNumber), pContext->cardId);
+  if (result != SCARD_S_SUCCESS)
+    CMD_RETURN(result, "Failed to derive card identifier from token serial");
   CMD_RET_OK;
 }
 
@@ -179,10 +189,6 @@ DWORD RefreshCardMetadata(CMD_CONTEXT_PTR pContext) {
   CK_RV rv = read_canokey(pContext->session, &pContext->canokey);
   if (rv != CKR_OK) {
     CMD_RETURN(map_pkcs11_write_error(rv), "Failed to refresh CanoKey metadata");
-  }
-  DWORD ret = GenerateCardIdentifier(pContext);
-  if (ret != SCARD_S_SUCCESS) {
-    CMD_RETURN(ret, "Failed to refresh card identifier");
   }
   CMD_RET_OK;
 }
@@ -284,7 +290,12 @@ DWORD WINAPI CardCreateFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirecto
   }
 
   SLOT *slot = NULL;
-  return GetCertificateFileSlot(pContext, pszFileName, TRUE, &slot);
+  DWORD ret = GetCertificateFileSlot(pContext, pszFileName, TRUE, &slot);
+  if (ret != SCARD_S_SUCCESS)
+    return ret;
+  if (slot->certLen != 0)
+    CMD_RETURN(ERROR_FILE_EXISTS, "Certificate file already exists");
+  CMD_RET_OK;
 }
 
 DWORD WINAPI CardWriteFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirectoryName, __in LPSTR pszFileName,
@@ -312,6 +323,8 @@ DWORD WINAPI CardWriteFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
     if (cacheFile->bVersion != CARD_CACHE_FILE_CURRENT_VERSION) {
       CMD_RETURN(ERROR_REVISION_MISMATCH, "Cache file version mismatch");
     }
+    // CP_CARD_CACHE_MODE is NO_CACHE. Accept the Base CSP/KSP compatibility
+    // write, but do not create a second authoritative state beside the token.
     CMD_RET_OK;
   }
 
@@ -322,6 +335,9 @@ DWORD WINAPI CardWriteFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
     if (cbData % sizeof(CONTAINER_MAP_RECORD) != 0) {
       CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid container map size");
     }
+    // KSP writes cmapfile while enrolling, but this minidriver never consumes
+    // the submitted records. Stable slot policy and live metadata remain the
+    // only inputs to CardCreateContainer and GenerateContainerMapFile.
     CMD_RET_OK;
   }
 
@@ -391,6 +407,8 @@ DWORD WINAPI CardGetFileInfo(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryN
   }
 
   if (strcmp(pszDirectoryName, szBASE_CSP_DIR) == 0) {
+    // Windows enrollment expects user-write visibility for mscp files. Actual
+    // PIV certificate mutation remains guarded by ROLE_ADMIN in CardWriteFile.
     pCardFileInfo->AccessCondition = EveryoneReadUserWriteAc;
     if (strcmp(pszFileName, szROOT_STORE_FILE) == 0) {
       pCardFileInfo->cbFileSize = 0;

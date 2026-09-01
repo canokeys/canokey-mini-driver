@@ -213,8 +213,8 @@ DWORD WINAPI CardGetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty
     return getCardAuthenticatedState(pCardData, pbData, cbData, pdwDataLen);
   }
   if (wcscmp(wszProperty, CP_CARD_PIN_STRENGTH_VERIFY) == 0) {
-    if (dwFlags != ROLE_USER && dwFlags != ROLE_ADMIN) {
-      CMD_RETURN(SCARD_E_INVALID_PARAMETER, "only ROLE_USER and ROLE_ADMIN are supported");
+    if (dwFlags != ROLE_USER && dwFlags != ROLE_ADMIN && dwFlags != CMD_ROLE_PUK) {
+      CMD_RETURN(SCARD_E_INVALID_PARAMETER, "only ROLE_USER, ROLE_ADMIN, and CMD_ROLE_PUK are supported");
     }
     *pdwDataLen = sizeof(DWORD);
     if (cbData < sizeof(DWORD)) {
