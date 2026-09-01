@@ -232,9 +232,9 @@ CardDestroyDHAgreement
 Supported Windows paths are:
 
 - RSA PKCS#1 and PSS signing;
-- ECDSA P-256 and P-384 signing;
+- ECDSA P-256, P-384, and P-521 signing;
 - RSA PKCS#1 and OAEP decryption for a key-exchange container;
-- P-256 and P-384 ECDH with `BCRYPT_KDF_RAW_SECRET`.
+- P-256, P-384, and P-521 ECDH with `BCRYPT_KDF_RAW_SECRET`.
 
 Higher-level CNG KDF parameter lists are not implemented. PKCS#11 receives
 `CKD_NULL`, and the minidriver returns the raw agreement value.
@@ -244,7 +244,7 @@ Higher-level CNG KDF parameter lists are not implemented. PKCS#11 receives
 `CardCreateContainer` and `CardCreateContainerEx` support:
 
 - on-card RSA key-pair generation;
-- on-card P-256 and P-384 key-pair generation;
+- on-card P-256, P-384, and P-521 key-pair generation;
 - RSA import from a CAPI `PRIVATEKEYBLOB`;
 - EC import from a CNG `BCRYPT_ECCPRIVATE_BLOB`.
 
@@ -262,7 +262,9 @@ inside PKCS#11 is not equivalent to deleting a persistent PIV key slot.
 
 ## 5. Container and Slot Policy
 
-Windows container indexes are stable policy assignments, not enumeration order:
+Windows container indexes are stable policy assignments, not enumeration order.
+The table below shows the first six entries; the same policy continues through
+container index 23 and PIV object ID 24 (`95`):
 
 | Container index | PIV object ID | PIV slot | Windows use |
 | ---: | ---: | --- | --- |

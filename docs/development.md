@@ -241,9 +241,10 @@ The crypto tests use Windows CryptoAPI/CNG APIs directly instead of parsing
 - CAPI RSA/SHA256 PKCS#1 through Microsoft Base Smart Card Crypto Provider
 - CNG RSA/SHA256 PKCS#1 through Microsoft Smart Card Key Storage Provider
 - CNG RSA/SHA256 PSS through Microsoft Smart Card Key Storage Provider
-- CNG ECDSA P-256/SHA256 through Microsoft Smart Card Key Storage Provider
-- CNG ECDH P-256 raw-secret derivation through Microsoft Smart Card Key Storage
-  Provider, checked against a software-generated peer key
+- CNG ECDSA P-256/P-384/P-521 with SHA256 through Microsoft Smart Card Key
+  Storage Provider
+- CNG ECDH P-256/P-384/P-521 raw-secret derivation through Microsoft Smart Card
+  Key Storage Provider, checked against software-generated peer keys
 - CNG RSA PKCS#1 decrypt for discovered key-exchange RSA containers
 - CNG RSA OAEP-SHA256 decrypt for discovered key-exchange RSA containers
 
