@@ -206,6 +206,11 @@ ID 03 -> PIV 9D -> EC P-256 key
 ID 04 -> PIV 9E -> RSA-2048 key
 ID 05 -> PIV 82 -> EC P-256 key
 ID 06 -> PIV 83 -> EC P-384 key
+ID 07 -> PIV 84 -> EC P-521 key
+ID 08 -> PIV 85 -> Ed25519 key (PKCS#11-only)
+ID 09 -> PIV 86 -> X25519 key (PKCS#11-only)
+ID 23 -> PIV 94 -> ML-DSA-65 key (PKCS#11-only)
+ID 24 -> PIV 95 -> ML-KEM-768 key (PKCS#11-only)
 ```
 
 This inventory is observational, not provisioning policy. Re-enumerate the
