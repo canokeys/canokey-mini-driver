@@ -70,6 +70,8 @@ static DWORD validate_create_container_request(BYTE bContainerIndex, DWORD dwFla
     }
     CMD_RET_OK;
   case AT_KEYEXCHANGE:
+    // Windows models RSA key exchange as the PIV key-management slot. Do not
+    // silently expose a signature/authentication-slot RSA key as KSP decrypt.
     if (!container_index_is_piv_9d(bContainerIndex)) {
       CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "RSA key exchange is only supported by PIV 9D");
     }
@@ -183,12 +185,16 @@ static DWORD create_keypair(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWOR
 }
 
 static void reverse_copy(CK_BYTE *destination, const CK_BYTE *source, CK_ULONG length) {
+  // CAPI PRIVATEKEYBLOB integer components are little-endian; PKCS#11 RSA
+  // attributes and the PIV import TLV use fixed-width big-endian integers.
   for (CK_ULONG i = 0; i < length; i++) {
     destination[i] = source[length - 1 - i];
   }
 }
 
 static BOOL validate_rsa_private_blob(const BYTE *blob, DWORD blobLen) {
+  // Let the Windows software provider validate CRT consistency before any
+  // irreversible PIV slot overwrite is attempted.
   HCRYPTPROV provider = 0;
   HCRYPTKEY key = 0;
   BOOL valid = FALSE;
@@ -205,6 +211,8 @@ static BOOL validate_rsa_private_blob(const BYTE *blob, DWORD blobLen) {
 }
 
 static BOOL validate_ec_private_blob(DWORD dwKeySpec, const BYTE *blob, DWORD blobLen) {
+  // BCrypt validates the point/scalar relationship and curve-specific magic;
+  // the minidriver subsequently imports only the private scalar into PIV.
   BCRYPT_ALG_HANDLE provider = NULL;
   BCRYPT_KEY_HANDLE key = NULL;
   LPCWSTR algorithm =
@@ -256,6 +264,8 @@ static DWORD import_rsa_key(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWOR
   }
 
   const CK_BYTE *component = pbKeyData + sizeof(header) + modulusLen;
+  // PRIVATEKEYBLOB order after the modulus is P, Q, dP, dQ, qInv. The modulus
+  // and private exponent are not needed by CanoKey's CRT import format.
   CK_BYTE components[RSA_CRT_COMPONENT_COUNT][MAX_RSA_CRT_COMPONENT_BYTES] = {0};
   for (CK_ULONG i = 0; i < RSA_CRT_COMPONENT_COUNT; i++) {
     reverse_copy(components[i], component, componentLen);
@@ -345,6 +355,7 @@ static DWORD import_ec_key(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWORD
     return ret;
   }
 
+  // BCRYPT_ECCPRIVATE_BLOB stores X || Y || d as big-endian fixed-width fields.
   CK_BYTE privateScalar[48] = {0};
   memcpy(privateScalar, pbKeyData + sizeof(header) + expectedKeyBytes * 2, expectedKeyBytes);
 

@@ -13,6 +13,9 @@ static CK_RV login_with_role(CMD_CONTEXT_PTR pContext, CK_USER_TYPE userType, PB
                              BYTE *pPinTries);
 
 static void try_login_pin_protected_management_key(CMD_CONTEXT_PTR pContext, PBYTE pin, CK_ULONG pinLen) {
+  // USER authentication already supplied Windows with the retry count. This
+  // best-effort extension keeps ADMIN DATA parsing and raw key bytes entirely
+  // inside PKCS#11, and only elevates the minidriver role after verification.
   CK_RV rv = C_CNK_LoginPinManaged(pContext->session, pin, pinLen);
 
   if (rv == CKR_OK || rv == CKR_USER_ALREADY_LOGGED_IN) {

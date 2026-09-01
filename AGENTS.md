@@ -66,6 +66,10 @@ cmake --build out\build\x64-Clang-Debug --target canokey-minidriver-debug-instal
 - Run `clang-format` on touched C source and header files before committing.
 - The repository has a `.clang-format`; use that style rather than introducing
   local formatting preferences.
+- Add succinct comments for non-obvious invariants and boundaries: Windows/
+  PKCS#11 ownership, sensitive-data lifetime, cache synchronization, two-stage
+  buffer semantics, endianness, and PIV slot-policy decisions. Do not add
+  comments that merely narrate straightforward statements.
 - The VS bundled formatter is usually available at:
 
 ```text
@@ -178,6 +182,10 @@ Start-Sleep -Seconds 6
   PKCS#1 and OAEP-SHA256 decrypt. When an ECDH KSP key is discovered, it tests
   `BCRYPT_KDF_RAW_SECRET` against a software-generated peer key. Use
   `-SkipBuild -SkipInstall -SkipReset` for fast reruns.
+- `crypto-test.ps1` currently treats a missing RSA key-exchange container as a
+  test precondition failure. When 9D is not an RSA key, run `sign-test.ps1` and
+  `derive-test.ps1` separately; do not overwrite 9D merely to satisfy the test
+  unless that destructive provisioning is explicitly intended.
 - For focused reruns, use `.\scripts\sign-test.ps1`,
   `.\scripts\decrypt-test.ps1`, or `.\scripts\derive-test.ps1`. They share
   `scripts\minidriver-test-common.ps1`, so `crypto-test.ps1` can build,
@@ -186,10 +194,21 @@ Start-Sleep -Seconds 6
 - The current development card has useful PIV material in:
 
 ```text
-ID 01 -> PIV 9A -> RSA-2048 key and certificate
-ID 02 -> PIV 9C -> EC P-256 key and certificate
-ID 03 -> PIV 9D -> RSA-2048 key and certificate
+ID 01 -> PIV 9A -> EC P-256 key
+ID 02 -> PIV 9C -> EC P-256 key
+ID 03 -> PIV 9D -> EC P-256 key
+ID 04 -> PIV 9E -> RSA-2048 key
+ID 05 -> PIV 82 -> EC P-256 key
+ID 06 -> PIV 83 -> EC P-384 key
 ```
+
+This inventory is observational, not provisioning policy. Re-enumerate the
+card before relying on it because key generation/import tests overwrite slots.
+
+The current 9D key is EC, so Windows does not expose an RSA
+`AT_KEYEXCHANGE` container. PKCS#11 can exercise RSA decrypt with the RSA key
+in 9E, but the minidriver intentionally reserves Windows RSA key exchange for
+an RSA key in 9D.
 
 - The minidriver keeps explicit per-slot capabilities in `SLOT.capabilities`.
   The intended YubiKey-style PIV policy is:
