@@ -623,12 +623,12 @@ static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, 
     }
     // Set signature key size bits
     if (canokey_slot_can_sign(slot)) {
-      rec->wSigKeySizeBits = (WORD)(slot->keyType == CKK_RSA ? slot->rsa.modulusBits : slot->ecc.cbPrivate * 8);
+      rec->wSigKeySizeBits = (WORD)(slot->keyType == CKK_RSA ? slot->rsa.modulusBits : canokey_ec_curve_bits(slot));
     }
     if (canokey_slot_can_decrypt(slot) && slot->keyType == CKK_RSA) {
       rec->wKeyExchangeKeySizeBits = (WORD)slot->rsa.modulusBits;
     } else if (canokey_slot_can_derive(slot) && slot->keyType == CKK_EC) {
-      rec->wKeyExchangeKeySizeBits = (WORD)(slot->ecc.cbPrivate * 8);
+      rec->wKeyExchangeKeySizeBits = (WORD)canokey_ec_curve_bits(slot);
     }
     CMD_DEBUG("Container %d: %ls, flags: %d, wSigKeySizeBits: %d, wKeyExchangeKeySizeBits: %d", i, rec->wszGuid,
               rec->bFlags, rec->wSigKeySizeBits, rec->wKeyExchangeKeySizeBits);

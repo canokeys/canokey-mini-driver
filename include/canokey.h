@@ -4,7 +4,7 @@
 #include <pkcs11.h>
 #include <stdint.h>
 
-#define MAX_SLOT_ID 6
+#define MAX_SLOT_ID 24
 #define CANOKEY_SLOT_CAP_SIGN 0x01
 #define CANOKEY_SLOT_CAP_DECRYPT 0x02
 #define CANOKEY_SLOT_CAP_DERIVE 0x04
@@ -23,12 +23,20 @@ typedef struct {
   CK_ULONG cbPrivate;
 } ECC_PUB_KEY;
 
+typedef enum {
+  CANOKEY_EC_CURVE_NONE = 0,
+  CANOKEY_EC_CURVE_P256,
+  CANOKEY_EC_CURVE_P384,
+  CANOKEY_EC_CURVE_P521,
+} CANOKEY_EC_CURVE;
+
 typedef struct {
   CK_BBOOL present;
   CK_BYTE id;
   CK_BYTE pivId;
   CK_BYTE capabilities;
   CK_KEY_TYPE keyType;
+  CANOKEY_EC_CURVE ecCurve;
   union {
     RSA_PUB_KEY rsa;
     ECC_PUB_KEY ecc;
@@ -50,6 +58,7 @@ CK_BBOOL canokey_slot_has_key(const SLOT *slot);
 CK_BBOOL canokey_slot_can_sign(const SLOT *slot);
 CK_BBOOL canokey_slot_can_decrypt(const SLOT *slot);
 CK_BBOOL canokey_slot_can_derive(const SLOT *slot);
+CK_ULONG canokey_ec_curve_bits(const SLOT *slot);
 CK_BYTE canokey_container_object_id(CK_BYTE containerIndex);
 void reverse_bytes(CK_BYTE *data, CK_ULONG len);
 

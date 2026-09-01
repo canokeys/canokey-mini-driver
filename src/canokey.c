@@ -23,6 +23,24 @@ static CK_BYTE capabilities_for_piv_slot(CK_BYTE pivId) {
   case 0x9E:
   case 0x82:
   case 0x83:
+  case 0x84:
+  case 0x85:
+  case 0x86:
+  case 0x87:
+  case 0x88:
+  case 0x89:
+  case 0x8A:
+  case 0x8B:
+  case 0x8C:
+  case 0x8D:
+  case 0x8E:
+  case 0x8F:
+  case 0x90:
+  case 0x91:
+  case 0x92:
+  case 0x93:
+  case 0x94:
+  case 0x95:
     return CANOKEY_SLOT_CAP_SIGN | CANOKEY_SLOT_CAP_DERIVE | (pivId == 0x9D ? CANOKEY_SLOT_CAP_DECRYPT : 0);
   default:
     return 0;
@@ -43,7 +61,36 @@ CK_BBOOL canokey_slot_can_derive(const SLOT *slot) {
 
 CK_BBOOL canokey_slot_has_key(const SLOT *slot) { return slot != NULL && slot->present; }
 
+CK_ULONG canokey_ec_curve_bits(const SLOT *slot) {
+  if (slot == NULL)
+    return 0;
+  switch (slot->ecCurve) {
+  case CANOKEY_EC_CURVE_P256:
+    return 256;
+  case CANOKEY_EC_CURVE_P384:
+    return 384;
+  case CANOKEY_EC_CURVE_P521:
+    return 521;
+  default:
+    return 0;
+  }
+}
+
 CK_BYTE canokey_container_object_id(CK_BYTE containerIndex) { return (CK_BYTE)(containerIndex + 1); }
+
+static CANOKEY_EC_CURVE ec_curve_from_params(const CK_BYTE *params, CK_ULONG paramsLen) {
+  static const CK_BYTE p256[] = {0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07};
+  static const CK_BYTE p384[] = {0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x22};
+  static const CK_BYTE p521[] = {0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x23};
+
+  if (paramsLen == sizeof(p256) && memcmp(params, p256, sizeof(p256)) == 0)
+    return CANOKEY_EC_CURVE_P256;
+  if (paramsLen == sizeof(p384) && memcmp(params, p384, sizeof(p384)) == 0)
+    return CANOKEY_EC_CURVE_P384;
+  if (paramsLen == sizeof(p521) && memcmp(params, p521, sizeof(p521)) == 0)
+    return CANOKEY_EC_CURVE_P521;
+  return CANOKEY_EC_CURVE_NONE;
+}
 
 static CK_BBOOL is_supported_ec_coordinate_len(CK_ULONG coordinate_len) {
   switch (coordinate_len) {
@@ -188,8 +235,12 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
         {CKA_MODULUS, slot->rsa.modulus, sizeof(slot->rsa.modulus)},
         {CKA_MODULUS_BITS, &slot->rsa.modulusBits, sizeof(slot->rsa.modulusBits)},
         {CKA_EC_POINT, &slot->ecc, sizeof(slot->ecc)},
+        {CKA_EC_PARAMS, NULL, 0},
     };
-    rv = C_GetAttributeValue(session, hObject, attr, 4);
+    CK_BYTE ecParams[16];
+    attr[4].pValue = ecParams;
+    attr[4].ulValueLen = sizeof(ecParams);
+    rv = C_GetAttributeValue(session, hObject, attr, 5);
     if (rv != CKR_OK && rv != CKR_ATTRIBUTE_TYPE_INVALID)
       CMD_RETURN(rv, "C_GetAttributeValue failed");
 
@@ -198,13 +249,24 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
       reverse_bytes(slot->rsa.modulus, slot->rsa.modulusBits / 8);
       CMD_DEBUG("Slot %d: keyType = CKK_RSA, modulusBits = %d", i, slot->rsa.modulusBits);
     } else if (slot->keyType == CKK_EC) {
+      slot->ecCurve = ec_curve_from_params(ecParams, attr[4].ulValueLen);
+      if (slot->ecCurve == CANOKEY_EC_CURVE_NONE) {
+        // Windows cardmod/CNG has no compatible identifier for secp256k1 or
+        // SM2. Coordinate length alone must never be used as curve identity.
+        CMD_DEBUG("Slot %d: unsupported Windows EC parameters, skipping", i);
+        continue;
+      }
       rv = unpack_ec_point(slot, attr[3].ulValueLen);
       if (rv != CKR_OK)
         CMD_RETURN(rv, "Invalid EC point");
+      if (slot->ecc.cbPrivate != (canokey_ec_curve_bits(slot) + 7) / 8) {
+        CMD_DEBUG("Slot %d: EC point size does not match named curve, skipping", i);
+        continue;
+      }
       CMD_DEBUG("Point:");
       CMD_PRINT_HEX(slot->ecc.x, slot->ecc.cbPrivate);
       CMD_PRINT_HEX(slot->ecc.y, slot->ecc.cbPrivate);
-      CMD_DEBUG("Slot %d: keyType = CKK_EC, cbPrivate = %d", i, slot->ecc.cbPrivate);
+      CMD_DEBUG("Slot %d: keyType = CKK_EC, curve = %d, cbPrivate = %d", i, slot->ecCurve, slot->ecc.cbPrivate);
     } else {
       // PKCS#11 exposes PQ and future algorithms, but current cardmod headers
       // cannot represent them. Keep the fixed Windows slot empty rather than

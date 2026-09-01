@@ -1,9 +1,9 @@
 param(
     [string]$ReaderName = "canokeys.org OpenPGP PIV OATH 0",
     [string]$DllPath = (Join-Path $PSScriptRoot "..\out\build\x64-Clang-Debug\canokey-minidriver.dll"),
-    [ValidateRange(0, 5)]
+    [ValidateRange(0, 23)]
     [byte]$ContainerIndex = 4,
-    [ValidateSet("ECDSA_P256", "ECDSA_P384", "ECDHE_P256", "ECDHE_P384", "RSA_SIGN_2048", "RSA_SIGN_3072", "RSA_SIGN_4096", "RSA_KEYX_2048", "RSA_KEYX_3072", "RSA_KEYX_4096")]
+    [ValidateSet("ECDSA_P256", "ECDSA_P384", "ECDSA_P521", "ECDHE_P256", "ECDHE_P384", "ECDHE_P521", "RSA_SIGN_2048", "RSA_SIGN_3072", "RSA_SIGN_4096", "RSA_KEYX_2048", "RSA_KEYX_3072", "RSA_KEYX_4096")]
     [string]$KeySpec = "ECDSA_P256",
     [string]$ManagementKey = "010203040506070801020304050607080102030405060708",
     [string]$Pin = "123456",
@@ -35,8 +35,10 @@ namespace CanokeyMinidriver {
         private const uint AT_SIGNATURE = 2;
         private const uint AT_ECDSA_P256 = 3;
         private const uint AT_ECDSA_P384 = 4;
+        private const uint AT_ECDSA_P521 = 5;
         private const uint AT_ECDHE_P256 = 6;
         private const uint AT_ECDHE_P384 = 7;
+        private const uint AT_ECDHE_P521 = 8;
         private const uint CARD_CREATE_CONTAINER_KEY_GEN = 1;
         private const uint CARD_CREATE_CONTAINER_KEY_IMPORT = 2;
         private const uint CONTAINER_INFO_CURRENT_VERSION = 1;
@@ -51,10 +53,14 @@ namespace CanokeyMinidriver {
         private const uint BCRYPT_ECDH_PRIVATE_P256_MAGIC = 0x324b4345;
         private const uint BCRYPT_ECDH_PUBLIC_P384_MAGIC = 0x334b4345;
         private const uint BCRYPT_ECDH_PRIVATE_P384_MAGIC = 0x344b4345;
+        private const uint BCRYPT_ECDH_PUBLIC_P521_MAGIC = 0x354b4345;
+        private const uint BCRYPT_ECDH_PRIVATE_P521_MAGIC = 0x364b4345;
         private const uint BCRYPT_ECDSA_PUBLIC_P256_MAGIC = 0x31534345;
         private const uint BCRYPT_ECDSA_PRIVATE_P256_MAGIC = 0x32534345;
         private const uint BCRYPT_ECDSA_PUBLIC_P384_MAGIC = 0x33534345;
         private const uint BCRYPT_ECDSA_PRIVATE_P384_MAGIC = 0x34534345;
+        private const uint BCRYPT_ECDSA_PUBLIC_P521_MAGIC = 0x35534345;
+        private const uint BCRYPT_ECDSA_PRIVATE_P521_MAGIC = 0x36534345;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct CARD_DATA {
@@ -211,10 +217,12 @@ namespace CanokeyMinidriver {
                 }
             }
 
-            ECCurve curve = keySpec == AT_ECDSA_P384 || keySpec == AT_ECDHE_P384
-                ? ECCurve.NamedCurves.nistP384 : ECCurve.NamedCurves.nistP256;
+            ECCurve curve = keySpec == AT_ECDSA_P521 || keySpec == AT_ECDHE_P521
+                ? ECCurve.NamedCurves.nistP521
+                : keySpec == AT_ECDSA_P384 || keySpec == AT_ECDHE_P384
+                    ? ECCurve.NamedCurves.nistP384 : ECCurve.NamedCurves.nistP256;
             ECParameters parameters;
-            if (keySpec == AT_ECDHE_P256 || keySpec == AT_ECDHE_P384) {
+            if (keySpec == AT_ECDHE_P256 || keySpec == AT_ECDHE_P384 || keySpec == AT_ECDHE_P521) {
                 using (ECDiffieHellman key = ECDiffieHellman.Create(curve)) {
                     parameters = key.ExportParameters(true);
                 }
@@ -287,6 +295,14 @@ namespace CanokeyMinidriver {
             case AT_ECDHE_P384:
                 publicMagic = BCRYPT_ECDH_PUBLIC_P384_MAGIC;
                 privateMagic = BCRYPT_ECDH_PRIVATE_P384_MAGIC;
+                break;
+            case AT_ECDSA_P521:
+                publicMagic = BCRYPT_ECDSA_PUBLIC_P521_MAGIC;
+                privateMagic = BCRYPT_ECDSA_PRIVATE_P521_MAGIC;
+                break;
+            case AT_ECDHE_P521:
+                publicMagic = BCRYPT_ECDH_PUBLIC_P521_MAGIC;
+                privateMagic = BCRYPT_ECDH_PRIVATE_P521_MAGIC;
                 break;
             default:
                 throw new ArgumentOutOfRangeException("keySpec");
@@ -424,9 +440,11 @@ namespace CanokeyMinidriver {
                 CardGetContainerInfo getInfo = Marshal.GetDelegateForFunctionPointer<CardGetContainerInfo>(data.pfnCardGetContainerInfo);
                 CheckCard(getInfo(ref data, containerIndex, 0, ref info), "CardGetContainerInfo");
 
-                IntPtr publicKeyPointer = keySpec == AT_KEYEXCHANGE || keySpec == AT_ECDHE_P256 || keySpec == AT_ECDHE_P384
+                IntPtr publicKeyPointer = keySpec == AT_KEYEXCHANGE || keySpec == AT_ECDHE_P256 ||
+                    keySpec == AT_ECDHE_P384 || keySpec == AT_ECDHE_P521
                     ? info.pbKeyExPublicKey : info.pbSigPublicKey;
-                uint publicKeyLength = keySpec == AT_KEYEXCHANGE || keySpec == AT_ECDHE_P256 || keySpec == AT_ECDHE_P384
+                uint publicKeyLength = keySpec == AT_KEYEXCHANGE || keySpec == AT_ECDHE_P256 ||
+                    keySpec == AT_ECDHE_P384 || keySpec == AT_ECDHE_P521
                     ? info.cbKeyExPublicKey : info.cbSigPublicKey;
                 bool publicKeyMatches = expectedPublicBlob == null;
                 if (expectedPublicBlob != null && publicKeyPointer != IntPtr.Zero) {
@@ -539,8 +557,10 @@ function Convert-HexStringToBytes {
 $specMap = @{
     ECDSA_P256    = @{ KeySpec = 3; KeySize = 256 }
     ECDSA_P384    = @{ KeySpec = 4; KeySize = 384 }
+    ECDSA_P521    = @{ KeySpec = 5; KeySize = 521 }
     ECDHE_P256    = @{ KeySpec = 6; KeySize = 256 }
     ECDHE_P384    = @{ KeySpec = 7; KeySize = 384 }
+    ECDHE_P521    = @{ KeySpec = 8; KeySize = 521 }
     RSA_SIGN_2048 = @{ KeySpec = 2; KeySize = 2048 }
     RSA_SIGN_3072 = @{ KeySpec = 2; KeySize = 3072 }
     RSA_SIGN_4096 = @{ KeySpec = 2; KeySize = 4096 }

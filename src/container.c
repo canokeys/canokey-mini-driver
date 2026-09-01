@@ -89,6 +89,12 @@ static DWORD validate_create_container_request(BYTE bContainerIndex, DWORD dwFla
       CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported P-384 key size");
     }
     CMD_RET_OK;
+  case AT_ECDSA_P521:
+  case AT_ECDHE_P521:
+    if (dwKeySize != 0 && dwKeySize != 521) {
+      CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported P-521 key size");
+    }
+    CMD_RET_OK;
   default:
     CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Unsupported key spec");
   }
@@ -97,6 +103,7 @@ static DWORD validate_create_container_request(BYTE bContainerIndex, DWORD dwFla
 static DWORD ec_params_for_key_spec(DWORD dwKeySpec, const CK_BYTE **ppParams, CK_ULONG *pParamsLen) {
   static const CK_BYTE p256[] = {0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07};
   static const CK_BYTE p384[] = {0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x22};
+  static const CK_BYTE p521[] = {0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x23};
 
   CMD_ENSURE_NONNULL(ppParams, SCARD_E_INVALID_PARAMETER);
   CMD_ENSURE_NONNULL(pParamsLen, SCARD_E_INVALID_PARAMETER);
@@ -111,6 +118,11 @@ static DWORD ec_params_for_key_spec(DWORD dwKeySpec, const CK_BYTE **ppParams, C
   case AT_ECDHE_P384:
     *ppParams = p384;
     *pParamsLen = sizeof(p384);
+    CMD_RET_OK;
+  case AT_ECDSA_P521:
+  case AT_ECDHE_P521:
+    *ppParams = p521;
+    *pParamsLen = sizeof(p521);
     CMD_RET_OK;
   default:
     CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Unsupported EC key spec");
@@ -206,8 +218,9 @@ static BOOL validate_ec_private_blob(DWORD dwKeySpec, const BYTE *blob, DWORD bl
   // the minidriver subsequently imports only the private scalar into PIV.
   BCRYPT_ALG_HANDLE provider = NULL;
   BCRYPT_KEY_HANDLE key = NULL;
-  LPCWSTR algorithm =
-      (dwKeySpec == AT_ECDHE_P256 || dwKeySpec == AT_ECDHE_P384) ? BCRYPT_ECDH_ALGORITHM : BCRYPT_ECDSA_ALGORITHM;
+  LPCWSTR algorithm = (dwKeySpec == AT_ECDHE_P256 || dwKeySpec == AT_ECDHE_P384 || dwKeySpec == AT_ECDHE_P521)
+                          ? BCRYPT_ECDH_ALGORITHM
+                          : BCRYPT_ECDSA_ALGORITHM;
   NTSTATUS status = BCryptOpenAlgorithmProvider(&provider, algorithm, NULL, 0);
   if (BCRYPT_SUCCESS(status)) {
     status = BCryptImportKeyPair(provider, NULL, BCRYPT_ECCPRIVATE_BLOB, &key, (PUCHAR)blob, blobLen, 0);
@@ -314,6 +327,14 @@ static DWORD ecc_private_magic_for_key_spec(DWORD dwKeySpec, ULONG *pMagic, ULON
     *pMagic = BCRYPT_ECDH_PRIVATE_P384_MAGIC;
     *pKeyBytes = 48;
     CMD_RET_OK;
+  case AT_ECDSA_P521:
+    *pMagic = BCRYPT_ECDSA_PRIVATE_P521_MAGIC;
+    *pKeyBytes = 66;
+    CMD_RET_OK;
+  case AT_ECDHE_P521:
+    *pMagic = BCRYPT_ECDH_PRIVATE_P521_MAGIC;
+    *pKeyBytes = 66;
+    CMD_RET_OK;
   default:
     CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Unsupported EC private key blob type");
   }
@@ -330,8 +351,9 @@ static DWORD import_ec_key(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWORD
   if (ret != SCARD_S_SUCCESS) {
     return ret;
   }
+  DWORD expectedKeyBits = expectedKeyBytes == 66 ? 521 : expectedKeyBytes * 8;
   if (header.dwMagic != expectedMagic || header.cbKey != expectedKeyBytes ||
-      (dwKeySize != 0 && dwKeySize != expectedKeyBytes * 8)) {
+      (dwKeySize != 0 && dwKeySize != expectedKeyBits)) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid EC private key blob header");
   }
   DWORD blobLen = (DWORD)(sizeof(header) + expectedKeyBytes * 3);
@@ -347,7 +369,7 @@ static DWORD import_ec_key(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWORD
   }
 
   // BCRYPT_ECCPRIVATE_BLOB stores X || Y || d as big-endian fixed-width fields.
-  CK_BYTE privateScalar[48] = {0};
+  CK_BYTE privateScalar[66] = {0};
   memcpy(privateScalar, pbKeyData + sizeof(header) + expectedKeyBytes * 2, expectedKeyBytes);
 
   CK_OBJECT_CLASS objectClass = CKO_PRIVATE_KEY;
@@ -428,14 +450,14 @@ static DWORD AllocEcPublicKeyBlob(const SLOT *slot, ULONG magic, PBYTE *ppbKey, 
 static DWORD EcPublicKeyMagic(const SLOT *slot, BOOL derive, ULONG *pMagic) {
   CMD_ENSURE_NONNULL(pMagic, SCARD_E_INVALID_PARAMETER);
 
-  switch (slot->ecc.cbPrivate) {
-  case 32:
+  switch (slot->ecCurve) {
+  case CANOKEY_EC_CURVE_P256:
     *pMagic = derive ? BCRYPT_ECDH_PUBLIC_P256_MAGIC : BCRYPT_ECDSA_PUBLIC_P256_MAGIC;
     CMD_RET_OK;
-  case 48:
+  case CANOKEY_EC_CURVE_P384:
     *pMagic = derive ? BCRYPT_ECDH_PUBLIC_P384_MAGIC : BCRYPT_ECDSA_PUBLIC_P384_MAGIC;
     CMD_RET_OK;
-  case 66:
+  case CANOKEY_EC_CURVE_P521:
     *pMagic = derive ? BCRYPT_ECDH_PUBLIC_P521_MAGIC : BCRYPT_ECDSA_PUBLIC_P521_MAGIC;
     CMD_RET_OK;
   default:

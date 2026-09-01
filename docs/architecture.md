@@ -37,14 +37,20 @@ to `SCARD_*` errors.
 
 ## Slot And Container Policy
 
-Container indexes `0..5` map to PIV object IDs `1..6`, hence slots
-`9A`, `9C`, `9D`, `9E`, `82`, and `83`. All six can sign. EC keys can derive.
+Container indexes `0..23` map to PIV object IDs `1..24`, hence slots
+`9A`, `9C`, `9D`, `9E`, and `82` through `95`. All 24 can sign. Supported EC
+keys can derive.
 Only an RSA key in 9D is exposed as Windows `AT_KEYEXCHANGE` and accepted by
 `CardRSADecrypt`; this preserves the standard PIV key-management role.
 
 The mapping is policy, not merely algorithm capability. PKCS#11 can perform an
 RSA private operation in another slot, but the minidriver must not expose that
 slot as a Windows key-exchange container.
+
+The minidriver accepts only NIST P-256, P-384, and P-521 EC parameters. It
+matches the complete DER `CKA_EC_PARAMS` value before constructing a CNG blob;
+coordinate length is not a curve identifier. This keeps secp256k1 and SM2
+PKCS#11 objects out of Windows instead of incorrectly labeling them P-256.
 
 ## Authentication
 

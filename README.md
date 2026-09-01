@@ -11,7 +11,7 @@ Windows can load the DLL through a Calais smart card registry mapping without
 installing the generated INF. Current local testing can enumerate the CanoKey
 PIV certificates and run CSP/KSP signing, RSA decryption, and ECDH raw-secret
 derivation tests against the development card. Release packaging, INF
-installation, and broader PIV slot coverage are still in progress.
+installation and release validation are still in progress.
 
 ## Current State
 
@@ -38,7 +38,7 @@ installation, and broader PIV slot coverage are still in progress.
   key. After user PIN authentication, the minidriver reads the protected PIV
   object through PKCS#11 and enables management-authorized key writes without
   storing the management key in the registry.
-- `CardCreateContainerEx` supports RSA and P-256/P-384 generation and private
+- `CardCreateContainerEx` supports RSA and P-256/P-384/P-521 generation and private
   key import. RSA imports use CAPI `PRIVATEKEYBLOB`; EC imports use
   `BCRYPT_ECCPRIVATE_BLOB`. `scripts\keygen-test.ps1 -Import` covers direct
   minidriver import, and `scripts\ksp-keygen-test.ps1` covers real Microsoft
@@ -47,6 +47,11 @@ installation, and broader PIV slot coverage are still in progress.
   all 24 PIV key slots. Current Windows CPDK headers cannot represent these
   algorithms, so CSP/KSP exposure remains classic-only; see
   [`docs/pqc.md`](docs/pqc.md).
+- Windows container indexes `0..23` map to all PIV key slots (`9A`, `9C`,
+  `9D`, `9E`, and `82` through `95`). RSA and the NIST P-256/P-384/P-521
+  curves are exposed through CSP/KSP. Curve identity comes from
+  `CKA_EC_PARAMS`; secp256k1 and SM2 are deliberately skipped instead of being
+  misreported as P-256 merely because they also use 32-byte coordinates.
 - `certutil -scinfo` can see the card and current certificates.
 - `scripts\crypto-test.ps1` exercises the minidriver through Windows CAPI/CNG
   APIs instead of parsing command output. The same checks can be run in focused
@@ -58,8 +63,9 @@ installation, and broader PIV slot coverage are still in progress.
 
 Known gaps:
 
-- Windows CSP/KSP container mapping remains limited to the classic slots and
-  algorithms defined by the current CPDK contract.
+- Windows CSP/KSP exposure remains limited to RSA and the NIST curves defined
+  by the current CPDK contract. Ed25519, X25519, SM2, secp256k1, and PQC remain
+  available through PKCS#11 only.
 - ECDH currently supports raw secret derivation only (`BCRYPT_KDF_RAW_SECRET` /
   PKCS#11 `CKD_NULL`). Higher-level KDF parameter lists are not implemented yet.
 - INF installation is kept for later release validation.

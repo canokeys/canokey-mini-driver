@@ -292,7 +292,7 @@ operation.
 ### 6.1 Container Discovery
 
 The minidriver reads the live PIV metadata directory through PKCS#11 and builds
-its six stable `SLOT` records. Metadata determines key presence, algorithm,
+24 stable `SLOT` records. Metadata determines key presence, algorithm,
 public key, certificate presence, PIN policy, touch policy, and operation
 capabilities.
 
@@ -371,7 +371,7 @@ writes, and intentionally does not persist freshness fields.
 
 ### 7.3 `mscp/cmapfile`
 
-`cmapfile` is serialized from the six stable slot records. Each
+`cmapfile` is serialized from the 24 stable slot records. Each
 `CONTAINER_MAP_RECORD` reports the stable container name, valid/default flags,
 signature key size, and key-exchange key size.
 

@@ -57,14 +57,14 @@ static DWORD ec_key_spec_for_slot(const SLOT *slot, DWORD *pKeySpec) {
   CMD_ENSURE_NONNULL(slot, SCARD_E_INVALID_PARAMETER);
   CMD_ENSURE_NONNULL(pKeySpec, SCARD_E_INVALID_PARAMETER);
 
-  switch (slot->ecc.cbPrivate) {
-  case 32:
+  switch (slot->ecCurve) {
+  case CANOKEY_EC_CURVE_P256:
     *pKeySpec = AT_ECDHE_P256;
     CMD_RET_OK;
-  case 48:
+  case CANOKEY_EC_CURVE_P384:
     *pKeySpec = AT_ECDHE_P384;
     CMD_RET_OK;
-  case 66:
+  case CANOKEY_EC_CURVE_P521:
     *pKeySpec = AT_ECDHE_P521;
     CMD_RET_OK;
   default:
@@ -76,14 +76,14 @@ static DWORD expected_ecdh_public_magic(const SLOT *slot, ULONG *pMagic) {
   CMD_ENSURE_NONNULL(slot, SCARD_E_INVALID_PARAMETER);
   CMD_ENSURE_NONNULL(pMagic, SCARD_E_INVALID_PARAMETER);
 
-  switch (slot->ecc.cbPrivate) {
-  case 32:
+  switch (slot->ecCurve) {
+  case CANOKEY_EC_CURVE_P256:
     *pMagic = BCRYPT_ECDH_PUBLIC_P256_MAGIC;
     CMD_RET_OK;
-  case 48:
+  case CANOKEY_EC_CURVE_P384:
     *pMagic = BCRYPT_ECDH_PUBLIC_P384_MAGIC;
     CMD_RET_OK;
-  case 66:
+  case CANOKEY_EC_CURVE_P521:
     *pMagic = BCRYPT_ECDH_PUBLIC_P521_MAGIC;
     CMD_RET_OK;
   default:
