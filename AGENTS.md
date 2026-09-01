@@ -240,6 +240,10 @@ EC keys in those slots       -> also ECDH-capable
 
 - `canokey-minidriver.inf` is generated from `canokey-minidriver.inf.in`.
 - The PKCS#11 dependency is linked statically into the minidriver target.
+- The Windows cardmod contract has no generic random-generation DDI.
+  `CardGetChallenge` and `CardGetChallengeEx` belong to Challenge/Response PIN
+  authentication and must not expose the PIV RNG. Firmware 6.0+ random support
+  is available through the statically linked PKCS#11 `C_GenerateRandom` API.
 - `external/canokey-pkcs11` commit `1c0bb0d` adds the `C_DecryptInit` /
   `C_Decrypt` RSA path used by `CardRSADecrypt`.
 - `external/canokey-pkcs11` commit `ff21a84` adds `C_DeriveKey` for PIV ECDH

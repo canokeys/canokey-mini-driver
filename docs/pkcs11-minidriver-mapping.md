@@ -138,12 +138,17 @@ C_VerifyRecoverInit / C_VerifyRecover
 C_DigestEncryptUpdate / C_DecryptDigestUpdate
 C_SignEncryptUpdate / C_DecryptVerifyUpdate
 C_GenerateKey / C_WrapKey / C_UnwrapKey
-C_SeedRandom / C_GenerateRandom
 C_GetOperationState / C_SetOperationState
 C_CopyObject / C_GetObjectSize
 C_InitToken / C_InitPIN / C_SetPIN
 C_WaitForSlotEvent
 ```
+
+`C_GenerateRandom` is implemented in the statically linked PKCS#11 layer for
+firmware PIV version 6.0+. The Windows cardmod contract has no generic RNG DDI,
+so the minidriver does not forward it through `CARD_DATA`.
+`C_SeedRandom` returns `CKR_RANDOM_SEED_NOT_SUPPORTED` because the firmware RNG
+does not expose external seed injection.
 
 ---
 
