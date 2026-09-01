@@ -283,6 +283,9 @@ namespace CanokeyMinidriver {
         private static extern int NCryptFreeObject(IntPtr hObject);
 
         [DllImport("ncrypt.dll")]
+        private static extern int NCryptDeleteKey(IntPtr hKey, int flags);
+
+        [DllImport("ncrypt.dll")]
         private static extern int NCryptFreeBuffer(IntPtr pvInput);
 
         public static SignResult CapiSign(string container, string readerName, string pin, string hashAlgorithm) {
@@ -404,16 +407,21 @@ namespace CanokeyMinidriver {
         }
 
         public static KeyName CreateCngKey(string reader, string pin, string algorithm, string container,
-            int keySize) {
+            int keySize, int legacyKeySpec) {
             IntPtr hProvider = IntPtr.Zero;
             IntPtr hKey = IntPtr.Zero;
+            bool finalized = false;
+            bool completed = false;
             try {
                 CheckStatus(NCryptOpenStorageProvider(out hProvider, SmartCardKsp, 0), "NCryptOpenStorageProvider");
                 byte[] readerBytes = Encoding.Unicode.GetBytes(reader + "\0");
                 CheckStatus(NCryptSetProperty(hProvider, "SmartCardReader", readerBytes, readerBytes.Length, 0),
                     "NCryptSetProperty(SmartCardReader)");
-                int legacyKeySpec = String.Equals(algorithm, "RSA", StringComparison.OrdinalIgnoreCase)
-                    ? (int)AT_SIGNATURE : 0;
+                bool rsa = String.Equals(algorithm, "RSA", StringComparison.OrdinalIgnoreCase);
+                if ((rsa && legacyKeySpec != (int)AT_SIGNATURE && legacyKeySpec != (int)AT_KEYEXCHANGE) ||
+                    (!rsa && legacyKeySpec != 0)) {
+                    throw new ArgumentOutOfRangeException("legacyKeySpec");
+                }
                 CheckStatus(NCryptCreatePersistedKey(hProvider, out hKey, algorithm, container, legacyKeySpec, 0),
                     "NCryptCreatePersistedKey");
                 if (!String.IsNullOrEmpty(pin)) {
@@ -421,20 +429,28 @@ namespace CanokeyMinidriver {
                     CheckStatus(NCryptSetProperty(hKey, "SmartCardPin", pinBytes, pinBytes.Length, 0),
                         "NCryptSetProperty(SmartCardPin)");
                 }
-                if (String.Equals(algorithm, "RSA", StringComparison.OrdinalIgnoreCase)) {
+                if (rsa) {
                     byte[] length = BitConverter.GetBytes(keySize);
                     CheckStatus(NCryptSetProperty(hKey, "Length", length, length.Length, 0),
                         "NCryptSetProperty(Length)");
                 }
                 CheckStatus(NCryptFinalizeKey(hKey, 0), "NCryptFinalizeKey");
-                return new KeyName {
+                finalized = true;
+                KeyName result = new KeyName {
                     Name = GetCngStringProperty(hKey, "Name"),
                     AlgorithmGroup = GetCngStringProperty(hKey, "Algorithm Group"),
                     LegacyKeySpec = (uint)legacyKeySpec,
                     Flags = 0
                 };
+                completed = true;
+                return result;
             } finally {
-                if (hKey != IntPtr.Zero) NCryptFreeObject(hKey);
+                if (hKey != IntPtr.Zero) {
+                    if (finalized && !completed) {
+                        if (NCryptDeleteKey(hKey, 0) == 0) hKey = IntPtr.Zero;
+                    }
+                    if (hKey != IntPtr.Zero) NCryptFreeObject(hKey);
+                }
                 if (hProvider != IntPtr.Zero) NCryptFreeObject(hProvider);
             }
         }
