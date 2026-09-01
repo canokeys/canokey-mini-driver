@@ -63,6 +63,10 @@ cmake --build out\build\x64-Clang-Debug --target canokey-minidriver-debug-instal
 
 ## Development Hygiene
 
+- English is the project language. Write source comments, documentation,
+  diagnostic text, commit messages, and pull-request content in English.
+  Other languages are allowed only in explicitly identified localization
+  resources.
 - Run `clang-format` on touched C source and header files before committing.
 - The repository has a `.clang-format`; use that style rather than introducing
   local formatting preferences.
