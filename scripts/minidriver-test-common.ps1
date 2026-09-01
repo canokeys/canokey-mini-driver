@@ -953,26 +953,26 @@ function Select-MinidriverTestKeys {
 
     $selectedEccKspContainers = @()
     if ($EccKspContainer) {
-        $selectedEccKspContainers = @($EccKspContainer | ForEach-Object {
-                [pscustomobject]@{
-                    Container = $_
-                    AlgorithmGroup = "ECDSA_P256"
-                    OpenKeySpec = 3
-                }
-            })
+        $selectedEccKspContainers = @($Discovery.EcdsaKspKeys |
+            Where-Object { $EccKspContainer -contains $_.Container })
+        $resolvedNames = @($selectedEccKspContainers | Select-Object -ExpandProperty Container -Unique)
+        $missingNames = @($EccKspContainer | Where-Object { $resolvedNames -notcontains $_ })
+        if ($missingNames.Count -gt 0) {
+            throw "Requested ECDSA container was not discovered: $($missingNames -join ', ')"
+        }
     } else {
         $selectedEccKspContainers = @($Discovery.EcdsaKspKeys)
     }
 
     $selectedEcdhKspContainers = @()
     if ($EcdhKspContainer) {
-        $selectedEcdhKspContainers = @($EcdhKspContainer | ForEach-Object {
-                [pscustomobject]@{
-                    Container = $_
-                    AlgorithmGroup = "ECDH_P256"
-                    OpenKeySpec = 6
-                }
-            })
+        $selectedEcdhKspContainers = @($Discovery.EcdhKspKeys |
+            Where-Object { $EcdhKspContainer -contains $_.Container })
+        $resolvedNames = @($selectedEcdhKspContainers | Select-Object -ExpandProperty Container -Unique)
+        $missingNames = @($EcdhKspContainer | Where-Object { $resolvedNames -notcontains $_ })
+        if ($missingNames.Count -gt 0) {
+            throw "Requested ECDH container was not discovered: $($missingNames -join ', ')"
+        }
     } else {
         $selectedEcdhKspContainers = @($Discovery.EcdhKspKeys)
     }
