@@ -8,98 +8,12 @@
 #include "minidriver.h"
 
 #define CMD_MANAGEMENT_KEY_LEN 24
-#define CMD_PIN_PROTECTED_DATA_MAX_LEN 64
-
-static const CK_BYTE CMD_PRINTED_INFORMATION_TAG[] = {0x5F, 0xC1, 0x09};
 
 static CK_RV login_with_role(CMD_CONTEXT_PTR pContext, CK_USER_TYPE userType, PBYTE loginData, CK_ULONG loginDataLen,
                              BYTE *pPinTries);
 
-static BOOL read_tlv(const BYTE *data, DWORD dataLen, DWORD *pOffset, BYTE expectedTag, const BYTE **ppValue,
-                     DWORD *pValueLen) {
-  if (*pOffset + 2 > dataLen || data[*pOffset] != expectedTag) {
-    return FALSE;
-  }
-
-  DWORD offset = *pOffset + 1;
-  DWORD valueLen = data[offset++];
-  if ((valueLen & 0x80) != 0) {
-    DWORD lengthBytes = valueLen & 0x7F;
-    if (lengthBytes == 0 || lengthBytes > 2 || offset + lengthBytes > dataLen) {
-      return FALSE;
-    }
-    valueLen = 0;
-    for (DWORD i = 0; i < lengthBytes; i++) {
-      valueLen = (valueLen << 8) | data[offset++];
-    }
-  }
-
-  if (valueLen > dataLen - offset) {
-    return FALSE;
-  }
-  *ppValue = data + offset;
-  *pValueLen = valueLen;
-  *pOffset = offset + valueLen;
-  return TRUE;
-}
-
-static BOOL parse_pin_protected_management_key(const BYTE *data, DWORD dataLen,
-                                               BYTE managementKey[CMD_MANAGEMENT_KEY_LEN]) {
-  DWORD offset = 0;
-  const BYTE *outerValue;
-  DWORD outerLen;
-  if (!read_tlv(data, dataLen, &offset, 0x53, &outerValue, &outerLen) || offset != dataLen) {
-    return FALSE;
-  }
-
-  DWORD outerOffset = 0;
-  const BYTE *containerValue;
-  DWORD containerLen;
-  if (!read_tlv(outerValue, outerLen, &outerOffset, 0x88, &containerValue, &containerLen) || outerOffset != outerLen) {
-    return FALSE;
-  }
-
-  DWORD containerOffset = 0;
-  const BYTE *keyValue;
-  DWORD keyLen;
-  if (!read_tlv(containerValue, containerLen, &containerOffset, 0x89, &keyValue, &keyLen) ||
-      containerOffset != containerLen || keyLen != CMD_MANAGEMENT_KEY_LEN) {
-    return FALSE;
-  }
-
-  memcpy(managementKey, keyValue, CMD_MANAGEMENT_KEY_LEN);
-  return TRUE;
-}
-
-static CK_RV find_pin_protected_management_key(CMD_CONTEXT_PTR pContext, BYTE managementKey[CMD_MANAGEMENT_KEY_LEN]) {
-  CK_ULONG dataLen = 0;
-  CK_RV rv = C_CNK_GetPivData(pContext->session, (CK_BYTE_PTR)CMD_PRINTED_INFORMATION_TAG,
-                              sizeof(CMD_PRINTED_INFORMATION_TAG), NULL_PTR, &dataLen);
-  if (rv != CKR_OK) {
-    return rv;
-  }
-  if (dataLen == 0 || dataLen > CMD_PIN_PROTECTED_DATA_MAX_LEN) {
-    return CKR_DATA_INVALID;
-  }
-
-  BYTE data[CMD_PIN_PROTECTED_DATA_MAX_LEN];
-  CK_ULONG bufferLen = sizeof(data);
-  rv = C_CNK_GetPivData(pContext->session, (CK_BYTE_PTR)CMD_PRINTED_INFORMATION_TAG,
-                        sizeof(CMD_PRINTED_INFORMATION_TAG), data, &bufferLen);
-  if (rv == CKR_OK && !parse_pin_protected_management_key(data, (DWORD)bufferLen, managementKey)) {
-    rv = CKR_DATA_INVALID;
-  }
-  SecureZeroMemory(data, sizeof(data));
-  return rv;
-}
-
-static void try_login_pin_protected_management_key(CMD_CONTEXT_PTR pContext) {
-  BYTE managementKey[CMD_MANAGEMENT_KEY_LEN];
-  CK_RV rv = find_pin_protected_management_key(pContext, managementKey);
-  if (rv == CKR_OK) {
-    rv = C_CNK_LoginProtectedManagementKey(pContext->session, managementKey, sizeof(managementKey));
-  }
-  SecureZeroMemory(managementKey, sizeof(managementKey));
+static void try_login_pin_protected_management_key(CMD_CONTEXT_PTR pContext, PBYTE pin, CK_ULONG pinLen) {
+  CK_RV rv = C_CNK_LoginPinManaged(pContext->session, pin, pinLen);
 
   if (rv == CKR_OK || rv == CKR_USER_ALREADY_LOGGED_IN) {
     SET_PIN(pContext->authenticatedPins, ROLE_ADMIN);
@@ -371,7 +285,7 @@ DWORD WINAPI CardAuthenticateEx(__in PCARD_DATA pCardData, __in PIN_ID PinId, __
   if (rv == CKR_USER_ALREADY_LOGGED_IN) {
     SET_PIN(pContext->authenticatedPins, PinId);
     if (PinId == ROLE_USER) {
-      try_login_pin_protected_management_key(pContext);
+      try_login_pin_protected_management_key(pContext, pbPinData, cbPinData);
     }
     CMD_RET_OK;
   }
@@ -392,7 +306,7 @@ DWORD WINAPI CardAuthenticateEx(__in PCARD_DATA pCardData, __in PIN_ID PinId, __
   } else {
     SET_PIN(pContext->authenticatedPins, PinId);
     if (PinId == ROLE_USER) {
-      try_login_pin_protected_management_key(pContext);
+      try_login_pin_protected_management_key(pContext, pbPinData, cbPinData);
     }
     CMD_RET_OK;
   }

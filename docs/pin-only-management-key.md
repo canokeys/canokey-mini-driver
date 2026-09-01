@@ -77,21 +77,20 @@ attribute, `CKA_VALUE`. If `canokey-pkcs11` exposes PIV data objects as
 PKCS#11 data objects, the minidriver can stay out of PC/SC and use
 `C_FindObjects` plus `C_GetAttributeValue` to read the protected data.
 
-## Current Codebase Gap
+## Current Implementation
 
-As of this note, `canokey-pkcs11` exposes PIV certificates, public keys,
-private keys, and session secret keys. `C_FindObjectsInit` does not return
-`CKO_DATA`, and `C_GetAttributeValue` has no object-class-specific handler for
-PIV data objects. Therefore the minidriver cannot yet read `5FC109` through
-standard PKCS#11 calls.
+`canokey-pkcs11` exposes selected PIV data objects as `CKO_DATA` and also
+provides `C_CNK_LoginPinManaged()` for the complete runtime authentication
+flow. The extension verifies the USER PIN, requires the PIN-protected bit in
+ADMIN DATA (`5FFF00`), strictly parses the management key from PRINTED
+(`5FC109`), authenticates and caches it, and clears every temporary buffer.
 
-The minidriver should not work around this by calling `SCardTransmit` directly.
-Doing so would split PIV APDU handling and sensitive-object parsing across two
-layers.
+The minidriver calls this extension after normal USER authentication. It does
+not issue `SCardTransmit`, parse these TLVs, or receive the raw management key.
 
-## Proposed PKCS#11 Work
+## PIV Data Object Behavior
 
-Model selected PIV data objects as `CKO_DATA`, but keep the writable surface
+Selected PIV data objects are modeled as `CKO_DATA`, with the writable surface
 intentionally narrow. This is not meant to become a fully mutable generic PIV
 object store.
 
@@ -123,29 +122,18 @@ token objects, including `CKO_DATA`. This matches the current direction of
 YKCS11 more closely than pretending PIV objects are generally mutable PKCS#11
 objects.
 
-## Proposed Minidriver Work
+## Minidriver Runtime Flow
 
 After `CardAuthenticateEx(ROLE_USER)` succeeds:
 
-1. Try to find a `CKO_DATA` object for PRINTED tag `5FC109`.
-2. Read `CKA_VALUE` with `C_GetAttributeValue`.
-3. Parse the Yubico-compatible TLV payload.
-4. If a valid 24-byte management key is present, call `C_CNK_Login` with
-   `CKU_SO` to authenticate the management key.
-5. Mark `ROLE_ADMIN` authenticated only after `CKU_SO` succeeds.
+1. Authenticate `ROLE_USER` through `C_CNK_Login` so Windows receives the PIN
+   retry count expected by the minidriver contract.
+2. Call `C_CNK_LoginPinManaged` with the same session and PIN.
+3. Mark `ROLE_ADMIN` authenticated only when the extension succeeds.
 
-Because PKCS#11 does not allow one session to be simultaneously logged in as
-both user and SO, the exact login transition needs care. The current minidriver
-has one PKCS#11 RW session per `CARD_DATA` context and already switches roles
-by logging out the previous user type when `CKR_USER_ANOTHER_ALREADY_LOGGED_IN`
-is returned. A practical first version can read the PIN-protected object while
-`ROLE_USER` is active, cache the recovered key only long enough to authenticate
-`CKU_SO`, then zero it. After switching to SO, do not assume the PIV user PIN is
-still verified.
-
-The helper should be best-effort. If the PIN-protected object is missing,
-malformed, or does not contain a supported management key, the minidriver
-should fall back to the current explicit `ROLE_ADMIN`/management-key path.
+The extension is used as a best-effort bridge. If the PIN-protected object is
+missing, malformed, or does not contain a supported management key, the
+minidriver falls back to the explicit `ROLE_ADMIN`/management-key path.
 
 ## Provisioning Notes
 

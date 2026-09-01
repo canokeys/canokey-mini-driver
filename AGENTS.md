@@ -300,15 +300,12 @@ EC keys in those slots       -> also ECDH-capable
   required`; it authenticates `ROLE_USER`, writes `cardcf`/`cmapfile`, and then
   calls `CardCreateContainer`. Use an explicit provisioning/debug path for
   management-key authentication.
-- YubiKey-style "protect management key with PIN" is the likely production
-  bridge for Windows enrollment: after the normal user PIN prompt, the
-  minidriver can recover an on-card PIN-protected management key and use it for
-  PIV management operations. Without an equivalent CanoKey mechanism, keep any
-  registry-stored management key limited to development/debug workflows.
-  Read `docs/pin-only-management-key.md` before implementing this path. The
-  preferred boundary is that `canokey-pkcs11` exposes PIN-protected PIV data
-  objects through PKCS#11 or a narrow extension; the minidriver should not issue
-  raw PC/SC APDUs.
+- YubiKey-style PIN-protected management-key login is implemented through
+  `C_CNK_LoginPinManaged()`. After normal USER authentication, the minidriver
+  calls that narrow extension; `canokey-pkcs11` validates ADMIN DATA, reads and
+  parses PRINTED, verifies the management key, and clears temporary sensitive
+  buffers. Keep TLV parsing and raw management-key material out of the
+  minidriver, and do not issue raw PC/SC APDUs from this path.
 - Certificate files (`kscN`/`kxcN`) must remain Windows-friendly for
   enumeration: report `EveryoneReadUserWriteAc` for file info. The actual PIV
   certificate write is still a management operation, so require `ROLE_ADMIN`

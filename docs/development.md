@@ -293,10 +293,12 @@ The KSP authenticates `ROLE_USER`, chooses the next container from
 `mscp/cmapfile`, and then calls `CardCreateContainer*`; it does not separately
 request `ROLE_ADMIN`. CanoKey bridges this with the PIN-protected management
 key stored in the PIV printed-information object. After successful user PIN
-authentication, the minidriver reads that protected object through PKCS#11,
-verifies and caches the management key in the same session, and marks both USER
-and ADMIN authenticated. Normal KSP enrollment can then generate or import the
-PIV key without a registry secret or a separate provisioning login.
+authentication, the minidriver calls `C_CNK_LoginPinManaged()`. The PKCS#11
+layer validates ADMIN DATA, reads the protected object, verifies and caches the
+management key in the same token state, and clears its temporary buffers. The
+minidriver then marks both USER and ADMIN authenticated. Normal KSP enrollment
+can generate or import the PIV key without a registry secret or a separate
+provisioning login.
 
 `CardCreateContainerEx` accepts RSA CAPI `PRIVATEKEYBLOB` imports and CNG
 `BCRYPT_ECCPRIVATE_BLOB` imports for P-256/P-384. The focused direct test is
