@@ -3,6 +3,9 @@
 Windows smart card minidriver for CanoKey, built on top of
 [`canokey-pkcs11`](external/canokey-pkcs11).
 
+See [docs/architecture.md](docs/architecture.md) for module boundaries, state
+ownership, slot policy, and the Windows-to-PIV request flow.
+
 **Status:** this project is still WIP, but the development loop is usable.
 Windows can load the DLL through a Calais smart card registry mapping without
 installing the generated INF. Current local testing can enumerate the CanoKey

@@ -8,21 +8,12 @@
 
 #define CMD_ROLE_PUK 3
 
-// Global function pointers for data caching mechanisms
-extern PFN_CSP_CACHE_ADD_FILE g_pfnCspCacheAddFile;
-extern PFN_CSP_CACHE_LOOKUP_FILE g_pfnCspCacheLookupFile;
-extern PFN_CSP_CACHE_DELETE_FILE g_pfnCspCacheDeleteFile;
-
 // Global function pointers for memory management
 extern PFN_CSP_ALLOC g_pfnCspAlloc;
-extern PFN_CSP_REALLOC g_pfnCspReAlloc;
 extern PFN_CSP_FREE g_pfnCspFree;
 
 // Global function pointer for padding
 extern PFN_CSP_PAD_DATA g_pfnCspPadData;
-
-// Global function pointer for padding removal
-extern PFN_CSP_UNPAD_DATA g_pfnCspUnpadData;
 
 #define INJECT_HANDLES()                                                                                               \
   do {                                                                                                                 \
@@ -62,5 +53,6 @@ typedef CMD_CONTEXT *CMD_CONTEXT_PTR;
 DWORD FillCardKeySizes(DWORD dwKeySpec, PCARD_KEY_SIZES pKeySizes);
 void FillCardFreeSpaceInfo(PCARD_FREE_SPACE_INFO pCardFreeSpaceInfo);
 DWORD GenerateCardIdentifier(CMD_CONTEXT_PTR pContext);
+DWORD RefreshCardMetadata(CMD_CONTEXT_PTR pContext);
 
 #endif // MINIDRIVER_H

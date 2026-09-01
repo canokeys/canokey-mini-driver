@@ -136,8 +136,6 @@ static BYTE GetFileContainerIndex(LPCSTR pszFileName) {
   return (BYTE)value;
 }
 
-static CK_BYTE ContainerIndexToObjectId(BYTE containerIndex) { return (CK_BYTE)(containerIndex + 1); }
-
 static BOOL IsCertificateFileName(LPCSTR pszFileName) {
   return strncmp(pszFileName, szUSER_KEYEXCHANGE_CERT_PREFIX, 3) == 0 ||
          strncmp(pszFileName, szUSER_SIGNATURE_CERT_PREFIX, 3) == 0;
@@ -177,7 +175,7 @@ static DWORD GetCertificateFileSlot(CMD_CONTEXT_PTR pContext, LPCSTR pszFileName
   CMD_RET_OK;
 }
 
-static DWORD RefreshCardMetadata(CMD_CONTEXT_PTR pContext) {
+DWORD RefreshCardMetadata(CMD_CONTEXT_PTR pContext) {
   CK_RV rv = read_canokey(pContext->session, &pContext->canokey);
   if (rv != CKR_OK) {
     CMD_RETURN(map_pkcs11_write_error(rv), "Failed to refresh CanoKey metadata");
@@ -338,7 +336,7 @@ DWORD WINAPI CardWriteFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
 
   CK_OBJECT_CLASS objectClass = CKO_CERTIFICATE;
   CK_CERTIFICATE_TYPE certType = CKC_X_509;
-  CK_BYTE objectId = slot->id != 0 ? slot->id : ContainerIndexToObjectId(GetFileContainerIndex(pszFileName));
+  CK_BYTE objectId = slot->id != 0 ? slot->id : canokey_container_object_id(GetFileContainerIndex(pszFileName));
   CK_BBOOL token = CK_TRUE;
   CK_OBJECT_HANDLE objectHandle = CK_INVALID_HANDLE;
   CK_ATTRIBUTE templ[] = {

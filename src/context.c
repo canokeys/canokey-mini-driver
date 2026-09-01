@@ -40,21 +40,12 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_GEN_NO_IMPL_FUNC);
 #undef CMD_GEN_NO_IMPL_FUNC
 // clang-format on
 
-// Global function pointers for data caching mechanisms
-PFN_CSP_CACHE_ADD_FILE g_pfnCspCacheAddFile = NULL;
-PFN_CSP_CACHE_LOOKUP_FILE g_pfnCspCacheLookupFile = NULL;
-PFN_CSP_CACHE_DELETE_FILE g_pfnCspCacheDeleteFile = NULL;
-
 // Global function pointers for memory management
 PFN_CSP_ALLOC g_pfnCspAlloc = NULL;
-PFN_CSP_REALLOC g_pfnCspReAlloc = NULL;
 PFN_CSP_FREE g_pfnCspFree = NULL;
 
 // Global function pointer for padding
 PFN_CSP_PAD_DATA g_pfnCspPadData = NULL;
-
-// Global function pointer for padding removal
-PFN_CSP_UNPAD_DATA g_pfnCspUnpadData = NULL;
 
 /*
  * Function: CardAcquireContext
@@ -93,23 +84,12 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
 
   // TODO: check pbAtr content
 
-  // Import the data caching functions
-  g_pfnCspCacheAddFile = pCardData->pfnCspCacheAddFile;
-  g_pfnCspCacheLookupFile = pCardData->pfnCspCacheLookupFile;
-  g_pfnCspCacheDeleteFile = pCardData->pfnCspCacheDeleteFile;
-
   // Import the memory management functions
   g_pfnCspAlloc = pCardData->pfnCspAlloc;
-  g_pfnCspReAlloc = pCardData->pfnCspReAlloc;
   g_pfnCspFree = pCardData->pfnCspFree;
 
   // Import the padding function
   g_pfnCspPadData = pCardData->pfnCspPadData;
-
-  // Import the padding removal function
-  if (pCardData->dwVersion >= CARD_DATA_VERSION_SEVEN) {
-    g_pfnCspUnpadData = pCardData->pfnCspUnpadData;
-  }
 
   // Set function pointers in pCardData
   pCardData->pfnCardDeleteContext = CardDeleteContext;             // Yes

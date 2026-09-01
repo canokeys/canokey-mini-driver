@@ -70,6 +70,8 @@ cmake --build out\build\x64-Clang-Debug --target canokey-minidriver-debug-instal
   PKCS#11 ownership, sensitive-data lifetime, cache synchronization, two-stage
   buffer semantics, endianness, and PIV slot-policy decisions. Do not add
   comments that merely narrate straightforward statements.
+- Update `docs/architecture.md` when changing module ownership, slot policy,
+  managed-mode lifetime, or Windows/PKCS#11 responsibility boundaries.
 - The VS bundled formatter is usually available at:
 
 ```text

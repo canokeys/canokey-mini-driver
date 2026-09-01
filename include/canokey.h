@@ -50,6 +50,7 @@ CK_BBOOL canokey_slot_has_key(const SLOT *slot);
 CK_BBOOL canokey_slot_can_sign(const SLOT *slot);
 CK_BBOOL canokey_slot_can_decrypt(const SLOT *slot);
 CK_BBOOL canokey_slot_can_derive(const SLOT *slot);
+CK_BYTE canokey_container_object_id(CK_BYTE containerIndex);
 void reverse_bytes(CK_BYTE *data, CK_ULONG len);
 
 #endif // CANOKEY_H

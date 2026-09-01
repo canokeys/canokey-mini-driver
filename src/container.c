@@ -41,11 +41,9 @@ static DWORD map_pkcs11_container_error(CK_RV rv) {
   }
 }
 
-static CK_BYTE container_index_to_object_id(BYTE bContainerIndex) { return (CK_BYTE)(bContainerIndex + 1); }
-
 static BOOL container_index_is_piv_9d(BYTE bContainerIndex) {
   CK_BYTE pivTag = 0;
-  return C_CNK_ObjIdToPivTag(container_index_to_object_id(bContainerIndex), &pivTag) == CKR_OK && pivTag == 0x9D;
+  return C_CNK_ObjIdToPivTag(canokey_container_object_id(bContainerIndex), &pivTag) == CKR_OK && pivTag == 0x9D;
 }
 
 static DWORD validate_create_container_request(BYTE bContainerIndex, DWORD dwFlags, DWORD dwKeySpec, DWORD dwKeySize,
@@ -96,14 +94,6 @@ static DWORD validate_create_container_request(BYTE bContainerIndex, DWORD dwFla
   }
 }
 
-static DWORD refresh_container_metadata(CMD_CONTEXT_PTR pContext) {
-  CK_RV rv = read_canokey(pContext->session, &pContext->canokey);
-  if (rv != CKR_OK) {
-    CMD_RETURN(map_pkcs11_container_error(rv), "Failed to refresh CanoKey metadata");
-  }
-  return GenerateCardIdentifier(pContext);
-}
-
 static DWORD ec_params_for_key_spec(DWORD dwKeySpec, const CK_BYTE **ppParams, CK_ULONG *pParamsLen) {
   static const CK_BYTE p256[] = {0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07};
   static const CK_BYTE p384[] = {0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x22};
@@ -130,7 +120,7 @@ static DWORD ec_params_for_key_spec(DWORD dwKeySpec, const CK_BYTE **ppParams, C
 static DWORD create_keypair(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWORD dwKeySpec, DWORD dwKeySize) {
   CK_OBJECT_CLASS publicClass = CKO_PUBLIC_KEY;
   CK_OBJECT_CLASS privateClass = CKO_PRIVATE_KEY;
-  CK_BYTE objectId = container_index_to_object_id(bContainerIndex);
+  CK_BYTE objectId = canokey_container_object_id(bContainerIndex);
   CK_BBOOL token = CK_TRUE;
   CK_BBOOL privateKey = CK_TRUE;
   CK_BYTE pinPolicy = 0;
@@ -181,7 +171,7 @@ static DWORD create_keypair(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWOR
     CMD_RETURN(map_pkcs11_container_error(rv), "C_GenerateKeyPair failed");
   }
 
-  return refresh_container_metadata(pContext);
+  return RefreshCardMetadata(pContext);
 }
 
 static void reverse_copy(CK_BYTE *destination, const CK_BYTE *source, CK_ULONG length) {
@@ -274,7 +264,7 @@ static DWORD import_rsa_key(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWOR
 
   CK_OBJECT_CLASS objectClass = CKO_PRIVATE_KEY;
   CK_KEY_TYPE keyType = CKK_RSA;
-  CK_BYTE objectId = container_index_to_object_id(bContainerIndex);
+  CK_BYTE objectId = canokey_container_object_id(bContainerIndex);
   CK_BBOOL token = CK_TRUE;
   CK_BBOOL privateKey = CK_TRUE;
   CK_BYTE pinPolicy = 0;
@@ -299,7 +289,7 @@ static DWORD import_rsa_key(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWOR
   if (rv != CKR_OK) {
     CMD_RETURN(map_pkcs11_container_error(rv), "C_CreateObject RSA import failed");
   }
-  return refresh_container_metadata(pContext);
+  return RefreshCardMetadata(pContext);
 }
 
 static DWORD ecc_private_magic_for_key_spec(DWORD dwKeySpec, ULONG *pMagic, ULONG *pKeyBytes) {
@@ -361,7 +351,7 @@ static DWORD import_ec_key(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWORD
 
   CK_OBJECT_CLASS objectClass = CKO_PRIVATE_KEY;
   CK_KEY_TYPE keyType = CKK_EC;
-  CK_BYTE objectId = container_index_to_object_id(bContainerIndex);
+  CK_BYTE objectId = canokey_container_object_id(bContainerIndex);
   CK_BBOOL token = CK_TRUE;
   CK_BBOOL privateKey = CK_TRUE;
   CK_BYTE pinPolicy = 0;
@@ -383,7 +373,7 @@ static DWORD import_ec_key(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWORD
   if (rv != CKR_OK) {
     CMD_RETURN(map_pkcs11_container_error(rv), "C_CreateObject EC import failed");
   }
-  return refresh_container_metadata(pContext);
+  return RefreshCardMetadata(pContext);
 }
 
 static DWORD import_key(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWORD dwKeySpec, DWORD dwKeySize,

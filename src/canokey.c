@@ -43,6 +43,8 @@ CK_BBOOL canokey_slot_can_derive(const SLOT *slot) {
 
 CK_BBOOL canokey_slot_has_key(const SLOT *slot) { return slot != NULL && slot->present; }
 
+CK_BYTE canokey_container_object_id(CK_BYTE containerIndex) { return (CK_BYTE)(containerIndex + 1); }
+
 static CK_BBOOL is_supported_ec_coordinate_len(CK_ULONG coordinate_len) {
   switch (coordinate_len) {
   case 32:
