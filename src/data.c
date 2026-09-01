@@ -288,6 +288,9 @@ DWORD WINAPI CardCreateFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirecto
   if (cbInitialCreationSize == 0) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid initial file size");
   }
+  if (cbInitialCreationSize > sizeof(((SLOT *)0)->cert)) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Certificate file is too large");
+  }
 
   SLOT *slot = NULL;
   DWORD ret = GetCertificateFileSlot(pContext, pszFileName, TRUE, &slot);
@@ -345,6 +348,9 @@ DWORD WINAPI CardWriteFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
   DWORD ret = GetCertificateFileSlot(pContext, pszFileName, TRUE, &slot);
   if (ret != SCARD_S_SUCCESS) {
     return ret;
+  }
+  if (cbData > sizeof(slot->cert)) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Certificate data is too large");
   }
   if (!IS_PIN_SET(pContext->authenticatedPins, ROLE_ADMIN)) {
     CMD_RETURN(SCARD_W_SECURITY_VIOLATION, "Certificate writes require admin authentication");
