@@ -303,9 +303,11 @@ operation.
 ### 6.1 Container Discovery
 
 The minidriver reads the live PIV metadata directory through PKCS#11 and builds
-24 stable `SLOT` records. Metadata determines key presence, algorithm,
-public key, certificate presence, PIN policy, touch policy, and operation
-capabilities.
+six stable Windows `SLOT` records for container indexes `0..5`. The PKCS#11
+backend may discover all 24 PIV object IDs, but unsupported or unmapped slots
+remain outside the Windows interface. Metadata determines key presence,
+algorithm, public key, certificate presence, PIN policy, touch policy, and
+operation capabilities.
 
 Firmware 5.7 and newer may provide the fast metadata-directory extension.
 Older supported firmware falls back to individual metadata reads. Version and
