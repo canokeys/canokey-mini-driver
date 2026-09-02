@@ -15,6 +15,21 @@ Base CSP / Smart Card KSP
   -> PIV APDU on the Windows-owned card handle
 ```
 
+The PC/SC transaction boundary is the lifetime of one actual card-backed
+operation, not the lifetime of `CMD_CONTEXT` or a PKCS#11 session. The backend
+begins a reader transaction, selects PIV, sends every dependent APDU (including
+PIN verification and command chaining), then ends the transaction. Host-only
+entry points such as context/session creation and operation initialization do
+not keep a reader transaction open. A second context may request another PIV
+operation concurrently; PC/SC serializes the physical transactions while
+PKCS#11 still protects token-wide authorization and session operation state.
+
+The PIV standard permits a same-AID reselect to preserve security status, but
+the current CanoKey firmware resets PIN/PUK/management status in `piv_select()`.
+The minidriver must therefore treat every PIV SELECT as an authorization reset:
+SELECT, then VERIFY, then all dependent PIV APDUs without another SELECT or
+applet switch.
+
 `CardDeleteContext` closes the PKCS#11 session before finalization. Reversing
 that order can leak card sessions or exhaust the firmware session table.
 
