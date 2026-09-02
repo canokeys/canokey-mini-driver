@@ -255,9 +255,11 @@ DWORD WINAPI CardGetContainerProperty(__in PCARD_DATA pCardData, __in BYTE bCont
   if (cbData != 0) {
     CMD_NONNULL_PARAM(pbData);
   }
-  (void)bContainerIndex;
-
   INJECT_HANDLES();
+  CMD_GET_CTX(pCardData, pContext);
+  if (bContainerIndex >= pContext->canokey.slotCount) {
+    CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
+  }
 
   CMD_CHECK_DW_FLAGS;
   if (wcscmp(wszProperty, CCP_PIN_IDENTIFIER) == 0) {

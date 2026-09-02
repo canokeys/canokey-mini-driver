@@ -475,6 +475,10 @@ DWORD WINAPI CardCreateContainer(__in PCARD_DATA pCardData, __in BYTE bContainer
   INJECT_HANDLES();
   CMD_GET_CTX(pCardData, pContext);
 
+  if (!IS_PIN_SET(pContext->authenticatedPins, ROLE_USER)) {
+    CMD_RETURN(SCARD_W_SECURITY_VIOLATION, "Container creation requires user authentication");
+  }
+
   DWORD ret = validate_create_container_request(bContainerIndex, dwFlags, dwKeySpec, dwKeySize, pbKeyData);
   if (ret != SCARD_S_SUCCESS) {
     return ret;

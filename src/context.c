@@ -47,6 +47,17 @@ PFN_CSP_FREE g_pfnCspFree = NULL;
 // Global function pointer for padding
 PFN_CSP_PAD_DATA g_pfnCspPadData = NULL;
 
+static void cleanup_failed_acquire(CK_SESSION_HANDLE session, BOOL sessionOpen) {
+  if (sessionOpen) {
+    CK_RV closeRv = C_CloseSession(session);
+    if (closeRv != CKR_OK && closeRv != CKR_SESSION_HANDLE_INVALID && closeRv != CKR_CRYPTOKI_NOT_INITIALIZED)
+      CMD_WARN("C_CloseSession during acquire cleanup failed: 0x%lx", closeRv);
+  }
+  CK_RV finalizeRv = C_Finalize(NULL);
+  if (finalizeRv != CKR_OK && finalizeRv != CKR_CRYPTOKI_NOT_INITIALIZED)
+    CMD_WARN("C_Finalize during acquire cleanup failed: 0x%lx", finalizeRv);
+}
+
 /*
  * Function: CardAcquireContext
  *
@@ -186,7 +197,7 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
   }
   CMD_CONTEXT_PTR context = g_pfnCspAlloc(sizeof(CMD_CONTEXT));
   if (context == NULL) {
-    C_Finalize(NULL);
+    cleanup_failed_acquire(CK_INVALID_HANDLE, FALSE);
     CMD_RETURN(SCARD_E_NO_MEMORY, "cannot allocate context");
   }
   memset(context, 0, sizeof(*context));
@@ -194,23 +205,21 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
   ret = C_OpenSession(0, CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, &context->session);
   if (ret != CKR_OK) {
     g_pfnCspFree(context);
-    C_Finalize(NULL);
+    cleanup_failed_acquire(CK_INVALID_HANDLE, FALSE);
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot open session");
   }
 
   ret = read_canokey(context->session, &context->canokey);
   if (ret != CKR_OK) {
-    C_CloseSession(context->session);
+    cleanup_failed_acquire(context->session, TRUE);
     g_pfnCspFree(context);
-    C_Finalize(NULL);
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot read canokey");
   }
 
   DWORD dwRet = GenerateCardIdentifier(context);
   if (dwRet != SCARD_S_SUCCESS) {
-    C_CloseSession(context->session);
+    cleanup_failed_acquire(context->session, TRUE);
     g_pfnCspFree(context);
-    C_Finalize(NULL);
     CMD_RETURN(dwRet, "cannot generate card identifier");
   }
 
@@ -226,15 +235,16 @@ DWORD CardDeleteContext(__inout PCARD_DATA pCardData) {
     CK_RV rv = C_CloseSession(context->session);
     if (rv != CKR_OK && rv != CKR_SESSION_HANDLE_INVALID && rv != CKR_CRYPTOKI_NOT_INITIALIZED) {
       CMD_WARN("C_CloseSession failed: 0x%lx", rv);
+      CMD_RETURN(SCARD_F_INTERNAL_ERROR, "C_CloseSession failed");
+    }
+    rv = C_Finalize(NULL);
+    if (rv != CKR_OK && rv != CKR_CRYPTOKI_NOT_INITIALIZED) {
+      CMD_WARN("C_Finalize failed: 0x%lx", rv);
+      CMD_RETURN(SCARD_F_INTERNAL_ERROR, "C_Finalize failed");
     }
     SecureZeroMemory(context->dhAgreements, sizeof(context->dhAgreements));
     pCardData->pfnCspFree(context);
     pCardData->pvVendorSpecific = NULL;
-
-    rv = C_Finalize(NULL);
-    if (rv != CKR_OK && rv != CKR_CRYPTOKI_NOT_INITIALIZED) {
-      CMD_WARN("C_Finalize failed: 0x%lx", rv);
-    }
   }
   CMD_RET_OK;
 }

@@ -333,7 +333,9 @@ DWORD WINAPI CardConstructDHAgreement(__in PCARD_DATA pCardData, __inout PCARD_D
   BYTE agreementIndex;
   ret = find_free_dh_agreement(pContext, &agreementIndex);
   if (ret != SCARD_S_SUCCESS) {
-    (void)C_DestroyObject(pContext->session, hSecret);
+    CK_RV destroyRv = C_DestroyObject(pContext->session, hSecret);
+    if (destroyRv != CKR_OK)
+      CMD_WARN("C_DestroyObject for ECDH secret failed: 0x%lx", destroyRv);
     CMD_RETURN(ret, "No free DH agreement slot");
   }
 
@@ -341,7 +343,11 @@ DWORD WINAPI CardConstructDHAgreement(__in PCARD_DATA pCardData, __inout PCARD_D
   clear_dh_agreement(agreement);
   CK_ATTRIBUTE valueAttr = {CKA_VALUE, agreement->secret, sizeof(agreement->secret)};
   rv = C_GetAttributeValue(pContext->session, hSecret, &valueAttr, 1);
-  (void)C_DestroyObject(pContext->session, hSecret);
+  CK_RV destroyRv = C_DestroyObject(pContext->session, hSecret);
+  if (destroyRv != CKR_OK) {
+    clear_dh_agreement(agreement);
+    CMD_RETURN(map_pkcs11_crypto_error(destroyRv), "C_DestroyObject for ECDH secret failed");
+  }
   if (rv != CKR_OK) {
     clear_dh_agreement(agreement);
     CMD_RETURN(map_pkcs11_crypto_error(rv), "C_GetAttributeValue for ECDH secret failed");

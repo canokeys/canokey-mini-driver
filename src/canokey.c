@@ -221,7 +221,9 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
     rv = C_FindObjects(session, &hObject, 1, &ulObjectCount);
     if (rv != CKR_OK)
       CMD_RETURN(rv, "C_FindObjects failed");
-    C_FindObjectsFinal(session);
+    rv = C_FindObjectsFinal(session);
+    if (rv != CKR_OK)
+      CMD_RETURN(rv, "C_FindObjectsFinal failed");
     if ((slot->capabilities & (CANOKEY_SLOT_CAP_SIGN | CANOKEY_SLOT_CAP_DECRYPT | CANOKEY_SLOT_CAP_DERIVE)) == 0) {
       CMD_DEBUG("Slot %d: PIV 0x%02x has no minidriver capability, skipping", i, slot->pivId);
       continue;
@@ -284,7 +286,9 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
     rv = C_FindObjects(session, &hObject, 1, &ulObjectCount);
     if (rv != CKR_OK)
       CMD_RETURN(rv, "C_FindObjects failed");
-    C_FindObjectsFinal(session);
+    rv = C_FindObjectsFinal(session);
+    if (rv != CKR_OK)
+      CMD_RETURN(rv, "C_FindObjectsFinal failed");
     if (ulObjectCount == 0) {
       CMD_DEBUG("No certificate found for slot %d", i);
     } else {
