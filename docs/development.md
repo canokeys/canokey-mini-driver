@@ -141,7 +141,8 @@ The minidriver exposes three PIN identifiers to Windows:
 - `ROLE_USER`: the PIV user PIN. It can be authenticated, changed with the
   current PIN, and unblocked/reset with the PIV PUK.
 - `ROLE_ADMIN`: the PIV management key. It can be authenticated explicitly for
-  development/provisioning flows, but cannot be changed through Windows PIN
+  certificate and other management flows, but key-container generation/import
+  remains a `ROLE_USER` operation and it cannot be changed through Windows PIN
   APIs.
 - `CMD_ROLE_PUK`: the PIV PUK. It is an unblock-only secret advertised through
   `CP_CARD_PIN_INFO`; it is not a login role and cannot be changed through the

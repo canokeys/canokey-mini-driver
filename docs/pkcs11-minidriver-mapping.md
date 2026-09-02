@@ -55,7 +55,7 @@ Each `CMD_CONTEXT` owns one PKCS#11 session:
 
 ```text
 CardAcquireContext
-  -> C_CNK_InitializeManaged
+  -> C_CNK_EnableManagedMode
   -> C_Initialize
   -> C_OpenSession
 
@@ -100,6 +100,7 @@ C_Login / C_Logout
 C_SetPIN
 C_CNK_Login
 C_CNK_LoginPinManaged
+C_CNK_UnblockPIN
 ```
 
 `C_CNK_LoginPinManaged` is a narrow CanoKey extension. After successful user
@@ -251,8 +252,9 @@ Higher-level CNG KDF parameter lists are not implemented. PKCS#11 receives
 
 Private-key blobs are parsed strictly and validated with the Windows software
 crypto provider before the token is mutated. Generation and import require
-management authentication, either explicit or recovered through the
-PIN-protected management-key path.
+`ROLE_USER` authentication. The PKCS#11 backend may additionally use the
+PIN-protected management-key cache for the card-side write, but Windows never
+passes a raw management key to this API.
 
 Certificate writes are accepted through `CardWriteFile` for `kscN` and `kxcN`
 after admin authentication. The live metadata inventory is refreshed after key

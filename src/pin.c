@@ -109,7 +109,7 @@ static DWORD change_user_pin(CMD_CONTEXT_PTR pContext, PBYTE pbOldPin, DWORD cbO
 
   BYTE pinTries = 0;
   rv = login_with_role(pContext, CKU_USER, pbNewPin, cbNewPin, &pinTries);
-  if (rv != CKR_OK && rv != CKR_USER_ALREADY_LOGGED_IN) {
+  if (rv != CKR_OK) {
     CMD_RETURN(map_pkcs11_login_error(rv, pinTries), "C_CNK_Login after C_SetPIN failed");
   }
   maybe_set_attempts_remaining(pcAttemptsRemaining, pinTries);
@@ -186,7 +186,10 @@ static DWORD decode_management_key(PBYTE pbPinData, DWORD cbPinData, BYTE manage
 static CK_RV login_with_role(CMD_CONTEXT_PTR pContext, CK_USER_TYPE userType, PBYTE loginData, CK_ULONG loginDataLen,
                              BYTE *pPinTries) {
   CK_RV rv = C_CNK_Login(pContext->session, userType, loginData, loginDataLen, pPinTries);
-  if (rv != CKR_USER_ANOTHER_ALREADY_LOGGED_IN) {
+  // An already-logged-in result does not validate the supplied credential.
+  // Log out and retry so callers cannot turn a stale role bit into successful
+  // authentication with an arbitrary PIN or management key.
+  if (rv != CKR_USER_ANOTHER_ALREADY_LOGGED_IN && rv != CKR_USER_ALREADY_LOGGED_IN) {
     return rv;
   }
 
@@ -288,13 +291,8 @@ DWORD WINAPI CardAuthenticateEx(__in PCARD_DATA pCardData, __in PIN_ID PinId, __
     CMD_DEBUG("Remaining pinTries: %d", pinTries);
   }
 
-  if (rv == CKR_USER_ALREADY_LOGGED_IN) {
-    SET_PIN(pContext->authenticatedPins, PinId);
-    if (PinId == ROLE_USER) {
-      try_login_pin_protected_management_key(pContext, pbPinData, cbPinData);
-    }
-    CMD_RET_OK;
-  }
+  if (rv == CKR_USER_ALREADY_LOGGED_IN)
+    CMD_RETURN(SCARD_W_SECURITY_VIOLATION, "Credential could not be revalidated");
   if (rv == CKR_USER_ANOTHER_ALREADY_LOGGED_IN) {
     CMD_RETURN(SCARD_W_SECURITY_VIOLATION, "Another user type is already logged in");
   }

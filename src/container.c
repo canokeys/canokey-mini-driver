@@ -475,8 +475,8 @@ DWORD WINAPI CardCreateContainer(__in PCARD_DATA pCardData, __in BYTE bContainer
   INJECT_HANDLES();
   CMD_GET_CTX(pCardData, pContext);
 
-  if (!IS_PIN_SET(pContext->authenticatedPins, ROLE_USER) && !IS_PIN_SET(pContext->authenticatedPins, ROLE_ADMIN)) {
-    CMD_RETURN(SCARD_W_SECURITY_VIOLATION, "Container creation requires user or administrator authentication");
+  if (!IS_PIN_SET(pContext->authenticatedPins, ROLE_USER)) {
+    CMD_RETURN(SCARD_W_SECURITY_VIOLATION, "Container creation requires user authentication");
   }
 
   DWORD ret = validate_create_container_request(bContainerIndex, dwFlags, dwKeySpec, dwKeySize, pbKeyData);
@@ -497,9 +497,8 @@ DWORD WINAPI CardCreateContainerEx(__in PCARD_DATA pCardData, __in BYTE bContain
   CMD_LOG_FUNC("pCardData %p, bContainerIndex %d, dwFlags %x, dwKeySpec %x, dwKeySize %d, pbKeyData %p, PinId %d",
                pCardData, bContainerIndex, dwFlags, dwKeySpec, dwKeySize, pbKeyData, PinId);
 
-  if (PinId != ROLE_USER && PinId != ROLE_ADMIN) {
-    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid PinId");
-  }
+  if (PinId != ROLE_USER)
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Container creation requires ROLE_USER");
 
   return CardCreateContainer(pCardData, bContainerIndex, dwFlags, dwKeySpec, dwKeySize, pbKeyData);
 }
@@ -525,7 +524,7 @@ DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContaine
 
   CMD_GET_CTX(pCardData, pContext);
 
-  if (bContainerIndex >= pContext->canokey.slotCount ||
+  if (bContainerIndex >= WINDOWS_CONTAINER_COUNT || bContainerIndex >= pContext->canokey.slotCount ||
       !canokey_slot_has_key(&pContext->canokey.slots[bContainerIndex])) {
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
   }

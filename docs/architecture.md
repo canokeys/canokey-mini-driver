@@ -52,7 +52,9 @@ different PC/SC handle or CSP allocator is rejected rather than allowed to
 overwrite the active binding; true multi-card in-process support requires a
 future per-context PKCS#11 backend boundary.
 
-The minidriver accepts only NIST P-256, P-384, and P-521 EC parameters. It
+Container creation and import require `ROLE_USER`; administrator-only
+container creation is rejected even when a management key is cached. The
+minidriver accepts only NIST P-256, P-384, and P-521 EC parameters. It
 matches the complete DER `CKA_EC_PARAMS` value before constructing a CNG blob;
 coordinate length is not a curve identifier. This keeps secp256k1 and SM2
 PKCS#11 objects out of Windows instead of incorrectly labeling them P-256.

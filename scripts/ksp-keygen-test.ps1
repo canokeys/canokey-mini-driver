@@ -44,8 +44,8 @@ $key = [CanokeyMinidriver.SignTestNative]::CreateCngKey(
 $expectedGroup = if ($Algorithm -eq "RSA") { "RSA" } else { "ECDSA" }
 $newKeys = @([CanokeyMinidriver.SignTestNative]::EnumCngKeys() |
     Where-Object { $beforeContainers -notcontains $_.Name -and $_.AlgorithmGroup -match $expectedGroup })
-$actualContainer = if ($newKeys.Count -gt 0) { $newKeys[0].Name } else { $key.Name }
-$actualGroup = if ($newKeys.Count -gt 0) { $newKeys[0].AlgorithmGroup } else { $key.AlgorithmGroup }
+$actualContainer = $key.Name
+$actualGroup = $key.AlgorithmGroup
 
 $openKeySpec = if ($Algorithm -eq "RSA") {
     $key.LegacyKeySpec

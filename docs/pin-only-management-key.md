@@ -136,7 +136,9 @@ After `CardAuthenticateEx(ROLE_USER)` succeeds:
 
 The extension is used as a best-effort bridge. If the PIN-protected object is
 missing, malformed, or does not contain a supported management key, the
-minidriver falls back to the explicit `ROLE_ADMIN`/management-key path.
+minidriver keeps the ordinary USER role; an explicit `ROLE_ADMIN` path remains
+available for management operations that accept it. Windows key-container
+generation and import still require `ROLE_USER`.
 
 ## Provisioning Notes
 

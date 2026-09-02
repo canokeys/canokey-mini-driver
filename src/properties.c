@@ -257,7 +257,7 @@ DWORD WINAPI CardGetContainerProperty(__in PCARD_DATA pCardData, __in BYTE bCont
   }
   INJECT_HANDLES();
   CMD_GET_CTX(pCardData, pContext);
-  if (bContainerIndex >= pContext->canokey.slotCount) {
+  if (bContainerIndex >= WINDOWS_CONTAINER_COUNT || bContainerIndex >= pContext->canokey.slotCount) {
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
   }
 
