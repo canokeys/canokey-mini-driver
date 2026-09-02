@@ -393,7 +393,9 @@ remain compatibility synchronization and are not authoritative.
 
 `cmapfile` is serialized from the six stable Windows container records. Each
 `CONTAINER_MAP_RECORD` reports the stable container name, valid/default flags,
-signature key size, and key-exchange key size.
+signature key size, and key-exchange key size. Container names are derived
+from the stable card identifier plus the fixed container index, so replacing a
+key does not rename its Windows container.
 
 Windows may write the map during enrollment. The minidriver validates its
 record-aligned length and discards the contents; submitted records are never

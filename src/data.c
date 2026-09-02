@@ -665,9 +665,15 @@ static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, 
       continue;
     }
 
-    // Compute SHA-1 digest of modulus
+    // Container names must remain stable when a key is replaced. Derive the
+    // virtual CAPI GUID from the stable card identifier and container index,
+    // not from mutable public-key bytes; Base CSP/KSP uses this name as its
+    // long-lived cache key.
     CK_BYTE digest[20];
     CK_ULONG digLen = sizeof(digest);
+    CK_BYTE containerIdentity[sizeof(pContext->cardId) + 1];
+    memcpy(containerIdentity, pContext->cardId, sizeof(pContext->cardId));
+    containerIdentity[sizeof(pContext->cardId)] = (CK_BYTE)i;
     CK_RV rv = C_DigestInit(pContext->session, &mech);
     if (rv != CKR_OK) {
       g_pfnCspFree(*ppbData);
@@ -675,11 +681,7 @@ static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, 
       *pcbData = 0;
       return map_pkcs11_write_error(rv);
     }
-    if (slot->keyType == CKK_RSA) {
-      rv = C_Digest(pContext->session, slot->rsa.modulus, slot->rsa.modulusBits / 8, digest, &digLen);
-    } else if (slot->keyType == CKK_EC) {
-      rv = C_Digest(pContext->session, slot->ecc.x, slot->ecc.cbPrivate * 2, digest, &digLen);
-    }
+    rv = C_Digest(pContext->session, containerIdentity, sizeof(containerIdentity), digest, &digLen);
     if (rv != CKR_OK) {
       C_SessionCancel(pContext->session, CKF_DIGEST);
       g_pfnCspFree(*ppbData);
