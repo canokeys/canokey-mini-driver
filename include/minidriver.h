@@ -39,9 +39,9 @@ static __attribute__((unused)) void cmd_release_shared_context_lock(PSRWLOCK *lo
   if (pCardData->pvVendorSpecific != NULL) {                                                                           \
     CMD_CONTEXT_PTR _cmd_context = (CMD_CONTEXT_PTR)pCardData->pvVendorSpecific;                                       \
     CK_SESSION_INFO _cmd_session_info;                                                                                 \
-    /* The private PKCS#11 SessionState enum assigns 0 and 2 to public states. */                                      \
+    /* Public sessions have no cached authentication in either access mode. */                                         \
     if (C_GetSessionInfo(_cmd_context->session, &_cmd_session_info) == CKR_OK &&                                       \
-        (_cmd_session_info.state == 0 || _cmd_session_info.state == 2))                                                \
+        (_cmd_session_info.state == CKS_RO_PUBLIC_SESSION || _cmd_session_info.state == CKS_RW_PUBLIC_SESSION))        \
       _cmd_context->authenticatedPins = PIN_SET_NONE;                                                                  \
   }
 

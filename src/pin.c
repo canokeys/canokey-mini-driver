@@ -139,6 +139,8 @@ static DWORD decode_management_key(PBYTE pbPinData, DWORD cbPinData, BYTE manage
   CMD_ENSURE_NONNULL(pManagementKeyLen, SCARD_E_INVALID_PARAMETER);
 
   if (cbPinData == CMD_MANAGEMENT_KEY_LEN) {
+    // A 24-byte value is treated as raw key material; hexadecimal input must
+    // contain 48 hex characters plus optional separators.
     memcpy(managementKey, pbPinData, CMD_MANAGEMENT_KEY_LEN);
     *pManagementKeyLen = CMD_MANAGEMENT_KEY_LEN;
     CMD_RET_OK;
@@ -216,8 +218,6 @@ DWORD WINAPI CardAuthenticatePin(__in PCARD_DATA pCardData, __in LPWSTR pwszUser
   CMD_NONNULL_PARAM(pwszUserId);
   CMD_NONNULL_PARAM(pbPin);
 
-  INJECT_HANDLES();
-
   PIN_ID pinId = ROLE_EVERYONE;
   if (wcscmp(pwszUserId, wszCARD_USER_USER) == 0) {
     pinId = ROLE_USER;
@@ -245,11 +245,11 @@ DWORD WINAPI CardAuthenticateEx(__in PCARD_DATA pCardData, __in PIN_ID PinId, __
 
   CMD_NONNULL_PARAM(pCardData);
   CMD_NONNULL_PARAM(pbPinData);
-  CMD_GET_CTX(pCardData, pContext);
   (void)ppbSessionPin;
   (void)pcbSessionPin;
 
   INJECT_HANDLES();
+  CMD_GET_CTX(pCardData, pContext);
 
   if (PinId != ROLE_USER && PinId != ROLE_ADMIN) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid PinId");
@@ -325,9 +325,9 @@ DWORD WINAPI CardDeauthenticateEx(__in PCARD_DATA pCardData, __in PIN_SET PinId,
   CMD_LOG_FUNC("pCardData %p, PinId %d, dwFlags %x", pCardData, PinId, dwFlags);
 
   CMD_NONNULL_PARAM(pCardData);
-  CMD_GET_CTX(pCardData, pContext);
 
   INJECT_HANDLES();
+  CMD_GET_CTX(pCardData, pContext);
 
   CMD_CHECK_DW_FLAGS;
   if (!IS_PIN_SET(PinId, ROLE_USER) && !IS_PIN_SET(PinId, ROLE_ADMIN)) {
@@ -365,10 +365,10 @@ DWORD WINAPI CardUnblockPin(__in PCARD_DATA pCardData, __in LPWSTR pwszUserId,
 
   CMD_NONNULL_PARAM(pCardData);
   CMD_NONNULL_PARAM(pwszUserId);
-  CMD_GET_CTX(pCardData, pContext);
   (void)cRetryCount;
 
   INJECT_HANDLES();
+  CMD_GET_CTX(pCardData, pContext);
 
   if (dwFlags != CARD_AUTHENTICATE_PIN_PIN) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Only PIN-based unblock is supported");
@@ -402,10 +402,10 @@ DWORD WINAPI CardChangeAuthenticator(__in PCARD_DATA pCardData, __in LPWSTR pwsz
 
   CMD_NONNULL_PARAM(pCardData);
   CMD_NONNULL_PARAM(pwszUserId);
-  CMD_GET_CTX(pCardData, pContext);
   (void)cRetryCount;
 
   INJECT_HANDLES();
+  CMD_GET_CTX(pCardData, pContext);
 
   if (dwFlags != CARD_AUTHENTICATE_PIN_PIN) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Only PIN-based change is supported");
@@ -439,10 +439,10 @@ DWORD WINAPI CardChangeAuthenticatorEx(__in PCARD_DATA pCardData, __in DWORD dwF
                dwTargetPinId, pbTargetData, cbTargetData, cRetryCount, pcAttemptsRemaining);
 
   CMD_NONNULL_PARAM(pCardData);
-  CMD_GET_CTX(pCardData, pContext);
   (void)cRetryCount;
 
   INJECT_HANDLES();
+  CMD_GET_CTX(pCardData, pContext);
 
   if (cRetryCount != 0) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Changing retry count is not supported");
