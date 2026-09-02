@@ -26,27 +26,24 @@ static __attribute__((unused)) void cmd_release_shared_context_lock(PSRWLOCK *lo
 #define CMD_CONTEXT_SHARED_GUARD __attribute__((cleanup(cmd_release_shared_context_lock)))
 
 #define INJECT_HANDLES()                                                                                               \
-  do {                                                                                                                 \
-    AcquireSRWLockShared(&g_cmd_context_lock);                                                                         \
-    PSRWLOCK _contextLock CMD_CONTEXT_SHARED_GUARD = &g_cmd_context_lock;                                              \
-    CNK_MANAGED_MODE_INIT_ARGS args = {.malloc_func = (CNK_MALLOC_FUNC)g_pfnCspAlloc,                                  \
-                                       .free_func = g_pfnCspFree,                                                      \
-                                       .hSCardCtx = pCardData->hSCardCtx,                                              \
-                                       .hScard = pCardData->hScard};                                                   \
-    CK_RV ret = C_CNK_EnableManagedMode(&args);                                                                        \
-    if (ret != CKR_OK && ret != CKR_CRYPTOKI_ALREADY_INITIALIZED) {                                                    \
-      CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot enable managed mode");                                                \
-    }                                                                                                                  \
-    /* Keep per-CARD_DATA role bits consistent with token-wide PKCS#11 logout. */                                      \
-    if (pCardData->pvVendorSpecific != NULL) {                                                                         \
-      CMD_CONTEXT_PTR context = (CMD_CONTEXT_PTR)pCardData->pvVendorSpecific;                                          \
-      CK_SESSION_INFO info;                                                                                            \
-      /* The private PKCS#11 SessionState enum assigns 0 and 2 to public states. */                                    \
-      if (C_GetSessionInfo(context->session, &info) == CKR_OK && (info.state == 0 || info.state == 2)) {               \
-        context->authenticatedPins = PIN_SET_NONE;                                                                     \
-      }                                                                                                                \
-    }                                                                                                                  \
-  } while (0);
+  AcquireSRWLockShared(&g_cmd_context_lock);                                                                           \
+  PSRWLOCK _cmd_context_lock CMD_CONTEXT_SHARED_GUARD = &g_cmd_context_lock;                                           \
+  CNK_MANAGED_MODE_INIT_ARGS _cmd_managed_args = {.malloc_func = (CNK_MALLOC_FUNC)g_pfnCspAlloc,                       \
+                                                  .free_func = g_pfnCspFree,                                           \
+                                                  .hSCardCtx = pCardData->hSCardCtx,                                   \
+                                                  .hScard = pCardData->hScard};                                        \
+  CK_RV _cmd_managed_ret = C_CNK_EnableManagedMode(&_cmd_managed_args);                                                \
+  if (_cmd_managed_ret != CKR_OK && _cmd_managed_ret != CKR_CRYPTOKI_ALREADY_INITIALIZED)                              \
+    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot enable managed mode");                                                  \
+  /* Keep per-CARD_DATA role bits consistent with token-wide PKCS#11 logout. */                                        \
+  if (pCardData->pvVendorSpecific != NULL) {                                                                           \
+    CMD_CONTEXT_PTR _cmd_context = (CMD_CONTEXT_PTR)pCardData->pvVendorSpecific;                                       \
+    CK_SESSION_INFO _cmd_session_info;                                                                                 \
+    /* The private PKCS#11 SessionState enum assigns 0 and 2 to public states. */                                      \
+    if (C_GetSessionInfo(_cmd_context->session, &_cmd_session_info) == CKR_OK &&                                       \
+        (_cmd_session_info.state == 0 || _cmd_session_info.state == 2))                                                \
+      _cmd_context->authenticatedPins = PIN_SET_NONE;                                                                  \
+  }
 
 #define CMD_MAX_DH_AGREEMENTS 8
 #define CMD_MAX_DH_SECRET_LEN 66

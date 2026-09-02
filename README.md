@@ -61,6 +61,10 @@ installation and release validation are still in progress.
   exchange/decryption. Provisioning tests replace slots, so this is test
   coverage rather than the current card inventory.
 
+The Windows PR surface exposes only the six stable containers `0..5`, mapped to
+`9A`, `9C`, `9D`, `9E`, `82`, and `83`; the complete 24-slot inventory remains
+available through PKCS#11.
+
 Known gaps:
 
 - Windows CSP/KSP exposure remains limited to RSA and the NIST curves defined

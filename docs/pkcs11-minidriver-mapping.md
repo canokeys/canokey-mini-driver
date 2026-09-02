@@ -64,6 +64,13 @@ CardDeleteContext
   -> C_Finalize
 ```
 
+The managed binding is process-wide rather than per `CMD_CONTEXT`. A second
+`CARD_DATA` is accepted only when its `SCARDHANDLE`, `SCARDCONTEXT`, and CSP
+allocator callbacks match the established binding; a different binding is
+rejected with an internal error. If initialization fails, the acquisition path
+rolls back an uninitialized managed binding or retains `pvVendorSpecific` so
+`CardDeleteContext` can retry failed session/finalize cleanup.
+
 The close-before-finalize order is required. Reversing it can retain stale
 session state and eventually exhaust the firmware session table during repeated
 Windows probes.

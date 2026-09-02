@@ -108,6 +108,14 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
 
   // TODO: check pbAtr content
 
+  // CardAcquireContext and CardDeleteContext mutate the same process-wide
+  // managed binding. Keep the exclusive lock until the new CARD_DATA owns a
+  // fully initialized CMD_CONTEXT, so delete cannot finalize it mid-acquire.
+  AcquireSRWLockExclusive(&g_cmd_context_lock);
+  PSRWLOCK contextLock __attribute__((cleanup(release_exclusive_context_lock))) = &g_cmd_context_lock;
+  if (pCardData->pvVendorSpecific != NULL)
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "CARD_DATA context is already acquired");
+
   // Validate the process-wide managed binding before publishing callbacks.
   // A failed second acquisition must not replace the allocator used by the
   // already-active context.
@@ -210,47 +218,67 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
 
 #pragma clang diagnostic pop
 
+  // Allocate the retryable context before initialization. If a later cleanup
+  // callback fails, pvVendorSpecific remains available for CardDeleteContext.
+  CMD_CONTEXT_PTR context = g_pfnCspAlloc(sizeof(CMD_CONTEXT));
+  if (context == NULL) {
+    CK_RV resetRv = C_CNK_ResetManagedMode();
+    if (resetRv != CKR_OK)
+      CMD_WARN("Managed binding rollback after allocation failure failed: 0x%lx", resetRv);
+    CMD_RETURN(SCARD_E_NO_MEMORY, "cannot allocate context");
+  }
+  memset(context, 0, sizeof(*context));
+  pCardData->pvVendorSpecific = context;
+
   // initialize canokey-pkcs11
   CK_RV ret = C_Initialize(NULL);
   if (ret != CKR_OK && ret != CKR_CRYPTOKI_ALREADY_INITIALIZED) {
     CK_RV resetRv = C_CNK_ResetManagedMode();
     if (resetRv != CKR_OK)
       CMD_WARN("Managed binding rollback after C_Initialize failure failed: 0x%lx", resetRv);
+    if (resetRv == CKR_OK) {
+      pCardData->pvVendorSpecific = NULL;
+      g_pfnCspFree(context);
+    }
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot initialize canokey-pkcs11");
   }
-  CMD_CONTEXT_PTR context = g_pfnCspAlloc(sizeof(CMD_CONTEXT));
-  if (context == NULL) {
-    if (cleanup_failed_acquire(CK_INVALID_HANDLE, FALSE) != CKR_OK)
-      CMD_WARN("Acquire cleanup was incomplete");
-    CMD_RETURN(SCARD_E_NO_MEMORY, "cannot allocate context");
-  }
-  memset(context, 0, sizeof(*context));
 
   ret = C_OpenSession(0, CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, &context->session);
   if (ret != CKR_OK) {
-    g_pfnCspFree(context);
-    if (cleanup_failed_acquire(CK_INVALID_HANDLE, FALSE) != CKR_OK)
-      CMD_WARN("Acquire cleanup was incomplete");
+    CK_RV cleanupRv = cleanup_failed_acquire(CK_INVALID_HANDLE, FALSE);
+    if (cleanupRv == CKR_OK) {
+      pCardData->pvVendorSpecific = NULL;
+      g_pfnCspFree(context);
+    } else {
+      CMD_WARN("Acquire cleanup was incomplete: 0x%lx", cleanupRv);
+    }
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot open session");
   }
 
   ret = read_canokey(context->session, &context->canokey);
   if (ret != CKR_OK) {
-    if (cleanup_failed_acquire(context->session, TRUE) != CKR_OK)
-      CMD_WARN("Acquire cleanup was incomplete");
-    g_pfnCspFree(context);
+    CK_RV cleanupRv = cleanup_failed_acquire(context->session, TRUE);
+    if (cleanupRv == CKR_OK) {
+      pCardData->pvVendorSpecific = NULL;
+      g_pfnCspFree(context);
+    } else {
+      CMD_WARN("Acquire cleanup was incomplete: 0x%lx", cleanupRv);
+    }
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot read canokey");
   }
 
   DWORD dwRet = GenerateCardIdentifier(context);
   if (dwRet != SCARD_S_SUCCESS) {
-    if (cleanup_failed_acquire(context->session, TRUE) != CKR_OK)
-      CMD_WARN("Acquire cleanup was incomplete");
-    g_pfnCspFree(context);
+    CK_RV cleanupRv = cleanup_failed_acquire(context->session, TRUE);
+    if (cleanupRv == CKR_OK) {
+      pCardData->pvVendorSpecific = NULL;
+      g_pfnCspFree(context);
+    } else {
+      CMD_WARN("Acquire cleanup was incomplete: 0x%lx", cleanupRv);
+    }
     CMD_RETURN(dwRet, "cannot generate card identifier");
   }
 
-  pCardData->pvVendorSpecific = context;
   CMD_RET_OK;
 }
 
@@ -271,6 +299,8 @@ DWORD CardDeleteContext(__inout PCARD_DATA pCardData) {
       CMD_WARN("C_Finalize failed: 0x%lx", rv);
       CMD_RETURN(SCARD_F_INTERNAL_ERROR, "C_Finalize failed");
     }
+    if (rv == CKR_CRYPTOKI_NOT_INITIALIZED)
+      C_CNK_ResetManagedMode();
     SecureZeroMemory(context->dhAgreements, sizeof(context->dhAgreements));
     pCardData->pfnCspFree(context);
     pCardData->pvVendorSpecific = NULL;

@@ -13,6 +13,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+if (-not $UsePinProtectedManagementKey) {
+    throw "Container creation requires the supported USER + PIN-protected management-key flow. Pass -UsePinProtectedManagementKey."
+}
+
 if (-not ("CanokeyMinidriver.KeygenTestNative" -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
@@ -400,11 +404,13 @@ namespace CanokeyMinidriver {
                 }
 
                 CardAuthenticateEx authenticate = Marshal.GetDelegateForFunctionPointer<CardAuthenticateEx>(data.pfnCardAuthenticateEx);
-                byte[] authenticationData = usePinProtectedManagementKey ? userPin : managementKey;
-                uint authenticationRole = usePinProtectedManagementKey ? ROLE_USER : ROLE_ADMIN;
+                // Container creation is a Windows USER operation. The default
+                // path therefore authenticates USER first; PIN-managed mode
+                // additionally recovers the management key inside PKCS#11.
+                byte[] authenticationData = userPin;
+                uint authenticationRole = ROLE_USER;
                 CheckCard(authenticate(ref data, authenticationRole, 0, authenticationData, (uint)authenticationData.Length,
-                    IntPtr.Zero, IntPtr.Zero, IntPtr.Zero), usePinProtectedManagementKey
-                        ? "CardAuthenticateEx(ROLE_USER)" : "CardAuthenticateEx(ROLE_ADMIN)");
+                    IntPtr.Zero, IntPtr.Zero, IntPtr.Zero), "CardAuthenticateEx(ROLE_USER)");
 
                 byte[] authenticatedState = new byte[4];
                 uint authenticatedStateLen;
@@ -570,8 +576,7 @@ $specMap = @{
 }
 
 $resolvedDll = (Resolve-Path -LiteralPath $DllPath).ProviderPath
-$mgmtKey = if ($UsePinProtectedManagementKey) { [byte[]]::new(0) } else { Convert-HexStringToBytes $ManagementKey }
-if (-not $UsePinProtectedManagementKey -and $mgmtKey.Length -ne 24) { throw "Management key must decode to 24 bytes." }
+$mgmtKey = [byte[]]::new(0)
 $userPin = [Text.Encoding]::UTF8.GetBytes($Pin)
 
 $selected = $specMap[$KeySpec]
@@ -586,7 +591,7 @@ if ($Import) {
 $verb = if ($Import) { "Importing" } else { "Generating" }
 $requestKeySize = if (-not $Import -and $KeySpec -match '^ECD') { 0 } else { [uint32]$selected.KeySize }
 Write-Host "$verb $KeySpec in container index $ContainerIndex using $resolvedDll"
-Write-Host $(if ($UsePinProtectedManagementKey) { "Authentication: USER PIN + protected management key" } else { "Authentication: explicit management key" })
+Write-Host "Authentication: USER PIN + protected management key"
 $result = [CanokeyMinidriver.KeygenTestNative]::Generate(
     $resolvedDll,
     $ReaderName,

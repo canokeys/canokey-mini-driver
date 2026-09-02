@@ -497,8 +497,10 @@ DWORD WINAPI CardCreateContainerEx(__in PCARD_DATA pCardData, __in BYTE bContain
   CMD_LOG_FUNC("pCardData %p, bContainerIndex %d, dwFlags %x, dwKeySpec %x, dwKeySize %d, pbKeyData %p, PinId %d",
                pCardData, bContainerIndex, dwFlags, dwKeySpec, dwKeySize, pbKeyData, PinId);
 
-  if (PinId != ROLE_USER)
-    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Container creation requires ROLE_USER");
+  if (PinId != ROLE_USER && PinId != ROLE_ADMIN)
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid PinId");
+  if (PinId == ROLE_ADMIN)
+    CMD_RETURN(SCARD_W_SECURITY_VIOLATION, "Container creation requires ROLE_USER");
 
   return CardCreateContainer(pCardData, bContainerIndex, dwFlags, dwKeySpec, dwKeySize, pbKeyData);
 }
@@ -510,11 +512,10 @@ DWORD WINAPI CardCreateContainerEx(__in PCARD_DATA pCardData, __in BYTE bContain
  */
 DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContainerIndex, __in DWORD dwFlags,
                                   __inout PCONTAINER_INFO pContainerInfo) {
-  CMD_LOG_FUNC("pCardData %p, bContainerIndex %d, dwFlags %x, dwVersion %d", pCardData, bContainerIndex, dwFlags,
-               pContainerInfo->dwVersion);
-
   CMD_NONNULL_PARAM(pCardData);
   CMD_NONNULL_PARAM(pContainerInfo);
+  CMD_LOG_FUNC("pCardData %p, bContainerIndex %d, dwFlags %x, dwVersion %d", pCardData, bContainerIndex, dwFlags,
+               pContainerInfo->dwVersion);
 
   INJECT_HANDLES();
 

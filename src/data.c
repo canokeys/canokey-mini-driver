@@ -196,7 +196,7 @@ DWORD RefreshCardMetadata(CMD_CONTEXT_PTR pContext) {
 // The CardReadFile function reads the entire file at the specified location into the user-supplied buffer.
 DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName, __in LPSTR pszFileName,
                           __in DWORD dwFlags, __deref_out_bcount_opt(*pcbData) PBYTE *ppbData, __out PDWORD pcbData) {
-  CMD_LOG_FUNC("pCardData %p, pszDirectoryName %s, pszFileName %s, dwFlags %x", pCardData, pszDirectoryName,
+  CMD_LOG_FUNC("pCardData %p, pszDirectoryName %p, pszFileName %s, dwFlags %x", pCardData, pszDirectoryName,
                pszFileName, dwFlags);
 
   CMD_NONNULL_PARAM(pCardData);
@@ -270,7 +270,7 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
 
 DWORD WINAPI CardCreateFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirectoryName, __in LPSTR pszFileName,
                             __in DWORD cbInitialCreationSize, __in CARD_FILE_ACCESS_CONDITION AccessCondition) {
-  CMD_LOG_FUNC("pCardData %p, pszDirectoryName %s, pszFileName %s, cbInitialCreationSize %lu, AccessCondition %d",
+  CMD_LOG_FUNC("pCardData %p, pszDirectoryName %p, pszFileName %s, cbInitialCreationSize %lu, AccessCondition %d",
                pCardData, pszDirectoryName, pszFileName, cbInitialCreationSize, AccessCondition);
 
   CMD_NONNULL_PARAM(pCardData);
@@ -303,7 +303,7 @@ DWORD WINAPI CardCreateFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirecto
 
 DWORD WINAPI CardWriteFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirectoryName, __in LPSTR pszFileName,
                            __in DWORD dwFlags, __in_bcount(cbData) PBYTE pbData, __in DWORD cbData) {
-  CMD_LOG_FUNC("pCardData %p, pszDirectoryName %s, pszFileName %s, dwFlags %x, pbData %p, cbData %lu", pCardData,
+  CMD_LOG_FUNC("pCardData %p, pszDirectoryName %p, pszFileName %s, dwFlags %x, pbData %p, cbData %lu", pCardData,
                pszDirectoryName, pszFileName, dwFlags, pbData, cbData);
 
   CMD_NONNULL_PARAM(pCardData);
@@ -384,7 +384,7 @@ DWORD WINAPI CardWriteFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
  */
 DWORD WINAPI CardGetFileInfo(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName, __in LPSTR pszFileName,
                              __in PCARD_FILE_INFO pCardFileInfo) {
-  CMD_LOG_FUNC("pCardData %p, pszDirectoryName %s, pszFileName %s, pCardFileInfo %p", pCardData, pszDirectoryName,
+  CMD_LOG_FUNC("pCardData %p, pszDirectoryName %p, pszFileName %s, pCardFileInfo %p", pCardData, pszDirectoryName,
                pszFileName, pCardFileInfo);
   CMD_NONNULL_PARAM(pCardData);
   CMD_NONNULL_PARAM(pszFileName);
@@ -462,7 +462,7 @@ DWORD WINAPI CardGetFileInfo(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryN
 DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirectoryName,
                            __deref_out_ecount(*pdwcbFileName) LPSTR *pmszFileNames, __out LPDWORD pdwcbFileName,
                            __in DWORD dwFlags) {
-  CMD_LOG_FUNC("pCardData %p, pszDirectoryName %s, pmszFileNames %p, pdwcbFileName %p, dwFlags %x", pCardData,
+  CMD_LOG_FUNC("pCardData %p, pszDirectoryName %p, pmszFileNames %p, pdwcbFileName %p, dwFlags %x", pCardData,
                pszDirectoryName, pmszFileNames, pdwcbFileName, dwFlags);
   CMD_NONNULL_PARAM(pCardData);
   CMD_NONNULL_PARAM(pmszFileNames);
