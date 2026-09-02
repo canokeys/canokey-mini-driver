@@ -422,10 +422,12 @@ Important property mappings include:
 | `CP_CARD_PIN_INFO` | role permissions and configured cache timeout |
 | `CP_CARD_LIST_PINS` | USER, ADMIN, and the narrow PUK reset role |
 | `CP_CARD_AUTHENTICATED_STATE` | minidriver role bits for this context |
-| `CP_CARD_SERIAL_NO` | stable token serial data |
+| `CP_CARD_SERIAL_NO` | not implemented; callers should use `CP_CARD_GUID` |
 
-`CP_PARENT_WINDOW` and `CP_PIN_CONTEXT_STRING` are accepted as caller context.
-They are not authentication credentials.
+`CP_PARENT_WINDOW` and `CP_PIN_CONTEXT_STRING` are optional UI context
+properties. This development minidriver does not implement `CardSetProperty`
+for them and does not provide an external PIN dialog; callers must not rely on
+these values being persisted or consumed.
 
 ## 9. Buffer and Memory Rules
 
