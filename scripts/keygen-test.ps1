@@ -1,7 +1,7 @@
 param(
     [string]$ReaderName = "canokeys.org OpenPGP PIV OATH 0",
     [string]$DllPath = (Join-Path $PSScriptRoot "..\out\build\x64-Clang-Debug\canokey-minidriver.dll"),
-    [ValidateRange(0, 23)]
+    [ValidateRange(0, 5)]
     [byte]$ContainerIndex = 4,
     [ValidateSet("ECDSA_P256", "ECDSA_P384", "ECDSA_P521", "ECDHE_P256", "ECDHE_P384", "ECDHE_P521", "RSA_SIGN_2048", "RSA_SIGN_3072", "RSA_SIGN_4096", "RSA_KEYX_2048", "RSA_KEYX_3072", "RSA_KEYX_4096")]
     [string]$KeySpec = "ECDSA_P256",

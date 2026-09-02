@@ -177,14 +177,15 @@ static CK_RV unpack_ec_point(SLOT *slot, CK_ULONG value_len) {
 CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
   CMD_ENSURE_NONNULL(pCanokey, CKR_ARGUMENTS_BAD);
 
-  // Initialize the CANOKEY structure
-  memset(pCanokey, 0, sizeof(CANOKEY));
-  pCanokey->slotCount = WINDOWS_CONTAINER_COUNT;
+  // Build into a private snapshot. A refresh failure must leave the last
+  // complete inventory available to concurrent Windows callers.
+  CANOKEY snapshot = {0};
+  snapshot.slotCount = WINDOWS_CONTAINER_COUNT;
 
   for (CK_BYTE i = 1; i <= WINDOWS_CONTAINER_COUNT; i++) {
     CMD_DEBUG("Reading slot %d", i);
 
-    SLOT *slot = &pCanokey->slots[i - 1];
+    SLOT *slot = &snapshot.slots[i - 1];
     slot->id = i;
     C_CNK_ObjIdToPivTag(i, &slot->pivId);
     slot->capabilities = capabilities_for_piv_slot(slot->pivId);
@@ -296,5 +297,6 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
               slot->certLen, slot->capabilities);
   }
 
+  *pCanokey = snapshot;
   return CKR_OK;
 }

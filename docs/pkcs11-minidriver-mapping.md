@@ -293,7 +293,8 @@ PIV PIN policy is enforced by PKCS#11 and firmware:
 
 - PIN-never keys may operate without a user login;
 - PIN-once keys require authentication once for the session;
-- PIN-always keys require the appropriate per-operation authentication path.
+- PIN-always keys require the appropriate per-operation authentication path;
+  Windows provisioning rejects this policy until that path is available.
 
 The minidriver must not add a blanket `ROLE_USER` check around every private-key
 operation.

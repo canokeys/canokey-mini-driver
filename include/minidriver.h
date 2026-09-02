@@ -18,12 +18,19 @@ extern PFN_CSP_FREE g_pfnCspFree;
 extern PFN_CSP_PAD_DATA g_pfnCspPadData;
 extern SRWLOCK g_cmd_context_lock;
 
+typedef struct CMD_CONTEXT CMD_CONTEXT;
+typedef CMD_CONTEXT *CMD_CONTEXT_PTR;
+
 static __attribute__((unused)) void cmd_release_shared_context_lock(PSRWLOCK *lock) {
   if (lock != NULL && *lock != NULL)
     ReleaseSRWLockShared(*lock);
 }
 
 #define CMD_CONTEXT_SHARED_GUARD __attribute__((cleanup(cmd_release_shared_context_lock)))
+
+static __attribute__((unused)) void cmd_release_context_state_lock(CMD_CONTEXT_PTR *context);
+
+#define CMD_CONTEXT_STATE_GUARD __attribute__((cleanup(cmd_release_context_state_lock)))
 
 #define INJECT_HANDLES()                                                                                               \
   AcquireSRWLockShared(&g_cmd_context_lock);                                                                           \
@@ -35,9 +42,12 @@ static __attribute__((unused)) void cmd_release_shared_context_lock(PSRWLOCK *lo
   CK_RV _cmd_managed_ret = C_CNK_EnableManagedMode(&_cmd_managed_args);                                                \
   if (_cmd_managed_ret != CKR_OK && _cmd_managed_ret != CKR_CRYPTOKI_ALREADY_INITIALIZED)                              \
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot enable managed mode");                                                  \
+  CMD_CONTEXT_PTR _cmd_state_guard CMD_CONTEXT_STATE_GUARD = NULL;                                                     \
   /* Keep per-CARD_DATA role bits consistent with token-wide PKCS#11 logout. */                                        \
   if (pCardData->pvVendorSpecific != NULL) {                                                                           \
     CMD_CONTEXT_PTR _cmd_context = (CMD_CONTEXT_PTR)pCardData->pvVendorSpecific;                                       \
+    AcquireSRWLockExclusive(&_cmd_context->state_lock);                                                                \
+    _cmd_state_guard = _cmd_context;                                                                                   \
     CK_SESSION_INFO _cmd_session_info;                                                                                 \
     /* Public sessions have no cached authentication in either access mode. */                                         \
     if (C_GetSessionInfo(_cmd_context->session, &_cmd_session_info) == CKR_OK &&                                       \
@@ -58,15 +68,19 @@ typedef struct {
   DWORD keySpec;
 } CMD_DH_AGREEMENT;
 
-typedef struct {
+struct CMD_CONTEXT {
   CK_SESSION_HANDLE session;
+  SRWLOCK state_lock;
   CANOKEY canokey;
   BYTE cardId[16];
   PIN_SET authenticatedPins;
   CMD_DH_AGREEMENT dhAgreements[CMD_MAX_DH_AGREEMENTS];
-} CMD_CONTEXT;
+};
 
-typedef CMD_CONTEXT *CMD_CONTEXT_PTR;
+static __attribute__((unused)) void cmd_release_context_state_lock(CMD_CONTEXT_PTR *context) {
+  if (context != NULL && *context != NULL)
+    ReleaseSRWLockExclusive(&(*context)->state_lock);
+}
 
 DWORD FillCardKeySizes(DWORD dwKeySpec, PCARD_KEY_SIZES pKeySizes);
 void FillCardFreeSpaceInfo(PCARD_FREE_SPACE_INFO pCardFreeSpaceInfo);

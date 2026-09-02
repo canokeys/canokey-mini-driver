@@ -278,7 +278,9 @@ EC keys in those slots       -> also ECDH-capable
   minidriver or managed PKCS#11 logging, even if `LogLevel` is present.
   `NewKeyTouchPolicy` maps to `CKA_CNK_PIV_TOUCH_POLICY` (`1` never, `2`
   always, `3` cached; default `1`). `NewKeyPinPolicy`, when present, maps to
-  `CKA_CNK_PIV_PIN_POLICY` (`1` never, `2` once, `3` always). If
+  `CKA_CNK_PIV_PIN_POLICY` (`1` never, `2` once, `3` always). The minidriver
+  rejects value `3` until a Windows per-operation authentication bridge exists.
+  If
   `NewKeyPinPolicy` is absent, generated keys use the PIV defaults: 9E never,
   all other supported key slots once. `PinCacheTimeout` is reported through
   `CP_CARD_PIN_INFO`.

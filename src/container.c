@@ -144,6 +144,8 @@ static DWORD create_keypair(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWOR
   CK_ATTRIBUTE publicTemplate[5];
   CK_ULONG publicCount = 0;
   const CMD_CONFIG *config = cmd_get_config();
+  if (config->has_new_key_pin_policy && config->new_key_pin_policy == CNK_PIV_PIN_POLICY_ALWAYS)
+    CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "PIN-always keys require an unsupported context authentication bridge");
   touchPolicy = (CK_BYTE)config->new_key_touch_policy;
 
   CK_ATTRIBUTE privateTemplate[8];
@@ -234,14 +236,17 @@ static BOOL validate_ec_private_blob(DWORD dwKeySpec, const BYTE *blob, DWORD bl
   return BCRYPT_SUCCESS(status);
 }
 
-static void append_import_policies(CK_ATTRIBUTE *templ, CK_ULONG *pCount, CK_BYTE *pPinPolicy, CK_BYTE *pTouchPolicy) {
+static DWORD append_import_policies(CK_ATTRIBUTE *templ, CK_ULONG *pCount, CK_BYTE *pPinPolicy, CK_BYTE *pTouchPolicy) {
   const CMD_CONFIG *config = cmd_get_config();
+  if (config->has_new_key_pin_policy && config->new_key_pin_policy == CNK_PIV_PIN_POLICY_ALWAYS)
+    CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "PIN-always keys require an unsupported context authentication bridge");
   *pTouchPolicy = (CK_BYTE)config->new_key_touch_policy;
   if (config->has_new_key_pin_policy) {
     *pPinPolicy = (CK_BYTE)config->new_key_pin_policy;
     templ[(*pCount)++] = (CK_ATTRIBUTE){CKA_CNK_PIV_PIN_POLICY, pPinPolicy, sizeof(*pPinPolicy)};
   }
   templ[(*pCount)++] = (CK_ATTRIBUTE){CKA_CNK_PIV_TOUCH_POLICY, pTouchPolicy, sizeof(*pTouchPolicy)};
+  CMD_RET_OK;
 }
 
 static DWORD import_rsa_key(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWORD dwKeySpec, DWORD dwKeySize,
@@ -295,7 +300,9 @@ static DWORD import_rsa_key(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWOR
   templ[count++] = (CK_ATTRIBUTE){CKA_EXPONENT_1, components[2], componentLen};
   templ[count++] = (CK_ATTRIBUTE){CKA_EXPONENT_2, components[3], componentLen};
   templ[count++] = (CK_ATTRIBUTE){CKA_COEFFICIENT, components[4], componentLen};
-  append_import_policies(templ, &count, &pinPolicy, &touchPolicy);
+  DWORD ret = append_import_policies(templ, &count, &pinPolicy, &touchPolicy);
+  if (ret != SCARD_S_SUCCESS)
+    return ret;
 
   CK_OBJECT_HANDLE privateKeyHandle = CK_INVALID_HANDLE;
   CK_RV rv = C_CreateObject(pContext->session, templ, count, &privateKeyHandle);
@@ -388,7 +395,9 @@ static DWORD import_ec_key(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWORD
   templ[count++] = (CK_ATTRIBUTE){CKA_PRIVATE, &privateKey, sizeof(privateKey)};
   templ[count++] = (CK_ATTRIBUTE){CKA_EC_PARAMS, (CK_BYTE_PTR)ecParams, ecParamsLen};
   templ[count++] = (CK_ATTRIBUTE){CKA_VALUE, privateScalar, expectedKeyBytes};
-  append_import_policies(templ, &count, &pinPolicy, &touchPolicy);
+  ret = append_import_policies(templ, &count, &pinPolicy, &touchPolicy);
+  if (ret != SCARD_S_SUCCESS)
+    return ret;
 
   CK_OBJECT_HANDLE privateKeyHandle = CK_INVALID_HANDLE;
   CK_RV rv = C_CreateObject(pContext->session, templ, count, &privateKeyHandle);

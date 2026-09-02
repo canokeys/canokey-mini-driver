@@ -228,6 +228,7 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
     CMD_RETURN(SCARD_E_NO_MEMORY, "cannot allocate context");
   }
   memset(context, 0, sizeof(*context));
+  InitializeSRWLock(&context->state_lock);
   pCardData->pvVendorSpecific = context;
 
   // initialize canokey-pkcs11
@@ -299,8 +300,13 @@ DWORD CardDeleteContext(__inout PCARD_DATA pCardData) {
       CMD_WARN("C_Finalize failed: 0x%lx", rv);
       CMD_RETURN(SCARD_F_INTERNAL_ERROR, "C_Finalize failed");
     }
-    if (rv == CKR_CRYPTOKI_NOT_INITIALIZED)
-      C_CNK_ResetManagedMode();
+    if (rv == CKR_CRYPTOKI_NOT_INITIALIZED) {
+      CK_RV resetRv = C_CNK_ResetManagedMode();
+      if (resetRv != CKR_OK) {
+        CMD_WARN("Managed binding cleanup is still pending: 0x%lx", resetRv);
+        CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Managed binding cleanup is still pending");
+      }
+    }
     SecureZeroMemory(context->dhAgreements, sizeof(context->dhAgreements));
     pCardData->pfnCspFree(context);
     pCardData->pvVendorSpecific = NULL;
