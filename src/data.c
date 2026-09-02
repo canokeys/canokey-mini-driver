@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -61,15 +62,68 @@ static DWORD AllocCopy(const void *data, DWORD cbData, PBYTE *ppbData, PDWORD pc
   CMD_RET_OK;
 }
 
-static DWORD AllocCacheFile(PBYTE *ppbData, PDWORD pcbData) {
-  CARD_CACHE_FILE_FORMAT cache = {
-      .bVersion = CARD_CACHE_FILE_CURRENT_VERSION,
-      .bPinsFreshness = 0,
-      .wContainersFreshness = 0,
-      .wFilesFreshness = 0,
-  };
+static WORD ComputeFreshness(const CMD_CONTEXT *pContext, BOOL includeCertificates) {
+  // Base CSP compares these values before reusing cmapfile/certificate data.
+  // Hash live metadata instead of using a process counter so unchanged cards
+  // keep stable cache values while key or certificate mutations invalidate
+  // the corresponding Windows cache section.
+  uint32_t hash = 2166136261u;
+  for (CK_ULONG i = 0; i < pContext->canokey.slotCount; i++) {
+    const SLOT *slot = &pContext->canokey.slots[i];
+    hash ^= slot->present ? 1u : 0u;
+    hash *= 16777619u;
+    hash ^= (uint32_t)slot->keyType;
+    hash *= 16777619u;
+    hash ^= (uint32_t)slot->ecCurve;
+    hash *= 16777619u;
+    if (slot->keyType == CKK_RSA && slot->rsa.modulusBits > 0) {
+      for (DWORD j = 0; j < slot->rsa.modulusBits / 8; j++) {
+        hash ^= slot->rsa.modulus[j];
+        hash *= 16777619u;
+      }
+    } else if (slot->keyType == CKK_EC && slot->ecc.cbPrivate > 0) {
+      for (DWORD j = 0; j < slot->ecc.cbPrivate * 2; j++) {
+        const BYTE *point = j < slot->ecc.cbPrivate ? slot->ecc.x : slot->ecc.y;
+        hash ^= point[j < slot->ecc.cbPrivate ? j : j - slot->ecc.cbPrivate];
+        hash *= 16777619u;
+      }
+    }
+    if (includeCertificates) {
+      for (DWORD j = 0; j < slot->certLen; j++) {
+        hash ^= slot->cert[j];
+        hash *= 16777619u;
+      }
+    }
+  }
+  WORD freshness = (WORD)(hash ^ (hash >> 16));
+  return freshness == 0 ? 1 : freshness;
+}
 
-  return AllocCopy(&cache, sizeof(cache), ppbData, pcbData);
+static DWORD AllocCacheFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, PDWORD pcbData) {
+  WORD containerHash = ComputeFreshness(pContext, FALSE);
+  WORD fileHash = ComputeFreshness(pContext, TRUE);
+  if (!pContext->cache_initialized) {
+    pContext->cache_file = (CARD_CACHE_FILE_FORMAT){.bVersion = CARD_CACHE_FILE_CURRENT_VERSION,
+                                                    .bPinsFreshness = 0,
+                                                    .wContainersFreshness = containerHash,
+                                                    .wFilesFreshness = fileHash};
+    pContext->cache_container_hash = containerHash;
+    pContext->cache_file_hash = fileHash;
+    pContext->cache_initialized = TRUE;
+  } else {
+    if (containerHash != pContext->cache_container_hash) {
+      pContext->cache_file.wContainersFreshness = containerHash;
+      pContext->cache_container_hash = containerHash;
+    }
+    if (fileHash != pContext->cache_file_hash) {
+      pContext->cache_file.wFilesFreshness = fileHash;
+      pContext->cache_file_hash = fileHash;
+    }
+  }
+
+  CMD_DEBUG("cardcf freshness: pins=%u containers=%u files=%u", pContext->cache_file.bPinsFreshness,
+            pContext->cache_file.wContainersFreshness, pContext->cache_file.wFilesFreshness);
+  return AllocCopy(&pContext->cache_file, sizeof(pContext->cache_file), ppbData, pcbData);
 }
 
 static DWORD HashCardIdentity(CK_SESSION_HANDLE session, CK_BYTE_PTR identity, CK_ULONG identityLen, BYTE cardId[16]) {
@@ -218,7 +272,7 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
 
   if (pszDirectoryName == NULL) { // Root directory
     if (strcmp(pszFileName, szCACHE_FILE) == 0) {
-      return AllocCacheFile(ppbData, pcbData);
+      return AllocCacheFile(pContext, ppbData, pcbData);
     }
     if (strcmp(pszFileName, szCARD_IDENTIFIER_FILE) == 0) {
       return AllocCopy(pContext->cardId, sizeof(pContext->cardId), ppbData, pcbData);
@@ -329,8 +383,13 @@ DWORD WINAPI CardWriteFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
     if (cacheFile->bVersion != CARD_CACHE_FILE_CURRENT_VERSION) {
       CMD_RETURN(ERROR_REVISION_MISMATCH, "Cache file version mismatch");
     }
-    // CP_CARD_CACHE_MODE is NO_CACHE. Accept the Base CSP/KSP compatibility
-    // write, but do not create a second authoritative state beside the token.
+    // Keep the Base CSP/KSP freshness counters in this virtual card context.
+    // Live metadata remains authoritative and will advance the relevant
+    // counter on the next read when key/certificate content changes.
+    pContext->cache_file = *cacheFile;
+    pContext->cache_container_hash = ComputeFreshness(pContext, FALSE);
+    pContext->cache_file_hash = ComputeFreshness(pContext, TRUE);
+    pContext->cache_initialized = TRUE;
     CMD_RET_OK;
   }
 

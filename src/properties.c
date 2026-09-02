@@ -66,7 +66,9 @@ static DWORD getCardCacheMode(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, 
   if (cbData < sizeof(DWORD)) {
     CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
   }
-  *(DWORD *)pbData = CP_CACHE_MODE_NO_CACHE;
+  // Use the Base CSP global cache, with cardcf freshness values invalidating
+  // cmapfile/certificate views when live PIV metadata changes.
+  *(DWORD *)pbData = CP_CACHE_MODE_GLOBAL_CACHE;
   CMD_RET_OK;
 }
 

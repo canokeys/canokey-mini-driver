@@ -383,8 +383,11 @@ Windows uses the pair for cache identity.
 ### 7.2 `cardcf`
 
 The root `cardcf` file is a valid `CARD_CACHE_FILE_FORMAT`. The minidriver
-reports `CP_CACHE_MODE_NO_CACHE`, accepts well-formed same-version compatibility
-writes, and intentionally does not persist freshness fields.
+reports `CP_CACHE_MODE_GLOBAL_CACHE` and derives stable container/file
+freshness values from live key and certificate metadata. A key or certificate
+mutation changes the relevant freshness value so Windows refreshes
+`cmapfile`/certificate views; same-state reads keep the values stable. Writes
+remain compatibility synchronization and are not authoritative.
 
 ### 7.3 `mscp/cmapfile`
 
