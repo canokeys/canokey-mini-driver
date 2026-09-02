@@ -6,6 +6,8 @@
 #include "pkcs11.h"
 #include "pkcs11_canokey.h"
 
+#include <Windows.h>
+
 #define CMD_ROLE_PUK 3
 
 // Global function pointers for memory management
@@ -14,9 +16,19 @@ extern PFN_CSP_FREE g_pfnCspFree;
 
 // Global function pointer for padding
 extern PFN_CSP_PAD_DATA g_pfnCspPadData;
+extern SRWLOCK g_cmd_context_lock;
+
+static __attribute__((unused)) void cmd_release_shared_context_lock(PSRWLOCK *lock) {
+  if (lock != NULL && *lock != NULL)
+    ReleaseSRWLockShared(*lock);
+}
+
+#define CMD_CONTEXT_SHARED_GUARD __attribute__((cleanup(cmd_release_shared_context_lock)))
 
 #define INJECT_HANDLES()                                                                                               \
   do {                                                                                                                 \
+    AcquireSRWLockShared(&g_cmd_context_lock);                                                                         \
+    PSRWLOCK _contextLock CMD_CONTEXT_SHARED_GUARD = &g_cmd_context_lock;                                              \
     CNK_MANAGED_MODE_INIT_ARGS args = {.malloc_func = (CNK_MALLOC_FUNC)g_pfnCspAlloc,                                  \
                                        .free_func = g_pfnCspFree,                                                      \
                                        .hSCardCtx = pCardData->hSCardCtx,                                              \

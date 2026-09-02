@@ -46,16 +46,29 @@ PFN_CSP_FREE g_pfnCspFree = NULL;
 
 // Global function pointer for padding
 PFN_CSP_PAD_DATA g_pfnCspPadData = NULL;
+SRWLOCK g_cmd_context_lock = SRWLOCK_INIT;
 
-static void cleanup_failed_acquire(CK_SESSION_HANDLE session, BOOL sessionOpen) {
+static void release_exclusive_context_lock(PSRWLOCK *lock) {
+  if (lock != NULL && *lock != NULL)
+    ReleaseSRWLockExclusive(*lock);
+}
+
+static CK_RV cleanup_failed_acquire(CK_SESSION_HANDLE session, BOOL sessionOpen) {
+  CK_RV result = CKR_OK;
   if (sessionOpen) {
     CK_RV closeRv = C_CloseSession(session);
-    if (closeRv != CKR_OK && closeRv != CKR_SESSION_HANDLE_INVALID && closeRv != CKR_CRYPTOKI_NOT_INITIALIZED)
+    if (closeRv != CKR_OK && closeRv != CKR_SESSION_HANDLE_INVALID && closeRv != CKR_CRYPTOKI_NOT_INITIALIZED) {
       CMD_WARN("C_CloseSession during acquire cleanup failed: 0x%lx", closeRv);
+      result = closeRv;
+    }
   }
   CK_RV finalizeRv = C_Finalize(NULL);
-  if (finalizeRv != CKR_OK && finalizeRv != CKR_CRYPTOKI_NOT_INITIALIZED)
+  if (finalizeRv != CKR_OK && finalizeRv != CKR_CRYPTOKI_NOT_INITIALIZED) {
     CMD_WARN("C_Finalize during acquire cleanup failed: 0x%lx", finalizeRv);
+    if (result == CKR_OK)
+      result = finalizeRv;
+  }
+  return result;
 }
 
 /*
@@ -207,7 +220,8 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
   }
   CMD_CONTEXT_PTR context = g_pfnCspAlloc(sizeof(CMD_CONTEXT));
   if (context == NULL) {
-    cleanup_failed_acquire(CK_INVALID_HANDLE, FALSE);
+    if (cleanup_failed_acquire(CK_INVALID_HANDLE, FALSE) != CKR_OK)
+      CMD_WARN("Acquire cleanup was incomplete");
     CMD_RETURN(SCARD_E_NO_MEMORY, "cannot allocate context");
   }
   memset(context, 0, sizeof(*context));
@@ -215,20 +229,23 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
   ret = C_OpenSession(0, CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, &context->session);
   if (ret != CKR_OK) {
     g_pfnCspFree(context);
-    cleanup_failed_acquire(CK_INVALID_HANDLE, FALSE);
+    if (cleanup_failed_acquire(CK_INVALID_HANDLE, FALSE) != CKR_OK)
+      CMD_WARN("Acquire cleanup was incomplete");
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot open session");
   }
 
   ret = read_canokey(context->session, &context->canokey);
   if (ret != CKR_OK) {
-    cleanup_failed_acquire(context->session, TRUE);
+    if (cleanup_failed_acquire(context->session, TRUE) != CKR_OK)
+      CMD_WARN("Acquire cleanup was incomplete");
     g_pfnCspFree(context);
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot read canokey");
   }
 
   DWORD dwRet = GenerateCardIdentifier(context);
   if (dwRet != SCARD_S_SUCCESS) {
-    cleanup_failed_acquire(context->session, TRUE);
+    if (cleanup_failed_acquire(context->session, TRUE) != CKR_OK)
+      CMD_WARN("Acquire cleanup was incomplete");
     g_pfnCspFree(context);
     CMD_RETURN(dwRet, "cannot generate card identifier");
   }
@@ -240,6 +257,8 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
 DWORD CardDeleteContext(__inout PCARD_DATA pCardData) {
   CMD_LOG_FUNC("pCardData %p", pCardData);
   CMD_NONNULL_PARAM(pCardData);
+  AcquireSRWLockExclusive(&g_cmd_context_lock);
+  PSRWLOCK contextLock __attribute__((cleanup(release_exclusive_context_lock))) = &g_cmd_context_lock;
   if (pCardData->pvVendorSpecific) {
     CMD_CONTEXT_PTR context = (CMD_CONTEXT_PTR)pCardData->pvVendorSpecific;
     CK_RV rv = C_CloseSession(context->session);

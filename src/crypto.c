@@ -226,7 +226,10 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
 
     pCardSigningInfo->cbSignedData = slot->ecc.cbPrivate * 2;
     pCardSigningInfo->pbSignedData = (PBYTE)g_pfnCspAlloc(pCardSigningInfo->cbSignedData);
-    CMD_ENSURE_NONNULL(pCardSigningInfo->pbSignedData, SCARD_E_NO_MEMORY);
+    if (pCardSigningInfo->pbSignedData == NULL) {
+      C_SessionCancel(pContext->session, CKF_SIGN);
+      CMD_RETURN(SCARD_E_NO_MEMORY, "signature output allocation failed");
+    }
 
     rv = C_Sign(pContext->session, pCardSigningInfo->pbData, pCardSigningInfo->cbData, pCardSigningInfo->pbSignedData,
                 &pCardSigningInfo->cbSignedData);

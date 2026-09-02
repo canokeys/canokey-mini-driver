@@ -606,15 +606,23 @@ static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, 
     CK_ULONG digLen = sizeof(digest);
     CK_RV rv = C_DigestInit(pContext->session, &mech);
     if (rv != CKR_OK) {
-      continue;
+      g_pfnCspFree(*ppbData);
+      *ppbData = NULL;
+      *pcbData = 0;
+      return map_pkcs11_write_error(rv);
     }
     if (slot->keyType == CKK_RSA) {
       rv = C_Digest(pContext->session, slot->rsa.modulus, slot->rsa.modulusBits / 8, digest, &digLen);
     } else if (slot->keyType == CKK_EC) {
       rv = C_Digest(pContext->session, slot->ecc.x, slot->ecc.cbPrivate * 2, digest, &digLen);
     }
-    if (rv != CKR_OK)
-      continue;
+    if (rv != CKR_OK) {
+      C_SessionCancel(pContext->session, CKF_DIGEST);
+      g_pfnCspFree(*ppbData);
+      *ppbData = NULL;
+      *pcbData = 0;
+      return map_pkcs11_write_error(rv);
+    }
 
     // Format first 16 bytes of digest as GUID XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
     unsigned char *b = digest;

@@ -264,8 +264,7 @@ inside PKCS#11 is not equivalent to deleting a persistent PIV key slot.
 ## 5. Container and Slot Policy
 
 Windows container indexes are stable policy assignments, not enumeration order.
-The table below shows the first six entries; the same policy continues through
-container index 23 and PIV object ID 24 (`95`):
+The minidriver exposes exactly six entries, mapped to PIV object IDs 1..6:
 
 | Container index | PIV object ID | PIV slot | Windows use |
 | ---: | ---: | --- | --- |
@@ -374,7 +373,7 @@ writes, and intentionally does not persist freshness fields.
 
 ### 7.3 `mscp/cmapfile`
 
-`cmapfile` is serialized from the 24 stable slot records. Each
+`cmapfile` is serialized from the six stable Windows container records. Each
 `CONTAINER_MAP_RECORD` reports the stable container name, valid/default flags,
 signature key size, and key-exchange key size.
 
