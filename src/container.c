@@ -552,6 +552,11 @@ DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContaine
       DWORD ret = AllocRsaPublicKeyBlob(slot, CALG_RSA_KEYX, &pContainerInfo->pbKeyExPublicKey,
                                         &pContainerInfo->cbKeyExPublicKey);
       if (ret != SCARD_S_SUCCESS) {
+        if (pContainerInfo->pbSigPublicKey != NULL) {
+          g_pfnCspFree(pContainerInfo->pbSigPublicKey);
+          pContainerInfo->pbSigPublicKey = NULL;
+          pContainerInfo->cbSigPublicKey = 0;
+        }
         CMD_RETURN(ret, "Failed to allocate key exchange RSA public key blob");
       }
     }
@@ -589,6 +594,11 @@ DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContaine
       }
       ret = AllocEcPublicKeyBlob(slot, magic, &pContainerInfo->pbKeyExPublicKey, &pContainerInfo->cbKeyExPublicKey);
       if (ret != SCARD_S_SUCCESS) {
+        if (pContainerInfo->pbSigPublicKey != NULL) {
+          g_pfnCspFree(pContainerInfo->pbSigPublicKey);
+          pContainerInfo->pbSigPublicKey = NULL;
+          pContainerInfo->cbSigPublicKey = 0;
+        }
         CMD_RETURN(ret, "Failed to allocate ECDH public key blob");
       }
     }

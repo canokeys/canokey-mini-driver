@@ -16,6 +16,9 @@ checks below.
   policy change.
 - USER authentication and protected management-key authentication are separate
   states, but both are valid for the operations explicitly allowed by policy.
+- Legacy and extended container creation must accept either explicit
+  `ROLE_ADMIN` or `ROLE_USER` with a protected management key, and reject an
+  unauthenticated USER-only path.
 - Two-stage buffer APIs set the required output length before returning
   `ERROR_INSUFFICIENT_BUFFER`.
 - All sensitive buffers, temporary DH agreements, and failed key-operation

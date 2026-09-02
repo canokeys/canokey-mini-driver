@@ -201,8 +201,10 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
     CK_OBJECT_HANDLE hObject;
     CK_ULONG ulObjectCount = 0;
     rv = C_FindObjects(session, &hObject, 1, &ulObjectCount);
-    if (rv != CKR_OK)
+    if (rv != CKR_OK) {
+      C_FindObjectsFinal(session);
       CMD_RETURN(rv, "C_FindObjects failed");
+    }
     rv = C_FindObjectsFinal(session);
     if (rv != CKR_OK)
       CMD_RETURN(rv, "C_FindObjectsFinal failed");
@@ -229,6 +231,11 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
       CMD_RETURN(rv, "C_GetAttributeValue failed");
 
     if (slot->keyType == CKK_RSA) {
+      if ((slot->rsa.modulusBits != 2048 && slot->rsa.modulusBits != 3072 && slot->rsa.modulusBits != 4096) ||
+          attr[1].ulValueLen != slot->rsa.modulusBits / 8 || slot->rsa.modulusBits / 8 > sizeof(slot->rsa.modulus)) {
+        CMD_DEBUG("Slot %d: unsupported or invalid RSA modulus size %lu, skipping", i, slot->rsa.modulusBits);
+        continue;
+      }
       // RSA modulus is stored in big-endian, need to reverse
       reverse_bytes(slot->rsa.modulus, slot->rsa.modulusBits / 8);
       CMD_DEBUG("Slot %d: keyType = CKK_RSA, modulusBits = %d", i, slot->rsa.modulusBits);
@@ -266,8 +273,10 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
       CMD_RETURN(rv, "C_FindObjectsInit failed");
 
     rv = C_FindObjects(session, &hObject, 1, &ulObjectCount);
-    if (rv != CKR_OK)
+    if (rv != CKR_OK) {
+      C_FindObjectsFinal(session);
       CMD_RETURN(rv, "C_FindObjects failed");
+    }
     rv = C_FindObjectsFinal(session);
     if (rv != CKR_OK)
       CMD_RETURN(rv, "C_FindObjectsFinal failed");

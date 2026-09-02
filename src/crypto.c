@@ -192,14 +192,22 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
     CK_MECHANISM mech = {CKM_RSA_X_509, NULL, 0};
     CK_OBJECT_HANDLE hKey = CMD_MAKE_OBJECT_HANDLE(0, CKO_PRIVATE_KEY, slot->id);
     CK_RV rv = C_SignInit(pContext->session, &mech, hKey);
-    if (rv != CKR_OK)
+    if (rv != CKR_OK) {
+      g_pfnCspFree(pCardSigningInfo->pbSignedData);
+      pCardSigningInfo->pbSignedData = NULL;
+      pCardSigningInfo->cbSignedData = 0;
       CMD_RETURN(map_pkcs11_crypto_error(rv), "C_SignInit failed");
+    }
 
     pCardSigningInfo->cbSignedData = paddedLen;
     rv = C_Sign(pContext->session, pCardSigningInfo->pbSignedData, paddedLen, pCardSigningInfo->pbSignedData,
                 &pCardSigningInfo->cbSignedData);
-    if (rv != CKR_OK)
+    if (rv != CKR_OK) {
+      g_pfnCspFree(pCardSigningInfo->pbSignedData);
+      pCardSigningInfo->pbSignedData = NULL;
+      pCardSigningInfo->cbSignedData = 0;
       CMD_RETURN(map_pkcs11_crypto_error(rv), "C_Sign failed");
+    }
 
     CMD_DEBUG("Signed data: %d bytes (@%p)", pCardSigningInfo->cbSignedData, pCardSigningInfo->pbSignedData);
     CMD_PRINT_HEX(pCardSigningInfo->pbSignedData, pCardSigningInfo->cbSignedData);
@@ -210,8 +218,11 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
     CK_MECHANISM mech = {CKM_ECDSA, NULL, 0};
     CK_OBJECT_HANDLE hKey = CMD_MAKE_OBJECT_HANDLE(0, CKO_PRIVATE_KEY, slot->id);
     CK_RV rv = C_SignInit(pContext->session, &mech, hKey);
-    if (rv != CKR_OK)
+    if (rv != CKR_OK) {
+      pCardSigningInfo->pbSignedData = NULL;
+      pCardSigningInfo->cbSignedData = 0;
       CMD_RETURN(map_pkcs11_crypto_error(rv), "C_SignInit failed");
+    }
 
     pCardSigningInfo->cbSignedData = slot->ecc.cbPrivate * 2;
     pCardSigningInfo->pbSignedData = (PBYTE)g_pfnCspAlloc(pCardSigningInfo->cbSignedData);
@@ -219,8 +230,12 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
 
     rv = C_Sign(pContext->session, pCardSigningInfo->pbData, pCardSigningInfo->cbData, pCardSigningInfo->pbSignedData,
                 &pCardSigningInfo->cbSignedData);
-    if (rv != CKR_OK)
+    if (rv != CKR_OK) {
+      g_pfnCspFree(pCardSigningInfo->pbSignedData);
+      pCardSigningInfo->pbSignedData = NULL;
+      pCardSigningInfo->cbSignedData = 0;
       CMD_RETURN(map_pkcs11_crypto_error(rv), "C_Sign failed");
+    }
 
     CMD_DEBUG("Signed data: %d bytes (@%p)", pCardSigningInfo->cbSignedData, pCardSigningInfo->pbSignedData);
     CMD_PRINT_HEX(pCardSigningInfo->pbSignedData, pCardSigningInfo->cbSignedData);
