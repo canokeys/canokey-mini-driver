@@ -48,6 +48,16 @@ PFN_CSP_FREE g_pfnCspFree = NULL;
 PFN_CSP_PAD_DATA g_pfnCspPadData = NULL;
 SRWLOCK g_cmd_context_lock = SRWLOCK_INIT;
 
+// Managed mode is intentionally limited to one physical card per process.
+// Keep the first card identity and binding so additional Windows CARD_DATA
+// instances can share the card while a different card is rejected safely.
+static BYTE g_managed_card_id[16];
+static BOOL g_managed_card_id_valid = FALSE;
+static SCARDCONTEXT g_managed_card_context = 0;
+static SCARDHANDLE g_managed_card_handle = 0;
+static LONG g_managed_context_count = 0;
+static CMD_CONTEXT_PTR g_managed_contexts = NULL;
+
 static void release_exclusive_context_lock(PSRWLOCK *lock) {
   if (lock != NULL && *lock != NULL)
     ReleaseSRWLockExclusive(*lock);
@@ -281,6 +291,38 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
     CMD_RETURN(dwRet, "cannot generate card identifier");
   }
 
+  if (!g_managed_card_id_valid) {
+    memcpy(g_managed_card_id, context->cardId, sizeof(g_managed_card_id));
+    g_managed_card_id_valid = TRUE;
+  } else if (memcmp(g_managed_card_id, context->cardId, sizeof(g_managed_card_id)) != 0) {
+    // The PKCS#11 bridge is process-wide. Do not let a second physical card
+    // inherit the first card's token login or metadata; restore the previous
+    // handle because C_CNK_EnableManagedMode may have rotated it while probing.
+    CK_RV cleanupRv = cleanup_failed_acquire(context->session, TRUE);
+    if (cleanupRv == CKR_OK) {
+      CNK_MANAGED_MODE_INIT_ARGS restoreArgs = {.malloc_func = (CNK_MALLOC_FUNC)g_pfnCspAlloc,
+                                                .free_func = g_pfnCspFree,
+                                                .hSCardCtx = g_managed_card_context,
+                                                .hScard = g_managed_card_handle};
+      CK_RV restoreRv = C_CNK_EnableManagedMode(&restoreArgs);
+      if (restoreRv != CKR_OK)
+        CMD_WARN("Failed to restore active managed card handle: 0x%lx", restoreRv);
+      pCardData->pvVendorSpecific = NULL;
+      g_pfnCspFree(context);
+    } else {
+      CMD_WARN("Card identity rejection cleanup was incomplete: 0x%lx", cleanupRv);
+    }
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "different physical card is already bound");
+  }
+
+  context->card_context = pCardData->hSCardCtx;
+  context->card_handle = pCardData->hScard;
+  context->managed_next = g_managed_contexts;
+  g_managed_contexts = context;
+  g_managed_card_context = context->card_context;
+  g_managed_card_handle = context->card_handle;
+  g_managed_context_count++;
+
   CMD_RET_OK;
 }
 
@@ -318,9 +360,26 @@ DWORD CardDeleteContext(__inout PCARD_DATA pCardData) {
         CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Managed binding cleanup is still pending");
       }
     }
+    CMD_CONTEXT_PTR *link = &g_managed_contexts;
+    while (*link != NULL && *link != context)
+      link = &(*link)->managed_next;
+    if (*link == context)
+      *link = context->managed_next;
     SecureZeroMemory(context->dhAgreements, sizeof(context->dhAgreements));
     pCardData->pfnCspFree(context);
     pCardData->pvVendorSpecific = NULL;
+    if (g_managed_context_count > 0)
+      g_managed_context_count--;
+    if (g_managed_context_count == 0) {
+      SecureZeroMemory(g_managed_card_id, sizeof(g_managed_card_id));
+      g_managed_card_id_valid = FALSE;
+      g_managed_card_context = 0;
+      g_managed_card_handle = 0;
+      g_managed_contexts = NULL;
+    } else if (g_managed_contexts != NULL) {
+      g_managed_card_context = g_managed_contexts->card_context;
+      g_managed_card_handle = g_managed_contexts->card_handle;
+    }
   }
   CMD_RET_OK;
 }

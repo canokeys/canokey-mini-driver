@@ -80,6 +80,9 @@ typedef struct {
 struct CMD_CONTEXT {
   CK_SESSION_HANDLE session;
   SRWLOCK state_lock;
+  SCARDCONTEXT card_context;
+  SCARDHANDLE card_handle;
+  CMD_CONTEXT_PTR managed_next;
   LONG metadataGeneration;
   CANOKEY canokey;
   BYTE cardId[16];
