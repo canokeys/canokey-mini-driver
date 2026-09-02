@@ -200,6 +200,9 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
   // initialize canokey-pkcs11
   CK_RV ret = C_Initialize(NULL);
   if (ret != CKR_OK && ret != CKR_CRYPTOKI_ALREADY_INITIALIZED) {
+    CK_RV resetRv = C_CNK_ResetManagedMode();
+    if (resetRv != CKR_OK)
+      CMD_WARN("Managed binding rollback after C_Initialize failure failed: 0x%lx", resetRv);
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot initialize canokey-pkcs11");
   }
   CMD_CONTEXT_PTR context = g_pfnCspAlloc(sizeof(CMD_CONTEXT));
