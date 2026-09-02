@@ -5,6 +5,11 @@
 - This repository builds the Windows Smart Card Minidriver layer for CanoKey.
 - The minidriver wraps `external/canokey-pkcs11`; when editing inside that
   submodule, also follow `external/canokey-pkcs11/AGENTS.md`.
+- Minidriver call sequences must satisfy the ownership, concurrency, progress,
+  and exit-state guarantees in
+  `external/canokey-pkcs11/docs/api-contracts.md`. When a Windows callback
+  composes multiple PKCS#11 calls, document and test the combined rollback and
+  lifetime boundary rather than treating each return code independently.
 - Treat `docs/` as useful design notes, not as the source of truth. Verify
   behavior against the code, PKCS#11, and the Windows Smart Card Minidriver
   contract before implementing larger changes.
