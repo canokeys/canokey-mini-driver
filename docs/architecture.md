@@ -62,10 +62,11 @@ The mapping is policy, not merely algorithm capability. PKCS#11 can perform an
 RSA private operation in another slot, but the minidriver must not expose that
 slot as a Windows key-exchange container.
 
-The current managed-mode bridge is process-wide. A second card context with a
-different PC/SC handle or CSP allocator is rejected rather than allowed to
-overwrite the active binding; true multi-card in-process support requires a
-future per-context PKCS#11 backend boundary.
+The current managed-mode bridge has one process-wide token and allocator, but
+Windows may create several contexts for that same card. Their PC/SC handles
+may rotate, so each entry point reasserts the current context's handle before
+card I/O. A different allocator is rejected; true multi-card in-process
+support still requires a future per-context PKCS#11 backend boundary.
 
 The static PKCS#11 dependency is compiled with function/data sections and the
 minidriver DLL is linked with reference elimination and identical-code folding.

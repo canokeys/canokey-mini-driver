@@ -64,11 +64,14 @@ CardDeleteContext
   -> C_Finalize
 ```
 
-The managed binding is process-wide rather than per `CMD_CONTEXT`. A second
-`CARD_DATA` is accepted only when its `SCARDHANDLE`, `SCARDCONTEXT`, and CSP
-allocator callbacks match the established binding; a different binding is
-rejected with an internal error. If initialization fails, the acquisition path
-rolls back an uninitialized managed binding or retains `pvVendorSpecific` so
+The managed token and allocator binding is process-wide rather than per
+`CMD_CONTEXT`. Windows may create several contexts for one physical card, so a
+different PC/SC handle is accepted and becomes the active handle for the
+current operation. Allocator callbacks must match the established binding;
+changing them is rejected to avoid freeing memory through the wrong CSP heap.
+True multi-card in-process support still requires a per-context PKCS#11 backend
+boundary. If initialization fails, the acquisition path rolls back an
+uninitialized managed binding or retains `pvVendorSpecific` so
 `CardDeleteContext` can retry failed session/finalize cleanup.
 
 The close-before-finalize order is required. Reversing it can retain stale

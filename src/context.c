@@ -117,8 +117,8 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "CARD_DATA context is already acquired");
 
   // Validate the process-wide managed binding before publishing callbacks.
-  // A failed second acquisition must not replace the allocator used by the
-  // already-active context.
+  // Windows may supply a new card handle for the same physical card; the
+  // PKCS#11 bridge rotates that handle, but must never rotate allocators.
   CNK_MANAGED_MODE_INIT_ARGS managedArgs = {.malloc_func = (CNK_MALLOC_FUNC)pCardData->pfnCspAlloc,
                                             .free_func = (CNK_FREE_FUNC)pCardData->pfnCspFree,
                                             .hSCardCtx = pCardData->hSCardCtx,
