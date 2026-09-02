@@ -95,11 +95,20 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
 
   // TODO: check pbAtr content
 
-  // Import the memory management functions
+  // Validate the process-wide managed binding before publishing callbacks.
+  // A failed second acquisition must not replace the allocator used by the
+  // already-active context.
+  CNK_MANAGED_MODE_INIT_ARGS managedArgs = {.malloc_func = (CNK_MALLOC_FUNC)pCardData->pfnCspAlloc,
+                                            .free_func = (CNK_FREE_FUNC)pCardData->pfnCspFree,
+                                            .hSCardCtx = pCardData->hSCardCtx,
+                                            .hScard = pCardData->hScard};
+  CK_RV managedRv = C_CNK_EnableManagedMode(&managedArgs);
+  if (managedRv != CKR_OK && managedRv != CKR_CRYPTOKI_ALREADY_INITIALIZED)
+    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot bind managed card context");
+
+  // Import callbacks only after managed binding validation succeeds.
   g_pfnCspAlloc = pCardData->pfnCspAlloc;
   g_pfnCspFree = pCardData->pfnCspFree;
-
-  // Import the padding function
   g_pfnCspPadData = pCardData->pfnCspPadData;
 
   // Set function pointers in pCardData
@@ -189,8 +198,6 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
 #pragma clang diagnostic pop
 
   // initialize canokey-pkcs11
-  INJECT_HANDLES();
-
   CK_RV ret = C_Initialize(NULL);
   if (ret != CKR_OK && ret != CKR_CRYPTOKI_ALREADY_INITIALIZED) {
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot initialize canokey-pkcs11");

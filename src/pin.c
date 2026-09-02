@@ -267,6 +267,7 @@ DWORD WINAPI CardAuthenticateEx(__in PCARD_DATA pCardData, __in PIN_ID PinId, __
   // PPIN_INFO pPinInfo = (PPIN_INFO)pbPinData;
 
   BYTE pinTries = 0;
+  set_attempts_unknown(pcAttemptsRemaining);
   BYTE managementKey[CMD_MANAGEMENT_KEY_LEN];
   PBYTE loginData = pbPinData;
   CK_ULONG loginDataLen = cbPinData;

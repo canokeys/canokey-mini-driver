@@ -103,10 +103,11 @@ C_CNK_LoginPinManaged
 ```
 
 `C_CNK_LoginPinManaged` is a narrow CanoKey extension. After successful user
-PIN verification, it validates PIV ADMIN DATA, reads the PIN-protected PRINTED
-object, parses the management-key payload, authenticates the management key,
-checks that the PUK retry counter is zero, and clears all temporary key
-material. The raw management key never crosses into the minidriver.
+PIN verification, it validates PIV ADMIN DATA, checks that the PUK retry counter
+is zero, and checks the management-key cache. Only when the key is not already
+cached does it read the PIN-protected PRINTED object, parse the payload, and
+authenticate the management key. The raw management key never crosses into the
+minidriver.
 
 ### 3.3 Cryptographic Operations
 
@@ -318,17 +319,17 @@ the CNG blob.
 
 ### 6.3 Signing
 
-`CardSignData` maps Windows padding and key type to PKCS#11 mechanisms:
+`CardSignData` uses the CSP padding callback for RSA, then sends the padded
+message through raw RSA. ECDSA is delegated directly to PKCS#11:
 
 | Windows request | PKCS#11 mechanism |
 | --- | --- |
-| RSA PKCS#1 | `CKM_RSA_PKCS` |
-| RSA PSS | `CKM_RSA_PKCS_PSS` |
+| RSA PKCS#1/PSS | host `g_pfnCspPadData` + `CKM_RSA_X_509` |
 | raw RSA | `CKM_RSA_X_509` |
 | ECDSA | `CKM_ECDSA` |
 
-For PSS, the Windows hash algorithm and salt length are converted into
-`CK_RSA_PKCS_PSS_PARAMS`, including the matching MGF1 algorithm.
+For PSS, the CSP callback applies the requested hash and salt policy before the
+raw RSA operation; no `CK_RSA_PKCS_PSS_PARAMS` is sent to the token.
 
 ### 6.4 RSA Decryption
 

@@ -47,6 +47,11 @@ The mapping is policy, not merely algorithm capability. PKCS#11 can perform an
 RSA private operation in another slot, but the minidriver must not expose that
 slot as a Windows key-exchange container.
 
+The current managed-mode bridge is process-wide. A second card context with a
+different PC/SC handle or CSP allocator is rejected rather than allowed to
+overwrite the active binding; true multi-card in-process support requires a
+future per-context PKCS#11 backend boundary.
+
 The minidriver accepts only NIST P-256, P-384, and P-521 EC parameters. It
 matches the complete DER `CKA_EC_PARAMS` value before constructing a CNG blob;
 coordinate length is not a curve identifier. This keeps secp256k1 and SM2

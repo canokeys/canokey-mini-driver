@@ -108,7 +108,7 @@ DWORD GenerateCardIdentifier(CMD_CONTEXT_PTR pContext) {
       CMD_RETURN(result, "Failed to derive card identifier from PIV CHUID");
     CMD_RET_OK;
   }
-  if (rv != CKR_DATA_INVALID && rv != CKR_OBJECT_HANDLE_INVALID)
+  if (rv != CKR_OK && rv != CKR_DATA_INVALID && rv != CKR_OBJECT_HANDLE_INVALID)
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to read PIV CHUID");
 
   CK_SESSION_INFO sessionInfo;
