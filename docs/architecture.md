@@ -52,6 +52,13 @@ different PC/SC handle or CSP allocator is rejected rather than allowed to
 overwrite the active binding; true multi-card in-process support requires a
 future per-context PKCS#11 backend boundary.
 
+The static PKCS#11 dependency is compiled with function/data sections and the
+minidriver DLL is linked with reference elimination and identical-code folding.
+This removes PKCS#11 entry points that the Windows surface does not call,
+including host Verify, host Encrypt, and PQC implementations, while retaining
+the complete library build for standalone consumers. Debug builds use the same
+options, so stepping into discarded or folded functions may be less precise.
+
 Container creation and import require `ROLE_USER`; administrator-only
 container creation is rejected even when a management key is cached. The
 minidriver accepts only NIST P-256, P-384, and P-521 EC parameters. It

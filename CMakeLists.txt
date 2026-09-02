@@ -13,6 +13,14 @@ if(BUILD_SHARED_LIBS)
 endif()
 add_subdirectory(external/canokey-pkcs11)
 
+# The minidriver consumes only a subset of the static PKCS#11 entry points.
+# Keep functions and global data in independently discardable sections so the
+# linker can remove Verify, host Encrypt, PQC, and other unused code from the
+# final DLL without maintaining a separate PKCS#11 source fork.
+if(MSVC)
+  target_compile_options(canokey_pkcs11 PRIVATE /Gy /Gw)
+endif()
+
 set(CMAKE_VERBOSE_MAKEFILE OFF)
 set(CMAKE_C_STANDARD 17)
 
@@ -53,6 +61,13 @@ endif()
 
 # export necessary symbols for BaseCSP to use
 target_link_options(${CMD_LIB_NAME} PRIVATE /DEF:${CMAKE_CURRENT_SOURCE_DIR}/${CMD_LIB_NAME}.def)
+
+if(MSVC)
+  # /OPT:REF requires non-incremental linking. This also applies to Debug so
+  # CI artifacts reflect the shipped minidriver surface, at the cost of less
+  # convenient stepping through discarded or folded implementation code.
+  target_link_options(${CMD_LIB_NAME} PRIVATE /INCREMENTAL:NO /OPT:REF /OPT:ICF)
+endif()
 
 add_custom_target(
   ${CMD_LIB_NAME}-debug-install

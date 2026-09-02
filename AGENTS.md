@@ -359,3 +359,9 @@ EC keys in those slots       -> also ECDH-capable
   without a log file, must not assert or crash the host process.
 - Keep minidriver logging thread-safe. Emit a complete log line while holding
   the logging lock, and avoid exposing mutable logging globals to callers.
+- The minidriver statically links `canokey_pkcs11` with ClangCL function/data
+  sections (`/Gy /Gw`) and final-link garbage collection (`/OPT:REF /OPT:ICF`).
+  Keep the minidriver's PKCS#11 calls and function-table reachability scoped:
+  unused PKCS#11 Verify, host Encrypt, and PQC code should remain removable.
+  These options are enabled for Debug as well as Release; discarded or folded
+  functions may be less convenient to step through in a debugger.
