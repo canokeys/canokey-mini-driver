@@ -25,6 +25,15 @@ extern PFN_CSP_PAD_DATA g_pfnCspPadData;
     if (ret != CKR_OK && ret != CKR_CRYPTOKI_ALREADY_INITIALIZED) {                                                    \
       CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot enable managed mode");                                                \
     }                                                                                                                  \
+    /* Keep per-CARD_DATA role bits consistent with token-wide PKCS#11 logout. */                                      \
+    if (pCardData->pvVendorSpecific != NULL) {                                                                         \
+      CMD_CONTEXT_PTR context = (CMD_CONTEXT_PTR)pCardData->pvVendorSpecific;                                          \
+      CK_SESSION_INFO info;                                                                                            \
+      /* The private PKCS#11 SessionState enum assigns 0 and 2 to public states. */                                    \
+      if (C_GetSessionInfo(context->session, &info) == CKR_OK && (info.state == 0 || info.state == 2)) {               \
+        context->authenticatedPins = PIN_SET_NONE;                                                                     \
+      }                                                                                                                \
+    }                                                                                                                  \
   } while (0);
 
 #define CMD_MAX_DH_AGREEMENTS 8
