@@ -48,7 +48,7 @@ static BOOL container_index_is_piv_9d(BYTE bContainerIndex) {
 
 static DWORD validate_create_container_request(BYTE bContainerIndex, DWORD dwFlags, DWORD dwKeySpec, DWORD dwKeySize,
                                                PBYTE pbKeyData) {
-  if (bContainerIndex >= MAX_SLOT_ID) {
+  if (bContainerIndex >= WINDOWS_CONTAINER_COUNT) {
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
   }
   if (dwFlags != CARD_CREATE_CONTAINER_KEY_GEN && dwFlags != CARD_CREATE_CONTAINER_KEY_IMPORT) {

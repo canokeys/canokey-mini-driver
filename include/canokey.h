@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #define MAX_SLOT_ID 24
+#define WINDOWS_CONTAINER_COUNT 6
 #define CANOKEY_SLOT_CAP_SIGN 0x01
 #define CANOKEY_SLOT_CAP_DECRYPT 0x02
 #define CANOKEY_SLOT_CAP_DERIVE 0x04

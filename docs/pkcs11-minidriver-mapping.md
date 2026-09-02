@@ -456,9 +456,10 @@ The bundled PKCS#11 3.2 implementation supports ML-DSA-65 and ML-KEM-768
 across all 24 PIV key slots. Current Windows CPDK headers do not define
 minidriver key specifications, structures, or callbacks for those algorithms.
 
-The minidriver therefore exposes only classic RSA and EC containers through
-Microsoft Base Smart Card CSP and Smart Card KSP. It does not invent private
-Windows identifiers or an incompatible ABI. Applications can use PQC directly
+The minidriver therefore exposes only six stable classic RSA and EC containers
+(`9A`, `9C`, `9D`, `9E`, `82`, and `83`) through Microsoft Base Smart Card CSP
+and Smart Card KSP. It does not invent private Windows identifiers or an
+incompatible ABI. Applications can use PQC directly
 through PKCS#11 until Microsoft publishes a suitable provider contract.
 
 ## 12. Verification

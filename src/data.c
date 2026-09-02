@@ -42,7 +42,7 @@ static DWORD map_pkcs11_write_error(CK_RV rv) {
 void FillCardFreeSpaceInfo(PCARD_FREE_SPACE_INFO pCardFreeSpaceInfo) {
   pCardFreeSpaceInfo->dwBytesAvailable = CARD_DATA_VALUE_UNKNOWN;
   pCardFreeSpaceInfo->dwKeyContainersAvailable = CARD_DATA_VALUE_UNKNOWN;
-  pCardFreeSpaceInfo->dwMaxKeyContainers = MAX_SLOT_ID;
+  pCardFreeSpaceInfo->dwMaxKeyContainers = WINDOWS_CONTAINER_COUNT;
 }
 
 static DWORD AllocCopy(const void *data, DWORD cbData, PBYTE *ppbData, PDWORD pcbData) {
@@ -137,7 +137,7 @@ static BYTE GetFileContainerIndex(LPCSTR pszFileName) {
       return 0xff;
     }
     value = value * 10 + (unsigned long)(*digits - '0');
-    if (value > MAX_SLOT_ID) {
+    if (value >= WINDOWS_CONTAINER_COUNT) {
       return 0xff;
     }
     digits++;
@@ -166,7 +166,7 @@ static DWORD GetCertificateFileSlot(CMD_CONTEXT_PTR pContext, LPCSTR pszFileName
   if (slotIndex >= pContext->canokey.slotCount) {
     CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "File not found");
   }
-  if (forWrite && slotIndex >= MAX_SLOT_ID) {
+  if (forWrite && slotIndex >= WINDOWS_CONTAINER_COUNT) {
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
   }
 

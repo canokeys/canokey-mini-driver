@@ -63,6 +63,11 @@ cmake --build out\build\x64-Clang-Debug --target canokey-minidriver-debug-instal
 
 ## Development Hygiene
 
+- Before reviewing or implementing non-trivial behavior, follow
+  `docs/validation.md` and the PKCS#11 submodule's validation standard. Treat
+  the state-machine, authorization matrix, failure injection,
+  cross-repository, and reviewer checks as required workflow.
+
 - English is the project language. Write source comments, documentation,
   diagnostic text, commit messages, and pull-request content in English.
   Other languages are allowed only in explicitly identified localization
@@ -291,8 +296,8 @@ EC keys in those slots       -> also ECDH-capable
   temporary PIN and then restoring the development PIN.
 - Microsoft Smart Card KSP key creation chooses a minidriver container index
   from `mscp/cmapfile`; public KSP properties select provider/reader, not a
-  PIV slot directly. Keep container indexes stable: `0..23` map to PIV object
-  IDs `1..24` (`9A`, `9C`, `9D`, `9E`, and `82` through `95`).
+  PIV slot directly. Keep container indexes stable: `0..5` map to PIV object
+  IDs `1..6` (`9A`, `9C`, `9D`, `9E`, `82`, and `83`).
 - Never infer a Windows EC curve from coordinate length. Read and match the
   complete `CKA_EC_PARAMS` value, and expose only NIST P-256, P-384, and P-521
   through cardmod/CNG. secp256k1, SM2, Ed25519, and X25519 remain PKCS#11-only

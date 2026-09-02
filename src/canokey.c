@@ -23,24 +23,6 @@ static CK_BYTE capabilities_for_piv_slot(CK_BYTE pivId) {
   case 0x9E:
   case 0x82:
   case 0x83:
-  case 0x84:
-  case 0x85:
-  case 0x86:
-  case 0x87:
-  case 0x88:
-  case 0x89:
-  case 0x8A:
-  case 0x8B:
-  case 0x8C:
-  case 0x8D:
-  case 0x8E:
-  case 0x8F:
-  case 0x90:
-  case 0x91:
-  case 0x92:
-  case 0x93:
-  case 0x94:
-  case 0x95:
     return CANOKEY_SLOT_CAP_SIGN | CANOKEY_SLOT_CAP_DERIVE | (pivId == 0x9D ? CANOKEY_SLOT_CAP_DECRYPT : 0);
   default:
     return 0;
@@ -197,9 +179,9 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
 
   // Initialize the CANOKEY structure
   memset(pCanokey, 0, sizeof(CANOKEY));
-  pCanokey->slotCount = MAX_SLOT_ID;
+  pCanokey->slotCount = WINDOWS_CONTAINER_COUNT;
 
-  for (CK_BYTE i = 1; i <= MAX_SLOT_ID; i++) {
+  for (CK_BYTE i = 1; i <= WINDOWS_CONTAINER_COUNT; i++) {
     CMD_DEBUG("Reading slot %d", i);
 
     SLOT *slot = &pCanokey->slots[i - 1];

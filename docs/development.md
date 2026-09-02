@@ -286,8 +286,8 @@ caller-owned callback, and only call it later if supporting KDF buffers such as
 When creating keys through Microsoft Smart Card KSP, callers select the smart
 card provider and reader, not a PIV slot directly. The KSP reads `mscp/cmapfile`
 and chooses a container index for the new key; the minidriver maps container
-indexes `0..23` to PIV object IDs `1..24` (`9A`, `9C`, `9D`, `9E`, and `82`
-through `95`).
+indexes `0..5` to PIV object IDs `1..6` (`9A`, `9C`, `9D`, `9E`, `82`, and
+`83`).
 Creating a new smart-card key must not use a silent context: Microsoft documents
 that new smart-card containers can require UI, and local testing showed
 `certreq -q`/`Silent = true` and `NCRYPT_SILENT_FLAG` stop before

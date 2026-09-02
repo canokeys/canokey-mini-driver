@@ -47,9 +47,9 @@ installation and release validation are still in progress.
   all 24 PIV key slots. Current Windows CPDK headers cannot represent these
   algorithms, so CSP/KSP exposure remains classic-only; see
   [`docs/pqc.md`](docs/pqc.md).
-- Windows container indexes `0..23` map to all PIV key slots (`9A`, `9C`,
-  `9D`, `9E`, and `82` through `95`). RSA and the NIST P-256/P-384/P-521
-  curves are exposed through CSP/KSP. Curve identity comes from
+- Windows container indexes `0..5` map only to PIV key slots `9A`, `9C`, `9D`,
+  `9E`, `82`, and `83`. RSA and the NIST P-256/P-384/P-521 curves are exposed
+  through CSP/KSP. Curve identity comes from
   `CKA_EC_PARAMS`; secp256k1 and SM2 are deliberately skipped instead of being
   misreported as P-256 merely because they also use 32-byte coordinates.
 - `certutil -scinfo` can see the card and current certificates.

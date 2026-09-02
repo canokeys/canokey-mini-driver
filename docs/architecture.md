@@ -37,10 +37,10 @@ to `SCARD_*` errors.
 
 ## Slot And Container Policy
 
-Container indexes `0..23` map to PIV object IDs `1..24`, hence slots
-`9A`, `9C`, `9D`, `9E`, and `82` through `95`. All 24 can sign. Supported EC
-keys can derive.
-Only an RSA key in 9D is exposed as Windows `AT_KEYEXCHANGE` and accepted by
+Container indexes `0..5` map to PIV object IDs `1..6`, hence slots
+`9A`, `9C`, `9D`, `9E`, `82`, and `83`. These six stable Windows containers are
+signature-capable; supported EC keys can derive. Only an RSA key in 9D is
+exposed as Windows `AT_KEYEXCHANGE` and accepted by
 `CardRSADecrypt`; this preserves the standard PIV key-management role.
 
 The mapping is policy, not merely algorithm capability. PKCS#11 can perform an
