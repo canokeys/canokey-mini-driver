@@ -13,6 +13,8 @@
 #include "logging.h"
 #include "minidriver.h"
 
+#define CNK_CACHE_FRESHNESS_EPOCH 0x26u
+
 static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, PDWORD pcbData);
 
 static DWORD map_pkcs11_write_error(CK_RV rv) {
@@ -67,7 +69,7 @@ static WORD ComputeFreshness(const CMD_CONTEXT *pContext, BOOL includeCertificat
   // Hash live metadata instead of using a process counter so unchanged cards
   // keep stable cache values while key or certificate mutations invalidate
   // the corresponding Windows cache section.
-  uint32_t hash = 2166136261u;
+  uint32_t hash = 2166136261u ^ CNK_CACHE_FRESHNESS_EPOCH;
   for (CK_ULONG i = 0; i < pContext->canokey.slotCount; i++) {
     const SLOT *slot = &pContext->canokey.slots[i];
     hash ^= slot->present ? 1u : 0u;
