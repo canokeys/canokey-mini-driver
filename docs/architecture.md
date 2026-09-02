@@ -62,11 +62,19 @@ The mapping is policy, not merely algorithm capability. PKCS#11 can perform an
 RSA private operation in another slot, but the minidriver must not expose that
 slot as a Windows key-exchange container.
 
-The current managed-mode bridge has one process-wide token and allocator, but
-Windows may create several contexts for that same card. Their PC/SC handles
-may rotate, so each entry point reasserts the current context's handle before
-card I/O. A different allocator is rejected; true multi-card in-process
-support still requires a future per-context PKCS#11 backend boundary.
+The current managed-mode bridge intentionally supports one physical CanoKey per
+process. Windows may nevertheless create several `CARD_DATA`/PKCS#11 contexts
+for that same card. Their PC/SC handles may rotate, so each entry point
+reasserts the current context's handle before card I/O. A different allocator
+or a different physical card must be rejected; multi-card in-process support is
+outside this design and requires a per-token backend boundary.
+
+The process-wide allocator and crypto runtime are shared. Token authentication
+and metadata are shared only for the one bound card, while each context owns
+its PKCS#11 session and minidriver state. The planned lifecycle change is for
+`CardDeleteContext` to release one context reference and for the final context
+to perform PKCS#11 finalization and reset the managed binding; the current
+implementation still needs this explicit context registry.
 
 The static PKCS#11 dependency is compiled with function/data sections and the
 minidriver DLL is linked with reference elimination and identical-code folding.
