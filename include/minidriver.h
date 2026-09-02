@@ -17,9 +17,12 @@ extern PFN_CSP_FREE g_pfnCspFree;
 // Global function pointer for padding
 extern PFN_CSP_PAD_DATA g_pfnCspPadData;
 extern SRWLOCK g_cmd_context_lock;
+extern volatile LONG g_cmd_metadata_generation;
 
 typedef struct CMD_CONTEXT CMD_CONTEXT;
 typedef CMD_CONTEXT *CMD_CONTEXT_PTR;
+
+DWORD RefreshCardMetadata(CMD_CONTEXT_PTR pContext);
 
 static __attribute__((unused)) void cmd_release_shared_context_lock(PSRWLOCK *lock) {
   if (lock != NULL && *lock != NULL)
@@ -48,6 +51,12 @@ static __attribute__((unused)) void cmd_release_context_state_lock(CMD_CONTEXT_P
     CMD_CONTEXT_PTR _cmd_context = (CMD_CONTEXT_PTR)pCardData->pvVendorSpecific;                                       \
     AcquireSRWLockExclusive(&_cmd_context->state_lock);                                                                \
     _cmd_state_guard = _cmd_context;                                                                                   \
+    LONG _cmd_generation = InterlockedCompareExchange(&g_cmd_metadata_generation, 0, 0);                               \
+    if (_cmd_context->metadataGeneration != _cmd_generation) {                                                         \
+      DWORD _cmd_refresh_ret = RefreshCardMetadata(_cmd_context);                                                      \
+      if (_cmd_refresh_ret != SCARD_S_SUCCESS)                                                                         \
+        CMD_RETURN(_cmd_refresh_ret, "cannot refresh card metadata");                                                  \
+    }                                                                                                                  \
     CK_SESSION_INFO _cmd_session_info;                                                                                 \
     /* Public sessions have no cached authentication in either access mode. */                                         \
     if (C_GetSessionInfo(_cmd_context->session, &_cmd_session_info) == CKR_OK &&                                       \
@@ -71,6 +80,7 @@ typedef struct {
 struct CMD_CONTEXT {
   CK_SESSION_HANDLE session;
   SRWLOCK state_lock;
+  LONG metadataGeneration;
   CANOKEY canokey;
   BYTE cardId[16];
   PIN_SET authenticatedPins;
@@ -85,6 +95,5 @@ static __attribute__((unused)) void cmd_release_context_state_lock(CMD_CONTEXT_P
 DWORD FillCardKeySizes(DWORD dwKeySpec, PCARD_KEY_SIZES pKeySizes);
 void FillCardFreeSpaceInfo(PCARD_FREE_SPACE_INFO pCardFreeSpaceInfo);
 DWORD GenerateCardIdentifier(CMD_CONTEXT_PTR pContext);
-DWORD RefreshCardMetadata(CMD_CONTEXT_PTR pContext);
 
 #endif // MINIDRIVER_H

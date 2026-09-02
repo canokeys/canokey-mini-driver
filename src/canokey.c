@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <string.h>
 
+volatile LONG g_cmd_metadata_generation = 1;
+
 void reverse_bytes(CK_BYTE *data, CK_ULONG len) {
   for (CK_ULONG i = 0; i < len / 2; i++) {
     const CK_BYTE tmp = data[i];

@@ -186,10 +186,13 @@ static DWORD GetCertificateFileSlot(CMD_CONTEXT_PTR pContext, LPCSTR pszFileName
 }
 
 DWORD RefreshCardMetadata(CMD_CONTEXT_PTR pContext) {
-  CK_RV rv = read_canokey(pContext->session, &pContext->canokey);
+  CANOKEY snapshot = {0};
+  CK_RV rv = read_canokey(pContext->session, &snapshot);
   if (rv != CKR_OK) {
     CMD_RETURN(map_pkcs11_write_error(rv), "Failed to refresh CanoKey metadata");
   }
+  pContext->canokey = snapshot;
+  pContext->metadataGeneration = InterlockedIncrement(&g_cmd_metadata_generation);
   CMD_RET_OK;
 }
 

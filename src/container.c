@@ -301,8 +301,10 @@ static DWORD import_rsa_key(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWOR
   templ[count++] = (CK_ATTRIBUTE){CKA_EXPONENT_2, components[3], componentLen};
   templ[count++] = (CK_ATTRIBUTE){CKA_COEFFICIENT, components[4], componentLen};
   DWORD ret = append_import_policies(templ, &count, &pinPolicy, &touchPolicy);
-  if (ret != SCARD_S_SUCCESS)
+  if (ret != SCARD_S_SUCCESS) {
+    SecureZeroMemory(components, sizeof(components));
     return ret;
+  }
 
   CK_OBJECT_HANDLE privateKeyHandle = CK_INVALID_HANDLE;
   CK_RV rv = C_CreateObject(pContext->session, templ, count, &privateKeyHandle);
@@ -396,8 +398,10 @@ static DWORD import_ec_key(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWORD
   templ[count++] = (CK_ATTRIBUTE){CKA_EC_PARAMS, (CK_BYTE_PTR)ecParams, ecParamsLen};
   templ[count++] = (CK_ATTRIBUTE){CKA_VALUE, privateScalar, expectedKeyBytes};
   ret = append_import_policies(templ, &count, &pinPolicy, &touchPolicy);
-  if (ret != SCARD_S_SUCCESS)
+  if (ret != SCARD_S_SUCCESS) {
+    SecureZeroMemory(privateScalar, sizeof(privateScalar));
     return ret;
+  }
 
   CK_OBJECT_HANDLE privateKeyHandle = CK_INVALID_HANDLE;
   CK_RV rv = C_CreateObject(pContext->session, templ, count, &privateKeyHandle);

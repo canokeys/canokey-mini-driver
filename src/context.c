@@ -267,6 +267,7 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
     }
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot read canokey");
   }
+  context->metadataGeneration = InterlockedCompareExchange(&g_cmd_metadata_generation, 0, 0);
 
   DWORD dwRet = GenerateCardIdentifier(context);
   if (dwRet != SCARD_S_SUCCESS) {
@@ -302,6 +303,16 @@ DWORD CardDeleteContext(__inout PCARD_DATA pCardData) {
     }
     if (rv == CKR_CRYPTOKI_NOT_INITIALIZED) {
       CK_RV resetRv = C_CNK_ResetManagedMode();
+      if (resetRv == CKR_OPERATION_ACTIVE) {
+        // A failed initialize can leave a retryable backend cleanup pending
+        // while Cryptoki is uninitialized. Re-enter initialization to drain
+        // that cleanup, then finalize the temporary managed instance.
+        resetRv = C_Initialize(NULL);
+        if (resetRv == CKR_OK)
+          resetRv = C_Finalize(NULL);
+        if (resetRv == CKR_OK)
+          resetRv = C_CNK_ResetManagedMode();
+      }
       if (resetRv != CKR_OK) {
         CMD_WARN("Managed binding cleanup is still pending: 0x%lx", resetRv);
         CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Managed binding cleanup is still pending");
