@@ -475,8 +475,8 @@ DWORD WINAPI CardCreateContainer(__in PCARD_DATA pCardData, __in BYTE bContainer
   INJECT_HANDLES();
   CMD_GET_CTX(pCardData, pContext);
 
-  if (!IS_PIN_SET(pContext->authenticatedPins, ROLE_USER)) {
-    CMD_RETURN(SCARD_W_SECURITY_VIOLATION, "Container creation requires user authentication");
+  if (!IS_PIN_SET(pContext->authenticatedPins, ROLE_USER) && !IS_PIN_SET(pContext->authenticatedPins, ROLE_ADMIN)) {
+    CMD_RETURN(SCARD_W_SECURITY_VIOLATION, "Container creation requires user or administrator authentication");
   }
 
   DWORD ret = validate_create_container_request(bContainerIndex, dwFlags, dwKeySpec, dwKeySize, pbKeyData);
@@ -497,10 +497,7 @@ DWORD WINAPI CardCreateContainerEx(__in PCARD_DATA pCardData, __in BYTE bContain
   CMD_LOG_FUNC("pCardData %p, bContainerIndex %d, dwFlags %x, dwKeySpec %x, dwKeySize %d, pbKeyData %p, PinId %d",
                pCardData, bContainerIndex, dwFlags, dwKeySpec, dwKeySize, pbKeyData, PinId);
 
-  if (PinId == ROLE_ADMIN) {
-    CMD_RETURN(SCARD_W_SECURITY_VIOLATION, "Administrators cannot create user key containers");
-  }
-  if (PinId != ROLE_USER) {
+  if (PinId != ROLE_USER && PinId != ROLE_ADMIN) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid PinId");
   }
 
