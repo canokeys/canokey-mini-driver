@@ -109,6 +109,21 @@ The helper script uses the same defaults as the local debug workflow:
 .\build.ps1 -Arch x64 -Config Debug
 ```
 
+Windows on ARM64 uses the native ARM64 artifact and must not reuse the x64
+Calais mapping:
+
+```powershell
+.\build.ps1 -Arch arm64 -Config Debug
+cmake --build out\build\arm64-Clang-Debug --target canokey-minidriver-debug-install
+.\scripts\smoke-scinfo.ps1 -Arch arm64
+.\scripts\crypto-test.ps1 -Arch arm64
+```
+
+The DLL mapped for the native `SCardSvr`/`CertPropSvc` process must be the
+ARM64 build. Use an explicit `-DllPath` for scripts that do not expose an
+architecture parameter; x64 processes under emulation are not an ARM64 host
+validation.
+
 If the TF-PSA-Crypto generator needs a specific Python environment, pass it
 explicitly:
 

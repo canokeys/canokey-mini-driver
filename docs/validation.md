@@ -88,6 +88,14 @@ regression. CI without a physical card can validate build and unit-test
 invariants, but it cannot replace this hardware-backed Windows acceptance
 test.
 
+On Windows on ARM64, repeat this gate with the native ARM64 DLL. Confirm the
+DLL machine type and the Calais mapping before testing; an x64 DLL loaded by an
+emulated process does not validate the native `SCardSvr`/`CertPropSvc` path.
+Use `build.ps1 -Arch arm64`, pass `-Arch arm64` to scripts that support it, and
+pass the ARM64 `-DllPath` to scripts that default to x64. A wrong-architecture
+mapping is a failed test, even if a separate x64 process can enumerate the
+reader.
+
 ## Review Procedure
 
 1. Inspect the complete minidriver diff and the exact submodule commit.

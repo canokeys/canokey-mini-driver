@@ -13,6 +13,43 @@ git submodule update --init --recursive
 .\build.ps1 -Arch x64
 ```
 
+### Windows on ARM64
+
+For a native Windows on ARM64 host, build and deploy the ARM64 artifact
+explicitly. Do not point the Calais mapping at the x64 output: the DLL loaded
+by native ARM64 `SCardSvr`/`CertPropSvc` must have an ARM64 machine type.
+
+```powershell
+git submodule update --init --recursive
+.\build.ps1 -Arch arm64 -Config Debug
+cmake --build out\build\arm64-Clang-Debug --target canokey-minidriver-debug-install
+```
+
+Check the artifact before changing the registry mapping:
+
+```powershell
+llvm-readobj --file-headers out\build\arm64-Clang-Debug\canokey-minidriver.dll |
+    Select-String 'Machine|ARM64'
+```
+
+Use the same ATR mapping described in this section, but map it to the ARM64 DLL. The
+debug-install target still copies to `C:\canokey-minidriver`; do not mix an
+x64 DLL from another build into that directory. A 32-bit or x64 test process
+may run under emulation, but that does not validate the native ARM64 Windows
+smart-card host path.
+
+Run the targeted reader acceptance flow from a native PowerShell session:
+
+```powershell
+.\scripts\smoke-scinfo.ps1 -Arch arm64
+.\scripts\crypto-test.ps1 -Arch arm64
+```
+
+For scripts without an `-Arch` parameter, pass the ARM64 DLL explicitly with
+`-DllPath out\build\arm64-Clang-Debug\canokey-minidriver.dll`. Verify the
+reader name through PC/SC first and keep the reader argument explicit so the
+test does not probe unrelated Windows Hello devices.
+
 Copy the DLL and create the default debug log directory:
 
 ```powershell

@@ -57,6 +57,12 @@ out/build/x64-Clang-Debug/canokey-minidriver.dll
 out/build/x64-Clang-Debug/canokey-minidriver.inf
 ```
 
+- Windows on ARM64 acceptance uses `out/build/arm64-Clang-<config>` and must
+  map the ARM64 DLL in Calais. An x64 DLL under emulation is not evidence that
+  native `SCardSvr`/`CertPropSvc` can load the driver. Pass `-Arch arm64` to
+  supported smoke/crypto scripts and `-DllPath` explicitly to scripts whose
+  default remains x64.
+
 - The debug deployment target copies the DLL to `CMD_DEBUG_INSTALL_DIR`
   (`C:/canokey-minidriver` by default) and creates `CMD_DEBUG_LOG_DIR`
   (`C:/canokey-minidriver/logs` by default). These are debug deployment
