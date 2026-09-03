@@ -39,7 +39,7 @@ static __attribute__((unused)) void cmd_release_context_state_lock(CMD_CONTEXT_P
   AcquireSRWLockExclusive(&g_cmd_context_lock);                                                                        \
   PSRWLOCK _cmd_context_lock CMD_CONTEXT_LOCK_GUARD = &g_cmd_context_lock;                                             \
   CNK_MANAGED_MODE_INIT_ARGS _cmd_managed_args = {.malloc_func = (CNK_MALLOC_FUNC)g_pfnCspAlloc,                       \
-                                                  .free_func = g_pfnCspFree,                                           \
+                                                  .free_func = (CNK_FREE_FUNC)g_pfnCspFree,                            \
                                                   .hSCardCtx = pCardData->hSCardCtx,                                   \
                                                   .hScard = pCardData->hScard};                                        \
   CK_RV _cmd_managed_ret = C_CNK_EnableManagedMode(&_cmd_managed_args);                                                \

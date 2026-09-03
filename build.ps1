@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("x64", "arm64", "all")]
+    [ValidateSet("x86", "x64", "arm64", "all")]
     [string]$Arch = "x64",
 
     [ValidateSet("Debug", "Release", "RelWithDebInfo", "MinSizeRel")]
@@ -58,6 +58,7 @@ function Convert-ArchName {
     param([string]$TargetArch)
 
     switch ($TargetArch) {
+        "x86" { return "x86" }
         "x64" { return "x64" }
         "arm64" { return "arm64" }
         default { throw "Unsupported architecture: $TargetArch" }
@@ -68,6 +69,7 @@ function Get-ClangTarget {
     param([string]$TargetArch)
 
     switch ($TargetArch) {
+        "x86" { return "i686-pc-windows-msvc" }
         "x64" { return "amd64-pc-windows-msvc" }
         "arm64" { return "arm64-pc-windows-msvc" }
         default { throw "Unsupported architecture: $TargetArch" }
@@ -108,12 +110,16 @@ function Get-LatestMsvcToolsetPath {
 function Assert-MsvcTargetLibraries {
     param(
         [string]$VsInstall,
-        [string]$TargetArch
+        [string]$TargetArch,
+        [string]$BuildConfig
     )
 
     $toolsetPath = Get-LatestMsvcToolsetPath $VsInstall
     $libDir = Join-Path $toolsetPath "lib\$TargetArch"
-    $requiredLibs = @("msvcrtd.lib", "oldnames.lib")
+    # CMake selects the debug CRT only for Debug; the other configurations
+    # link the release CRT. Check the same runtime that the linker will use.
+    $runtimeLibrary = if ($BuildConfig -eq "Debug") { "msvcrtd.lib" } else { "msvcrt.lib" }
+    $requiredLibs = @($runtimeLibrary, "oldnames.lib")
 
     foreach ($lib in $requiredLibs) {
         $libPath = Join-Path $libDir $lib
@@ -150,7 +156,7 @@ function Invoke-CMakeBuild {
     $clangCl = Get-VsToolPath $VsInstall "VC\Tools\Llvm\x64\bin\clang-cl.exe"
 
     $normalizedArch = Convert-ArchName $TargetArch
-    Assert-MsvcTargetLibraries $VsInstall $normalizedArch
+    Assert-MsvcTargetLibraries $VsInstall $normalizedArch $Config
 
     $clangTarget = Get-ClangTarget $normalizedArch
     $buildDir = Join-Path $repoRoot "out\build\$normalizedArch-Clang-$Config"
@@ -203,7 +209,7 @@ function Invoke-CMakeBuild {
 
 $vsInstall = Find-VisualStudio
 $targetArchs = if ($Arch -eq "all") {
-    @("x64", "arm64")
+    @("x86", "x64", "arm64")
 } else {
     @($Arch)
 }

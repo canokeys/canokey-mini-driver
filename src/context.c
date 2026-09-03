@@ -330,7 +330,7 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
     CK_RV cleanupRv = cleanup_failed_acquire(context->session, TRUE);
     if (cleanupRv == CKR_OK) {
       CNK_MANAGED_MODE_INIT_ARGS restoreArgs = {.malloc_func = (CNK_MALLOC_FUNC)g_pfnCspAlloc,
-                                                .free_func = g_pfnCspFree,
+                                                .free_func = (CNK_FREE_FUNC)g_pfnCspFree,
                                                 .hSCardCtx = g_managed_card_context,
                                                 .hScard = g_managed_card_handle};
       CK_RV restoreRv = C_CNK_EnableManagedMode(&restoreArgs);

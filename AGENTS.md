@@ -35,6 +35,7 @@ git submodule update --init --recursive
 ```powershell
 .\build.ps1 -Arch x64
 .\build.ps1 -Arch arm64
+.\build.ps1 -Arch x86
 ```
 
 - Build all supported Windows architectures:
@@ -62,6 +63,8 @@ out/build/x64-Clang-Debug/canokey-minidriver.inf
   native `SCardSvr`/`CertPropSvc` can load the driver. Pass `-Arch arm64` to
   supported smoke/crypto scripts and `-DllPath` explicitly to scripts whose
   default remains x64.
+- The CI Windows jobs build `x86`, `x64`, and `arm64` in both `Debug` and
+  `Release`; x86 output is only valid for a 32-bit smart-card host.
 
 - The debug deployment target copies the DLL to `CMD_DEBUG_INSTALL_DIR`
   (`C:/canokey-minidriver` by default) and creates `CMD_DEBUG_LOG_DIR`

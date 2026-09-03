@@ -13,7 +13,7 @@ git submodule update --init --recursive
 .\build.ps1 -Arch x64
 ```
 
-### Windows on ARM64
+### Windows on ARM64 and x86
 
 For a native Windows on ARM64 host, build and deploy the ARM64 artifact
 explicitly. Do not point the Calais mapping at the x64 output: the DLL loaded
@@ -49,6 +49,11 @@ For scripts without an `-Arch` parameter, pass the ARM64 DLL explicitly with
 `-DllPath out\build\arm64-Clang-Debug\canokey-minidriver.dll`. Verify the
 reader name through PC/SC first and keep the reader argument explicit so the
 test does not probe unrelated Windows Hello devices.
+
+The same build script supports the x86 target with
+`out\build\x86-Clang-Debug` or `out\build\x86-Clang-Release`. An x86 DLL is
+only loadable by a 32-bit Windows smart-card host; it does not validate the
+native 64-bit or ARM64 `SCardSvr` path.
 
 Copy the DLL and create the default debug log directory:
 
