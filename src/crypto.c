@@ -34,10 +34,15 @@ static CK_RV sign_with_context_pin(CMD_CONTEXT_PTR pContext, CK_BYTE_PTR data, C
   // C_Sign keeps the PIN-always operation active on this error. Authenticate
   // once with the PIN captured by CardAuthenticateEx, then retry the same
   // operation. cmd_login_context_specific consumes and clears that PIN.
+  CMD_DEBUG("C_Sign requires context-specific USER authentication; retrying once");
   CK_RV authRv = cmd_login_context_specific(pContext);
-  if (authRv != CKR_OK)
+  if (authRv != CKR_OK) {
+    CMD_DEBUG("C_Sign context-specific authentication failed: 0x%lx", authRv);
     return authRv == CKR_OPERATION_NOT_INITIALIZED ? CKR_USER_NOT_LOGGED_IN : authRv;
-  return C_Sign(pContext->session, data, dataLen, signature, signatureLen);
+  }
+  rv = C_Sign(pContext->session, data, dataLen, signature, signatureLen);
+  CMD_DEBUG("C_Sign context-specific retry returned 0x%lx", rv);
+  return rv;
 }
 
 static CK_RV decrypt_with_context_pin(CMD_CONTEXT_PTR pContext, CK_BYTE_PTR encryptedData, CK_ULONG encryptedLen,
@@ -46,10 +51,15 @@ static CK_RV decrypt_with_context_pin(CMD_CONTEXT_PTR pContext, CK_BYTE_PTR encr
   if (rv != CKR_USER_NOT_LOGGED_IN)
     return rv;
 
+  CMD_DEBUG("C_Decrypt requires context-specific USER authentication; retrying once");
   CK_RV authRv = cmd_login_context_specific(pContext);
-  if (authRv != CKR_OK)
+  if (authRv != CKR_OK) {
+    CMD_DEBUG("C_Decrypt context-specific authentication failed: 0x%lx", authRv);
     return authRv == CKR_OPERATION_NOT_INITIALIZED ? CKR_USER_NOT_LOGGED_IN : authRv;
-  return C_Decrypt(pContext->session, encryptedData, encryptedLen, plainData, plainLen);
+  }
+  rv = C_Decrypt(pContext->session, encryptedData, encryptedLen, plainData, plainLen);
+  CMD_DEBUG("C_Decrypt context-specific retry returned 0x%lx", rv);
+  return rv;
 }
 
 static DWORD map_oaep_hash_alg(LPCWSTR pszAlgId, CK_MECHANISM_TYPE *pHashAlg, CK_RSA_PKCS_MGF_TYPE *pMgf) {

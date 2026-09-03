@@ -25,11 +25,17 @@ void cmd_store_user_pin(CMD_CONTEXT_PTR pContext, const BYTE *pin, DWORD pinLen)
   if (pContext == NULL)
     return;
   cmd_clear_user_pin(pContext);
-  if (pin == NULL || pinLen == 0 || pinLen > CMD_MAX_USER_PIN_LEN)
+  if (pin == NULL || pinLen == 0 || pinLen > CMD_MAX_USER_PIN_LEN) {
+    // The Windows callback owns the original PIN buffer. Keep only values
+    // that fit the bounded per-context retry bridge; never log the PIN bytes.
+    if (pin != NULL && pinLen > CMD_MAX_USER_PIN_LEN)
+      CMD_WARN("USER PIN length %lu cannot be retained for context-specific operations", (unsigned long)pinLen);
     return;
+  }
   memcpy(pContext->userPin, pin, pinLen);
   pContext->userPinLen = pinLen;
   pContext->userPinValid = TRUE;
+  CMD_DEBUG("Retained USER PIN of length %lu for one context-specific retry", (unsigned long)pinLen);
 }
 
 CK_RV cmd_login_context_specific(CMD_CONTEXT_PTR pContext) {
@@ -41,10 +47,12 @@ CK_RV cmd_login_context_specific(CMD_CONTEXT_PTR pContext) {
   DWORD pinLen = pContext->userPinLen;
   memcpy(pin, pContext->userPin, pinLen);
   // This is a one-shot credential. Clear the context copy before the card call
-  // returns, regardless of whether the context-specific verification succeeds.
+  // returns, regardless of whether context-specific verification succeeds.
   cmd_clear_user_pin(pContext);
+  CMD_DEBUG("Attempting context-specific USER authentication with PIN length %lu", (unsigned long)pinLen);
   CK_RV rv = C_CNK_Login(pContext->session, CKU_CONTEXT_SPECIFIC, pin, pinLen, NULL);
   SecureZeroMemory(pin, sizeof(pin));
+  CMD_DEBUG("Context-specific USER authentication returned 0x%lx", rv);
   return rv;
 }
 
@@ -361,8 +369,12 @@ DWORD WINAPI CardAuthenticateEx(__in PCARD_DATA pCardData, __in PIN_ID PinId, __
       cmd_clear_all_user_pins();
       SET_PIN(pContext->authenticatedPins, PinId);
     }
-    if (PinId == ROLE_USER && cmd_get_config()->protect_management) {
-      try_login_pin_protected_management_key(pContext, pbPinData, cbPinData);
+    if (PinId == ROLE_USER) {
+      if (cmd_get_config()->protect_management) {
+        try_login_pin_protected_management_key(pContext, pbPinData, cbPinData);
+      } else {
+        CMD_DEBUG("ProtectManagement is disabled; skipping management-key probe");
+      }
     }
     CMD_RET_OK;
   }

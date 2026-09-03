@@ -61,8 +61,14 @@ static CMD_CONTEXT_PTR g_managed_contexts = NULL;
 void cmd_clear_all_user_pins(void) {
   // All minidriver entry points hold g_cmd_context_lock while touching this
   // registry, so each context can be scrubbed without taking another lock.
-  for (CMD_CONTEXT_PTR context = g_managed_contexts; context != NULL; context = context->managed_next)
+  DWORD cleared = 0;
+  for (CMD_CONTEXT_PTR context = g_managed_contexts; context != NULL; context = context->managed_next) {
+    if (context->userPinValid)
+      ++cleared;
     cmd_clear_user_pin(context);
+  }
+  if (cleared != 0)
+    CMD_DEBUG("Cleared cached USER PINs from %lu managed context(s)", (unsigned long)cleared);
 }
 
 static void release_exclusive_context_lock(PSRWLOCK *lock) {
