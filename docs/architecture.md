@@ -118,6 +118,14 @@ Base CSP/KSP writes to `cardcf` and `cmapfile` for compatibility, but does not
 use those writes as authoritative state; every generated view comes from live
 PKCS#11 metadata.
 
+External PKCS#11/PIV tools may mutate keys or certificates while Windows holds
+a `CARD_DATA` context. Cache and certificate-file reads therefore refresh live
+metadata before producing their response. A subsequent `cardcf` read exposes
+the changed freshness values; container GUIDs remain stable while the map's
+key sizes and certificate bytes reflect the external mutation. PIN changes are
+handled by PKCS#11 authentication state and are not inferred from key/file
+freshness.
+
 Container generation/import and certificate writes call
 `RefreshCardMetadata` after card mutation so subsequent Windows queries see the
 new inventory and card identifier.

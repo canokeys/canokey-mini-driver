@@ -45,6 +45,14 @@ preserving the fixed index/GUID and must leave signing/derivation usable.
 Compatibility writes from Base CSP/KSP must be accepted without replacing the
 live PKCS#11-derived inventory.
 
+Repeat the cache matrix after mutations made by an external PKCS#11/PIV
+process, not only through minidriver APIs. With an existing `CARD_DATA`
+context, read `cardcf`, `cmapfile`, and the affected `kscN`/`kxcN` files again;
+the minidriver must refresh live metadata, report changed freshness, preserve
+container GUIDs, and expose the new certificate/key material. A PIN-only
+mutation is an authentication-state test and must not be confused with key or
+file freshness.
+
 ## Review Procedure
 
 1. Inspect the complete minidriver diff and the exact submodule commit.

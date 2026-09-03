@@ -256,6 +256,19 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
 
   CMD_GET_CTX(pCardData, pContext);
 
+  // External PKCS#11/PIV tools can mutate keys or certificates while this
+  // minidriver context remains alive. Refresh before serving cache or
+  // certificate views so cardcf freshness is based on the current card.
+  if ((pszDirectoryName == NULL && strcmp(pszFileName, szCACHE_FILE) == 0) ||
+      (pszDirectoryName != NULL && strcmp(pszDirectoryName, szBASE_CSP_DIR) == 0 &&
+       (strcmp(pszFileName, szCONTAINER_MAP_FILE) == 0 ||
+        strncmp(pszFileName, szUSER_KEYEXCHANGE_CERT_PREFIX, 3) == 0 ||
+        strncmp(pszFileName, szUSER_SIGNATURE_CERT_PREFIX, 3) == 0))) {
+    DWORD refresh = RefreshCardMetadata(pContext);
+    if (refresh != SCARD_S_SUCCESS)
+      CMD_RETURN(refresh, "Failed to refresh live metadata for cache view");
+  }
+
   if (pszDirectoryName == NULL) { // Root directory
     if (strcmp(pszFileName, szCACHE_FILE) == 0) {
       return AllocCacheFile(pContext, ppbData, pcbData);
