@@ -24,20 +24,20 @@ typedef CMD_CONTEXT *CMD_CONTEXT_PTR;
 
 DWORD RefreshCardMetadata(CMD_CONTEXT_PTR pContext);
 
-static __attribute__((unused)) void cmd_release_shared_context_lock(PSRWLOCK *lock) {
+static __attribute__((unused)) void cmd_release_context_lock(PSRWLOCK *lock) {
   if (lock != NULL && *lock != NULL)
-    ReleaseSRWLockShared(*lock);
+    ReleaseSRWLockExclusive(*lock);
 }
 
-#define CMD_CONTEXT_SHARED_GUARD __attribute__((cleanup(cmd_release_shared_context_lock)))
+#define CMD_CONTEXT_LOCK_GUARD __attribute__((cleanup(cmd_release_context_lock)))
 
 static __attribute__((unused)) void cmd_release_context_state_lock(CMD_CONTEXT_PTR *context);
 
 #define CMD_CONTEXT_STATE_GUARD __attribute__((cleanup(cmd_release_context_state_lock)))
 
 #define INJECT_HANDLES()                                                                                               \
-  AcquireSRWLockShared(&g_cmd_context_lock);                                                                           \
-  PSRWLOCK _cmd_context_lock CMD_CONTEXT_SHARED_GUARD = &g_cmd_context_lock;                                           \
+  AcquireSRWLockExclusive(&g_cmd_context_lock);                                                                        \
+  PSRWLOCK _cmd_context_lock CMD_CONTEXT_LOCK_GUARD = &g_cmd_context_lock;                                             \
   CNK_MANAGED_MODE_INIT_ARGS _cmd_managed_args = {.malloc_func = (CNK_MALLOC_FUNC)g_pfnCspAlloc,                       \
                                                   .free_func = g_pfnCspFree,                                           \
                                                   .hSCardCtx = pCardData->hSCardCtx,                                   \

@@ -5,7 +5,6 @@ param(
     [byte]$ContainerIndex = 4,
     [ValidateSet("ECDSA_P256", "ECDSA_P384", "ECDSA_P521", "ECDHE_P256", "ECDHE_P384", "ECDHE_P521", "RSA_SIGN_2048", "RSA_SIGN_3072", "RSA_SIGN_4096", "RSA_KEYX_2048", "RSA_KEYX_3072", "RSA_KEYX_4096")]
     [string]$KeySpec = "ECDSA_P256",
-    [string]$ManagementKey = "010203040506070801020304050607080102030405060708",
     [string]$Pin = "123456",
     [switch]$UsePinProtectedManagementKey,
     [switch]$Import
@@ -347,7 +346,7 @@ namespace CanokeyMinidriver {
         }
 
         public static Result Generate(string dllPath, string readerName, byte containerIndex, uint keySpec,
-            uint keySize, byte[] managementKey, byte[] userPin, bool usePinProtectedManagementKey,
+            uint keySize, byte[] userPin, bool usePinProtectedManagementKey,
             byte[] keyData, byte[] expectedPublicBlob) {
             IntPtr module = IntPtr.Zero;
             IntPtr context = IntPtr.Zero;
@@ -546,20 +545,6 @@ namespace CanokeyMinidriver {
 '@
 }
 
-function Convert-HexStringToBytes {
-    param([string]$Hex)
-
-    $compact = ($Hex -replace '[:\-\s]', '')
-    if (($compact.Length % 2) -ne 0) {
-        throw "Management key hex length must be even."
-    }
-    $bytes = New-Object byte[] ($compact.Length / 2)
-    for ($i = 0; $i -lt $bytes.Length; $i++) {
-        $bytes[$i] = [Convert]::ToByte($compact.Substring($i * 2, 2), 16)
-    }
-    $bytes
-}
-
 $specMap = @{
     ECDSA_P256    = @{ KeySpec = 3; KeySize = 256 }
     ECDSA_P384    = @{ KeySpec = 4; KeySize = 384 }
@@ -576,7 +561,6 @@ $specMap = @{
 }
 
 $resolvedDll = (Resolve-Path -LiteralPath $DllPath).ProviderPath
-$mgmtKey = [byte[]]::new(0)
 $userPin = [Text.Encoding]::UTF8.GetBytes($Pin)
 
 $selected = $specMap[$KeySpec]
@@ -598,7 +582,6 @@ $result = [CanokeyMinidriver.KeygenTestNative]::Generate(
     $ContainerIndex,
     [uint32]$selected.KeySpec,
     [uint32]$requestKeySize,
-    $mgmtKey,
     $userPin,
     $UsePinProtectedManagementKey.IsPresent,
     $keyData,

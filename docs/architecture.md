@@ -54,19 +54,24 @@ to `SCARD_*` errors.
 
 Container indexes `0..5` map to PIV object IDs `1..6`, hence slots
 `9A`, `9C`, `9D`, `9E`, `82`, and `83`. These six stable Windows containers are
-signature-capable; supported EC keys can derive. Only an RSA key in 9D is
-exposed as Windows `AT_KEYEXCHANGE` and accepted by
-`CardRSADecrypt`; this preserves the standard PIV key-management role.
+signature-capable. An RSA key in 9D additionally publishes the validated
+Windows `AT_KEYEXCHANGE` view. EC ECDH companion views remain hidden because
+the current CPDK/Windows path drops the associated EC certificate when those
+fields are populated.
 
-The mapping is policy, not merely algorithm capability. PKCS#11 can perform an
-RSA private operation in another slot, but the minidriver must not expose that
-slot as a Windows key-exchange container.
+The mapping is policy, not merely algorithm capability. PKCS#11 still performs
+RSA decrypt and ECDH in any supported PIV slot, and the minidriver crypto entry
+points remain available for a future Windows key-spec bridge.
 
 P-521 is supported by the Windows translation layer when a P-521 key occupies
 one of these six mapped containers. A P-521 key in the card's retired `84`
 slot (object ID 7), like Ed25519, X25519, and PQC keys in later slots, remains
 available through PKCS#11 but is intentionally outside the six-container
 Windows ABI.
+
+ECDH companion properties are not exposed through the current Windows function
+table. The association remains available to PKCS#11 callers; a future Windows
+key-spec bridge must be validated independently before publishing it.
 
 The current managed-mode bridge intentionally supports one physical CanoKey per
 process. Windows may nevertheless create several `CARD_DATA`/PKCS#11 contexts
@@ -115,25 +120,35 @@ operations.
 authoritative. Certificate files are readable for enumeration but writes still
 require ADMIN authentication.
 
-The cache policy is intentionally `CP_CACHE_MODE_GLOBAL_CACHE`. `cardcf`
-freshness is derived from the persistent PIV inventory: key/public-key changes
-advance container freshness, and certificate changes advance file freshness.
-Container GUIDs are derived from `cardid` plus the fixed container index, so a
-key replacement never renames a Windows container. The minidriver accepts
-Base CSP/KSP writes to `cardcf` and `cmapfile` for compatibility, but does not
-use those writes as authoritative state; every generated view comes from live
-PKCS#11 metadata.
+The cache policy is `CP_CACHE_MODE_NO_CACHE`. `cardcf` is a versioned
+zero-freshness compatibility file because PIV has no durable PIN freshness
+value. Container and certificate views are regenerated from the live snapshot;
+the metadata generation counter advances only when that snapshot changes.
+
+The minidriver reports `CP_CACHE_MODE_NO_CACHE`. PIV exposes no durable PIN
+freshness counter, so a global Base CSP cache could retain an authorization
+decision after an external PIN change. `cardcf` remains a versioned,
+zero-freshness compatibility file; Windows must reread `cmapfile` and
+certificate files from the live metadata snapshot. Reads are rate-limited to
+one metadata scan per context per second, and the generation counter advances
+only when the snapshot actually changes.
+
+Windows propagation exposes signature views for all six containers and
+populates `wKeyExchangeKeySizeBits`/`pbKeyExPublicKey` only for an RSA 9D
+container. EC ECDH remains a PKCS#11 capability and is intentionally not
+mapped to Windows until a compatible companion-property path is validated.
+
+The minidriver accepts Base CSP/KSP writes to `cardcf` and `cmapfile` for
+compatibility, but does not use those writes as authoritative state; every
+generated view comes from live PKCS#11 metadata.
 
 External PKCS#11/PIV tools may mutate keys or certificates while Windows holds
-a `CARD_DATA` context. The first cache read reuses the live inventory captured
-by `CardAcquireContext`; later cache and certificate-file reads refresh live
-metadata at most once per second. This bounded refresh interval avoids
-rescanning all six PIV containers for every repeated KSP query while ensuring
-an external mutation becomes visible promptly. A subsequent `cardcf` read
-exposes the changed freshness values; container GUIDs remain stable while the
-map's key sizes and certificate bytes reflect the external mutation. PIN
-changes are handled by PKCS#11 authentication state and are not inferred from
-key/file freshness.
+a `CARD_DATA` context. Reads of the live virtual files refresh metadata at most
+once per second, avoiding a full six-slot scan for every repeated KSP query
+while ensuring an external mutation becomes visible promptly. Container GUIDs
+remain stable while the map's key sizes and certificate bytes reflect the
+external mutation. PIN changes are handled by PKCS#11 authentication state and
+are not inferred from cache freshness values.
 
 Container generation/import and certificate writes call
 `RefreshCardMetadata` after card mutation so subsequent Windows queries see the
@@ -166,9 +181,10 @@ The primary local loop is:
 .\scripts\derive-test.ps1 -SkipBuild -SkipInstall -SkipReset
 ```
 
-Run `crypto-test.ps1` when the card has every required container. It treats a
-missing RSA 9D key-exchange container as a failed precondition; do not overwrite
-9D solely to satisfy that matrix without explicit intent.
+Run `crypto-test.ps1` for the Windows signing surface and use the PKCS#11
+API-level tests for RSA decrypt/ECDH. The Windows propagation map intentionally
+does not require a key-exchange container; do not overwrite 9D solely to
+satisfy a KSP discovery precondition without explicit intent.
 
 ## Refactoring Boundaries
 

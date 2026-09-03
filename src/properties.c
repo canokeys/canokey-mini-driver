@@ -28,7 +28,7 @@ static DWORD getCardCapabilities(PCARD_DATA pCardData, PBYTE pbData, DWORD cbDat
   }
   PCARD_CAPABILITIES p = (PCARD_CAPABILITIES)pbData;
   p->dwVersion = CARD_CAPABILITIES_CURRENT_VERSION;
-  p->fCertificateCompression = FALSE;
+  p->fCertificateCompression = TRUE;
   p->fKeyGen = TRUE;
   CMD_RET_OK;
 }
@@ -66,10 +66,10 @@ static DWORD getCardCacheMode(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, 
   if (cbData < sizeof(DWORD)) {
     CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
   }
-  // The virtual cardcf freshness values are derived from persistent PIV
-  // key/certificate contents. This lets the Base CSP global cache survive
-  // context churn while invalidating exactly when the live inventory changes.
-  *(DWORD *)pbData = CP_CACHE_MODE_GLOBAL_CACHE;
+  // PIN changes have no durable freshness counter in PIV. Disable Base CSP
+  // caching so Windows cannot reuse a stale authorization decision after an
+  // external PKCS#11/PIV mutation. CardReadFile still bounds metadata reads.
+  *(DWORD *)pbData = CP_CACHE_MODE_NO_CACHE;
   CMD_RET_OK;
 }
 
@@ -262,6 +262,12 @@ DWORD WINAPI CardGetContainerProperty(__in PCARD_DATA pCardData, __in BYTE bCont
   CMD_GET_CTX(pCardData, pContext);
   if (bContainerIndex >= WINDOWS_CONTAINER_COUNT || bContainerIndex >= pContext->canokey.slotCount) {
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
+  }
+
+  // cmapfile may contain empty entries. Do not advertise a PIN identifier for
+  // an empty container: Windows treats the property as proof that a key exists.
+  if (!canokey_slot_has_key(&pContext->canokey.slots[bContainerIndex])) {
+    CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Container has no key");
   }
 
   CMD_CHECK_DW_FLAGS;

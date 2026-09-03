@@ -29,8 +29,9 @@ static void try_login_pin_protected_management_key(CMD_CONTEXT_PTR pContext, PBY
 static DWORD map_pkcs11_pin_error(CK_RV rv) {
   switch (rv) {
   case CKR_OK:
-  case CKR_USER_NOT_LOGGED_IN:
     return SCARD_S_SUCCESS;
+  case CKR_USER_NOT_LOGGED_IN:
+    return SCARD_W_SECURITY_VIOLATION;
   case CKR_USER_PIN_NOT_INITIALIZED:
   case CKR_PIN_INCORRECT:
   case CKR_PIN_INVALID:

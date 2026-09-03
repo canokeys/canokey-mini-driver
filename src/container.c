@@ -535,7 +535,11 @@ DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContaine
   CMD_CHECK_DW_FLAGS;
   if (pContainerInfo->dwVersion > CONTAINER_INFO_CURRENT_VERSION)
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid container info version");
-
+  // Windows KSP sends version zero for legacy discovery probes. Normalize the
+  // response before filling public-key pointers so all callers receive the
+  // current structure layout.
+  pContainerInfo->dwVersion = CONTAINER_INFO_CURRENT_VERSION;
+  pContainerInfo->dwReserved = 0;
   CMD_GET_CTX(pCardData, pContext);
 
   if (bContainerIndex >= WINDOWS_CONTAINER_COUNT || bContainerIndex >= pContext->canokey.slotCount ||
@@ -561,7 +565,7 @@ DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContaine
         CMD_RETURN(ret, "Failed to allocate signature RSA public key blob");
       }
     }
-    if (canokey_slot_can_decrypt(slot)) {
+    if (canokey_slot_can_decrypt(slot) && container_index_is_piv_9d(bContainerIndex)) {
       DWORD ret = AllocRsaPublicKeyBlob(slot, CALG_RSA_KEYX, &pContainerInfo->pbKeyExPublicKey,
                                         &pContainerInfo->cbKeyExPublicKey);
       if (ret != SCARD_S_SUCCESS) {
@@ -596,23 +600,6 @@ DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContaine
       ret = AllocEcPublicKeyBlob(slot, magic, &pContainerInfo->pbSigPublicKey, &pContainerInfo->cbSigPublicKey);
       if (ret != SCARD_S_SUCCESS) {
         CMD_RETURN(ret, "Failed to allocate signature EC public key blob");
-      }
-    }
-
-    if (canokey_slot_can_derive(slot)) {
-      ULONG magic;
-      DWORD ret = EcPublicKeyMagic(slot, TRUE, &magic);
-      if (ret != SCARD_S_SUCCESS) {
-        CMD_RETURN(ret, "Failed to select ECDH public key magic");
-      }
-      ret = AllocEcPublicKeyBlob(slot, magic, &pContainerInfo->pbKeyExPublicKey, &pContainerInfo->cbKeyExPublicKey);
-      if (ret != SCARD_S_SUCCESS) {
-        if (pContainerInfo->pbSigPublicKey != NULL) {
-          g_pfnCspFree(pContainerInfo->pbSigPublicKey);
-          pContainerInfo->pbSigPublicKey = NULL;
-          pContainerInfo->cbSigPublicKey = 0;
-        }
-        CMD_RETURN(ret, "Failed to allocate ECDH public key blob");
       }
     }
 

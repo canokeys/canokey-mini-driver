@@ -245,7 +245,7 @@ Supported Windows paths are:
 
 - RSA PKCS#1 and PSS signing;
 - ECDSA P-256, P-384, and P-521 signing;
-- RSA PKCS#1 and OAEP decryption for a key-exchange container;
+- RSA PKCS#1 and OAEP decryption through the PKCS#11/API-level path;
 - P-256, P-384, and P-521 ECDH with `BCRYPT_KDF_RAW_SECRET`.
 
 Higher-level CNG KDF parameter lists are not implemented. PKCS#11 receives
@@ -266,7 +266,8 @@ crypto provider before the token is mutated. Generation and import require
 PIN-protected management-key cache for the card-side write, but Windows never
 passes a raw management key to this API.
 
-Certificate writes are accepted through `CardWriteFile` for `kscN` and `kxcN`
+Certificate writes are accepted through `CardWriteFile` for zero-padded `kscNN`
+and `kxcNN`
 after admin authentication. The live metadata inventory is refreshed after key
 or certificate writes.
 
@@ -280,17 +281,17 @@ The minidriver exposes exactly six entries, mapped to PIV object IDs 1..6:
 
 | Container index | PIV object ID | PIV slot | Windows use |
 | ---: | ---: | --- | --- |
-| 0 | 1 | `9A` | signature; ECDH when EC |
-| 1 | 2 | `9C` | signature; ECDH when EC |
-| 2 | 3 | `9D` | signature; ECDH when EC; RSA key exchange when RSA |
-| 3 | 4 | `9E` | signature; ECDH when EC |
-| 4 | 5 | `82` | signature; ECDH when EC |
-| 5 | 6 | `83` | signature; ECDH when EC |
+| 0 | 1 | `9A` | signature |
+| 1 | 2 | `9C` | signature |
+| 2 | 3 | `9D` | signature; RSA key exchange when RSA |
+| 3 | 4 | `9E` | signature |
+| 4 | 5 | `82` | signature |
+| 5 | 6 | `83` | signature |
 
-Only an RSA key in `9D` is exposed as `AT_KEYEXCHANGE` and accepted by
-`CardRSADecrypt`. Although PKCS#11 can perform an RSA private operation with a
-key in another slot, the minidriver preserves the standard PIV key-management
-role rather than treating algorithm capability as Windows policy.
+`CardRSADecrypt` accepts an RSA key in `9D` and the Windows propagation map
+publishes its validated `AT_KEYEXCHANGE` view. EC ECDH remains PKCS#11-only:
+publishing an EC companion view currently causes Windows to drop the associated
+certificate during propagation.
 
 PIV PIN policy is enforced by PKCS#11 and firmware:
 
@@ -326,6 +327,10 @@ algorithm-extension checks remain inside PKCS#11.
 `CardGetContainerInfo` converts the PKCS#11 public object into the Windows blob
 required by the selected key type:
 
+ECDH companion properties are not exposed through the current Windows function
+table. PKCS#11 still owns ECDH operations; a future Windows key-spec bridge
+must be validated before publishing `CCP_ASSOCIATED_ECDH_KEY`.
+
 | PKCS#11 attributes | Windows output |
 | --- | --- |
 | `CKA_MODULUS`, `CKA_PUBLIC_EXPONENT` | `BCRYPT_RSAKEY_BLOB` |
@@ -351,7 +356,7 @@ raw RSA operation; no `CK_RSA_PKCS_PSS_PARAMS` is sent to the token.
 
 ### 6.4 RSA Decryption
 
-`CardRSADecrypt` accepts only an RSA key-exchange container in `9D` and maps:
+`CardRSADecrypt` accepts an RSA key in `9D` and maps:
 
 | Windows request | PKCS#11 mechanism |
 | --- | --- |
@@ -386,21 +391,22 @@ Windows uses the pair for cache identity.
 
 ### 7.2 `cardcf`
 
-The root `cardcf` file is a valid `CARD_CACHE_FILE_FORMAT`. The minidriver
-reports `CP_CACHE_MODE_GLOBAL_CACHE`; deterministic freshness values are
-derived from persistent live key and certificate contents. Replacing a key
-changes container and file freshness, while replacing only a certificate
-changes file freshness. Stable inventory produces stable values across
-contexts and card reinsertion. Base CSP writes remain compatibility
-synchronization and are not authoritative.
+The root `cardcf` file is a versioned `CARD_CACHE_FILE_FORMAT`. The minidriver
+reports `CP_CACHE_MODE_NO_CACHE`; `cardcf` remains a versioned
+zero-freshness compatibility file because PIV has no durable PIN freshness
+value. Live key and certificate views are regenerated from the current
+metadata; Base CSP writes remain compatibility synchronization and are not
+authoritative.
 
 ### 7.3 `mscp/cmapfile`
 
 `cmapfile` is serialized from the six stable Windows container records. Each
 `CONTAINER_MAP_RECORD` reports the stable container name, valid/default flags,
-signature key size, and key-exchange key size. Container names are derived
-from the stable card identifier plus the fixed container index, so replacing a
-key does not rename its Windows container.
+and signature key size. An RSA 9D record also reports its validated
+key-exchange size; EC records leave that field zero because publishing the ECDH
+companion currently drops the associated certificate. Container names are
+derived from public-key bytes to preserve the associations created by the
+earlier minidriver implementation.
 
 Windows may write the map during enrollment. The minidriver validates its
 record-aligned length and discards the contents; submitted records are never
@@ -412,8 +418,9 @@ authoritative.
 Certificate filenames follow the standard container convention:
 
 ```text
-mscp/ksc0, mscp/ksc1, ...  signature certificates
-mscp/kxc0, mscp/kxc1, ...  key-exchange certificates
+mscp/ksc00, mscp/ksc01, ...  signature certificates
+mscp/kxc00, mscp/kxc01, ...  key-exchange certificates (not advertised during
+Windows certificate propagation)
 ```
 
 Reads return the DER certificate bytes from the matching PIV object. File info

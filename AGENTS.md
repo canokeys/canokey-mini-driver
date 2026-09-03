@@ -198,10 +198,11 @@ Start-Sleep -Seconds 6
   PKCS#1 and OAEP-SHA256 decrypt. When an ECDH KSP key is discovered, it tests
   `BCRYPT_KDF_RAW_SECRET` against a software-generated peer key. Use
   `-SkipBuild -SkipInstall -SkipReset` for fast reruns.
-- `crypto-test.ps1` currently treats a missing RSA key-exchange container as a
-  test precondition failure. When 9D is not an RSA key, run `sign-test.ps1` and
-  `derive-test.ps1` separately; do not overwrite 9D merely to satisfy the test
-  unless that destructive provisioning is explicitly intended.
+- The Windows-facing map intentionally has no RSA key-exchange or ECDH
+  containers during certificate propagation. Run `sign-test.ps1` for the
+  Windows surface and use the PKCS#11/API-level decrypt and derive tests for
+  those capabilities; do not overwrite 9D merely to satisfy a KSP test unless
+  that destructive provisioning is explicitly intended.
 - For focused reruns, use `.\scripts\sign-test.ps1`,
   `.\scripts\decrypt-test.ps1`, or `.\scripts\derive-test.ps1`. They share
   `scripts\minidriver-test-common.ps1`, so `crypto-test.ps1` can build,
@@ -227,17 +228,19 @@ This inventory is observational, not provisioning policy. Re-enumerate the
 card before relying on it because key generation/import tests overwrite slots.
 
 The current 9D key is EC, so Windows does not expose an RSA
-`AT_KEYEXCHANGE` container. PKCS#11 can exercise RSA decrypt with the RSA key
-in 9E, but the minidriver intentionally reserves Windows RSA key exchange for
-an RSA key in 9D.
+`AT_KEYEXCHANGE` container in the current card state. When 9D is RSA, the
+validated Windows key-exchange view is exposed; PKCS#11 can exercise RSA
+decrypt with supported RSA keys regardless of Windows mapping.
 
 - The minidriver keeps explicit per-slot capabilities in `SLOT.capabilities`.
-  The intended YubiKey-style PIV policy is:
+  PKCS#11 retains the full PIV operation policy. The Windows propagation view
+  exposes signatures for the six stable slots and the validated RSA 9D
+  key-exchange view:
 
 ```text
-9A, 9C, 9D, 9E, 82, 83 -> signature-capable
-EC keys in those slots       -> also ECDH-capable
-9D RSA keys                  -> also decryption/key-exchange-capable
+9A, 9C, 9D, 9E, 82, 83 -> Windows signature-capable containers
+9D RSA keys                  -> Windows AT_KEYEXCHANGE and PKCS#11 decrypt
+EC keys in those slots       -> PKCS#11 ECDH-capable (not Windows-mapped)
 ```
 
 - `scripts\sign-test.ps1` should exercise every discovered signing container.
@@ -336,8 +339,10 @@ EC keys in those slots       -> also ECDH-capable
   file must be byte-for-byte identical and stable for the token, because
   Windows uses them for cache identity.
 - Treat root `cardcf` as a Base CSP/KSP cache-coherency file. Return a valid
-  `CARD_CACHE_FILE_FORMAT` and accept same-version writes; the authoritative
-  token state still comes from CanoKey metadata and `mscp/cmapfile`.
+  `CARD_CACHE_FILE_FORMAT` and accept same-version writes; report
+  `CP_CACHE_MODE_NO_CACHE` because PIV has no durable PIN freshness counter.
+  The authoritative token state still comes from CanoKey metadata and
+  `mscp/cmapfile`.
 - Treat `mscp/cmapfile` similarly: generate it from live key metadata, and
   accept well-formed writes from KSP as cache synchronization rather than
   persisting a separate copy.
@@ -356,7 +361,7 @@ EC keys in those slots       -> also ECDH-capable
   parses PRINTED, verifies the management key, and clears temporary sensitive
   buffers. Keep TLV parsing and raw management-key material out of the
   minidriver, and do not issue raw PC/SC APDUs from this path.
-- Certificate files (`kscN`/`kxcN`) must remain Windows-friendly for
+- Certificate files (`kscNN`/`kxcNN`, with two-digit indexes) must remain Windows-friendly for
   enumeration: report `EveryoneReadUserWriteAc` for file info. The actual PIV
   certificate write is still a management operation, so require `ROLE_ADMIN`
   before `CardWriteFile` writes certificates through PKCS#11.

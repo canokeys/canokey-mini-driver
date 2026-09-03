@@ -72,6 +72,9 @@ static CK_RV cleanup_failed_acquire(CK_SESSION_HANDLE session, BOOL sessionOpen)
       result = closeRv;
     }
   }
+  // Each successful C_Initialize owns one managed reference. C_Finalize here
+  // releases only that reference; the PKCS#11 lifecycle layer tears down the
+  // shared backend only when the last reference is gone.
   CK_RV finalizeRv = C_Finalize(NULL);
   if (finalizeRv != CKR_OK && finalizeRv != CKR_CRYPTOKI_NOT_INITIALIZED) {
     CMD_WARN("C_Finalize during acquire cleanup failed: 0x%lx", finalizeRv);
@@ -137,7 +140,12 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
   if (managedRv != CKR_OK && managedRv != CKR_CRYPTOKI_ALREADY_INITIALIZED)
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot bind managed card context");
 
-  // Import callbacks only after managed binding validation succeeds.
+  // Import callbacks only after managed binding validation succeeds. They are
+  // process-global because PKCS#11 owns its allocations; all entry points are
+  // serialized by g_cmd_context_lock while using these CARD_DATA callbacks.
+  PFN_CSP_ALLOC previousAlloc = g_pfnCspAlloc;
+  PFN_CSP_FREE previousFree = g_pfnCspFree;
+  PFN_CSP_PAD_DATA previousPad = g_pfnCspPadData;
   g_pfnCspAlloc = pCardData->pfnCspAlloc;
   g_pfnCspFree = pCardData->pfnCspFree;
   g_pfnCspPadData = pCardData->pfnCspPadData;
@@ -235,6 +243,9 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
     CK_RV resetRv = C_CNK_ResetManagedMode();
     if (resetRv != CKR_OK)
       CMD_WARN("Managed binding rollback after allocation failure failed: 0x%lx", resetRv);
+    g_pfnCspAlloc = previousAlloc;
+    g_pfnCspFree = previousFree;
+    g_pfnCspPadData = previousPad;
     CMD_RETURN(SCARD_E_NO_MEMORY, "cannot allocate context");
   }
   memset(context, 0, sizeof(*context));
@@ -250,6 +261,9 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
     if (resetRv == CKR_OK) {
       pCardData->pvVendorSpecific = NULL;
       g_pfnCspFree(context);
+      g_pfnCspAlloc = previousAlloc;
+      g_pfnCspFree = previousFree;
+      g_pfnCspPadData = previousPad;
     }
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot initialize canokey-pkcs11");
   }
@@ -260,6 +274,9 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
     if (cleanupRv == CKR_OK) {
       pCardData->pvVendorSpecific = NULL;
       g_pfnCspFree(context);
+      g_pfnCspAlloc = previousAlloc;
+      g_pfnCspFree = previousFree;
+      g_pfnCspPadData = previousPad;
     } else {
       CMD_WARN("Acquire cleanup was incomplete: 0x%lx", cleanupRv);
     }
@@ -272,6 +289,9 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
     if (cleanupRv == CKR_OK) {
       pCardData->pvVendorSpecific = NULL;
       g_pfnCspFree(context);
+      g_pfnCspAlloc = previousAlloc;
+      g_pfnCspFree = previousFree;
+      g_pfnCspPadData = previousPad;
     } else {
       CMD_WARN("Acquire cleanup was incomplete: 0x%lx", cleanupRv);
     }
@@ -291,6 +311,9 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
     if (cleanupRv == CKR_OK) {
       pCardData->pvVendorSpecific = NULL;
       g_pfnCspFree(context);
+      g_pfnCspAlloc = previousAlloc;
+      g_pfnCspFree = previousFree;
+      g_pfnCspPadData = previousPad;
     } else {
       CMD_WARN("Acquire cleanup was incomplete: 0x%lx", cleanupRv);
     }
@@ -315,6 +338,9 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
         CMD_WARN("Failed to restore active managed card handle: 0x%lx", restoreRv);
       pCardData->pvVendorSpecific = NULL;
       g_pfnCspFree(context);
+      g_pfnCspAlloc = previousAlloc;
+      g_pfnCspFree = previousFree;
+      g_pfnCspPadData = previousPad;
     } else {
       CMD_WARN("Card identity rejection cleanup was incomplete: 0x%lx", cleanupRv);
     }
@@ -344,6 +370,9 @@ DWORD CardDeleteContext(__inout PCARD_DATA pCardData) {
       CMD_WARN("C_CloseSession failed: 0x%lx", rv);
       CMD_RETURN(SCARD_F_INTERNAL_ERROR, "C_CloseSession failed");
     }
+    // Managed C_Initialize/C_Finalize is reference-counted. Release this
+    // CARD_DATA's reference even when other contexts remain; the backend is
+    // destroyed only by the final reference.
     rv = C_Finalize(NULL);
     if (rv != CKR_OK && rv != CKR_CRYPTOKI_NOT_INITIALIZED) {
       CMD_WARN("C_Finalize failed: 0x%lx", rv);

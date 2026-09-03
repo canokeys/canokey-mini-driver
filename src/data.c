@@ -13,8 +13,6 @@
 #include "logging.h"
 #include "minidriver.h"
 
-#define CNK_CACHE_FRESHNESS_EPOCH 0x26u
-
 static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, PDWORD pcbData);
 
 static DWORD map_pkcs11_write_error(CK_RV rv) {
@@ -64,51 +62,13 @@ static DWORD AllocCopy(const void *data, DWORD cbData, PBYTE *ppbData, PDWORD pc
   CMD_RET_OK;
 }
 
-static WORD ComputeFreshness(const CMD_CONTEXT *pContext, BOOL includeCertificates) {
-  // Base CSP compares these values before reusing cmapfile/certificate data.
-  // Hash live metadata instead of using a process counter so unchanged cards
-  // keep stable cache values while key or certificate mutations invalidate
-  // the corresponding Windows cache section.
-  uint32_t hash = 2166136261u ^ CNK_CACHE_FRESHNESS_EPOCH;
-  for (CK_ULONG i = 0; i < pContext->canokey.slotCount; i++) {
-    const SLOT *slot = &pContext->canokey.slots[i];
-    hash ^= slot->present ? 1u : 0u;
-    hash *= 16777619u;
-    hash ^= (uint32_t)slot->keyType;
-    hash *= 16777619u;
-    hash ^= (uint32_t)slot->ecCurve;
-    hash *= 16777619u;
-    if (slot->keyType == CKK_RSA && slot->rsa.modulusBits > 0) {
-      for (DWORD j = 0; j < slot->rsa.modulusBits / 8; j++) {
-        hash ^= slot->rsa.modulus[j];
-        hash *= 16777619u;
-      }
-    } else if (slot->keyType == CKK_EC && slot->ecc.cbPrivate > 0) {
-      for (DWORD j = 0; j < slot->ecc.cbPrivate * 2; j++) {
-        const BYTE *point = j < slot->ecc.cbPrivate ? slot->ecc.x : slot->ecc.y;
-        hash ^= point[j < slot->ecc.cbPrivate ? j : j - slot->ecc.cbPrivate];
-        hash *= 16777619u;
-      }
-    }
-    if (includeCertificates) {
-      for (DWORD j = 0; j < slot->certLen; j++) {
-        hash ^= slot->cert[j];
-        hash *= 16777619u;
-      }
-    }
-  }
-  WORD freshness = (WORD)(hash ^ (hash >> 16));
-  return freshness == 0 ? 1 : freshness;
-}
-
 static DWORD AllocCacheFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, PDWORD pcbData) {
-  CARD_CACHE_FILE_FORMAT cache = {.bVersion = CARD_CACHE_FILE_CURRENT_VERSION,
-                                  .bPinsFreshness = 0,
-                                  .wContainersFreshness = ComputeFreshness(pContext, FALSE),
-                                  .wFilesFreshness = ComputeFreshness(pContext, TRUE)};
-
-  CMD_DEBUG("cardcf freshness: pins=%u containers=%u files=%u", cache.bPinsFreshness, cache.wContainersFreshness,
-            cache.wFilesFreshness);
+  (void)pContext;
+  // There is no durable card-backed PIN freshness value. Advertising a global
+  // cache would let Base CSP reuse a PIN decision after an external PIN
+  // change, so this virtual cardcf deliberately disables caching.
+  CARD_CACHE_FILE_FORMAT cache = {0};
+  cache.bVersion = CARD_CACHE_FILE_CURRENT_VERSION;
   return AllocCopy(&cache, sizeof(cache), ppbData, pcbData);
 }
 
@@ -231,11 +191,33 @@ DWORD RefreshCardMetadata(CMD_CONTEXT_PTR pContext) {
   if (rv != CKR_OK) {
     CMD_RETURN(map_pkcs11_write_error(rv), "Failed to refresh CanoKey metadata");
   }
-  pContext->canokey = snapshot;
-  pContext->metadataGeneration = InterlockedIncrement(&g_cmd_metadata_generation);
+  if (memcmp(&pContext->canokey, &snapshot, sizeof(snapshot)) != 0) {
+    pContext->canokey = snapshot;
+    pContext->metadataGeneration = InterlockedIncrement(&g_cmd_metadata_generation);
+  } else {
+    // A read-only refresh must not invalidate every other CARD_DATA context.
+    pContext->metadataGeneration = InterlockedCompareExchange(&g_cmd_metadata_generation, 0, 0);
+  }
   pContext->last_metadata_refresh_ms = GetTickCount64();
   pContext->metadata_refresh_valid = TRUE;
   CMD_RET_OK;
+}
+
+static BOOL IsMetadataFile(LPSTR pszDirectoryName, LPSTR pszFileName) {
+  return (pszDirectoryName == NULL && strcmp(pszFileName, szCACHE_FILE) == 0) ||
+         (pszDirectoryName != NULL && strcmp(pszDirectoryName, szBASE_CSP_DIR) == 0 &&
+          (strcmp(pszFileName, szCONTAINER_MAP_FILE) == 0 ||
+           strncmp(pszFileName, szUSER_KEYEXCHANGE_CERT_PREFIX, 3) == 0 ||
+           strncmp(pszFileName, szUSER_SIGNATURE_CERT_PREFIX, 3) == 0));
+}
+
+static DWORD RefreshMetadataIfStale(CMD_CONTEXT_PTR pContext, LPSTR pszDirectoryName, LPSTR pszFileName) {
+  if (!IsMetadataFile(pszDirectoryName, pszFileName))
+    return SCARD_S_SUCCESS;
+  ULONGLONG now = GetTickCount64();
+  if (!pContext->metadata_refresh_valid || now - pContext->last_metadata_refresh_ms >= 1000)
+    return RefreshCardMetadata(pContext);
+  return SCARD_S_SUCCESS;
 }
 
 // The CardReadFile function reads the entire file at the specified location into the user-supplied buffer.
@@ -261,21 +243,9 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
   // External PKCS#11/PIV tools can mutate keys or certificates while this
   // minidriver context remains alive. Refresh before serving cache or
   // certificate views so cardcf freshness is based on the current card.
-  if ((pszDirectoryName == NULL && strcmp(pszFileName, szCACHE_FILE) == 0) ||
-      (pszDirectoryName != NULL && strcmp(pszDirectoryName, szBASE_CSP_DIR) == 0 &&
-       (strcmp(pszFileName, szCONTAINER_MAP_FILE) == 0 ||
-        strncmp(pszFileName, szUSER_KEYEXCHANGE_CERT_PREFIX, 3) == 0 ||
-        strncmp(pszFileName, szUSER_SIGNATURE_CERT_PREFIX, 3) == 0))) {
-    // KSP can ask for cardcf/map/cert files repeatedly during one discovery.
-    // Avoid rescanning all PIV slots for every query while still detecting an
-    // external PKCS#11 mutation after a short bounded interval.
-    ULONGLONG now = GetTickCount64();
-    if (!pContext->metadata_refresh_valid || now - pContext->last_metadata_refresh_ms >= 1000) {
-      DWORD refresh = RefreshCardMetadata(pContext);
-      if (refresh != SCARD_S_SUCCESS)
-        CMD_RETURN(refresh, "Failed to refresh live metadata for cache view");
-    }
-  }
+  DWORD refresh = RefreshMetadataIfStale(pContext, pszDirectoryName, pszFileName);
+  if (refresh != SCARD_S_SUCCESS)
+    CMD_RETURN(refresh, "Failed to refresh live metadata for cache view");
 
   if (pszDirectoryName == NULL) { // Root directory
     if (strcmp(pszFileName, szCACHE_FILE) == 0) {
@@ -458,6 +428,10 @@ DWORD WINAPI CardGetFileInfo(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryN
   INJECT_HANDLES();
   CMD_GET_CTX(pCardData, pContext);
 
+  DWORD refresh = RefreshMetadataIfStale(pContext, pszDirectoryName, pszFileName);
+  if (refresh != SCARD_S_SUCCESS)
+    CMD_RETURN(refresh, "Failed to refresh live metadata for file info");
+
   if (pCardFileInfo->dwVersion != CARD_FILE_INFO_CURRENT_VERSION) {
     CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
   }
@@ -538,6 +512,10 @@ DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
   INJECT_HANDLES();
   CMD_GET_CTX(pCardData, pContext);
 
+  DWORD refresh = RefreshMetadataIfStale(pContext, pszDirectoryName, szCONTAINER_MAP_FILE);
+  if (refresh != SCARD_S_SUCCESS)
+    CMD_RETURN(refresh, "Failed to refresh live metadata for file enumeration");
+
   *pmszFileNames = NULL;
   *pdwcbFileName = 0;
 
@@ -550,7 +528,10 @@ DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
     CMD_RETURN(SCARD_E_DIR_NOT_FOUND, "Directory not found");
   }
 
-  DWORD total = sizeof(szROOT_STORE_FILE) + sizeof(szCONTAINER_MAP_FILE);
+  // msroots is optional and must not be advertised without a real PKCS#7
+  // enterprise root store. Returning an empty file makes Base CSP attempt to
+  // parse invalid root data before it reaches the user certificates.
+  DWORD total = sizeof(szCONTAINER_MAP_FILE);
   for (CK_ULONG i = 0; i < pContext->canokey.slotCount; i++) {
     SLOT *slot = &pContext->canokey.slots[i];
     if (!canokey_slot_has_key(slot)) {
@@ -559,11 +540,11 @@ DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
     if (slot->certLen == 0) {
       continue;
     }
+    // The Windows file-system contract uses two decimal digits (for example,
+    // ksc00 and kxc02). CardReadFile also accepts unpadded names for callers
+    // that follow the older cardmod.h examples.
     if (canokey_slot_can_sign(slot)) {
-      total += (DWORD)snprintf(NULL, 0, "%s%lu", szUSER_SIGNATURE_CERT_PREFIX, (unsigned long)i) + 1;
-    }
-    if (canokey_slot_can_decrypt(slot) || canokey_slot_can_derive(slot)) {
-      total += (DWORD)snprintf(NULL, 0, "%s%lu", szUSER_KEYEXCHANGE_CERT_PREFIX, (unsigned long)i) + 1;
+      total += (DWORD)snprintf(NULL, 0, "%s%02lu", szUSER_SIGNATURE_CERT_PREFIX, (unsigned long)i) + 1;
     }
   }
   total += 1;
@@ -576,13 +557,7 @@ DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
   LPSTR cursor = files;
   DWORD remaining = total;
 
-  int written = snprintf(cursor, remaining, "%s", szROOT_STORE_FILE);
-  if (written < 0 || written >= (int)remaining) {
-    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to format root store file name");
-  }
-  cursor += written + 1;
-  remaining -= (DWORD)written + 1;
-  written = snprintf(cursor, remaining, "%s", szCONTAINER_MAP_FILE);
+  int written = snprintf(cursor, remaining, "%s", szCONTAINER_MAP_FILE);
   if (written < 0 || written >= (int)remaining) {
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to format container map file name");
   }
@@ -598,17 +573,9 @@ DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
       continue;
     }
     if (canokey_slot_can_sign(slot)) {
-      written = snprintf(cursor, remaining, "%s%lu", szUSER_SIGNATURE_CERT_PREFIX, (unsigned long)i);
+      written = snprintf(cursor, remaining, "%s%02lu", szUSER_SIGNATURE_CERT_PREFIX, (unsigned long)i);
       if (written < 0 || written >= (int)remaining) {
         CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to format signature cert file name");
-      }
-      cursor += written + 1;
-      remaining -= (DWORD)written + 1;
-    }
-    if (canokey_slot_can_decrypt(slot) || canokey_slot_can_derive(slot)) {
-      written = snprintf(cursor, remaining, "%s%lu", szUSER_KEYEXCHANGE_CERT_PREFIX, (unsigned long)i);
-      if (written < 0 || written >= (int)remaining) {
-        CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to format key exchange cert file name");
       }
       cursor += written + 1;
       remaining -= (DWORD)written + 1;
@@ -656,25 +623,51 @@ static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, 
   PCONTAINER_MAP_RECORD recs = (PCONTAINER_MAP_RECORD)*ppbData;
   memset(recs, 0, total);
 
-  // Setup SHA-1 digest
+  // Setup SHA-1 digest. Windows uses the first usable record as its default
+  // discovery context; retaining that ordering matches the card's stable
+  // container indices and the proven Base CSP behavior.
   CK_MECHANISM mech = {CKM_SHA_1, NULL, 0};
-  BOOL defaultAssigned = FALSE;
+  CK_ULONG defaultIndex = pCanokey->slotCount;
   for (CK_ULONG i = 0; i < pCanokey->slotCount; i++) {
     SLOT *slot = &pCanokey->slots[i];
     PCONTAINER_MAP_RECORD rec = &recs[i];
     if (!canokey_slot_has_key(slot)) {
       continue;
     }
+    if (defaultIndex == pCanokey->slotCount &&
+        (canokey_slot_can_sign(slot) || canokey_slot_can_decrypt(slot) || canokey_slot_can_derive(slot))) {
+      defaultIndex = i;
+    }
 
-    // Container names must remain stable when a key is replaced. Derive the
-    // virtual CAPI GUID from the stable card identifier and container index,
-    // not from mutable public-key bytes; Base CSP/KSP uses this name as its
-    // long-lived cache key.
+    // Base CSP derives its historical container identity from the public key
+    // bytes. Preserve that compatibility identity so certificates already
+    // associated with the card remain discoverable after a minidriver update.
     CK_BYTE digest[20];
     CK_ULONG digLen = sizeof(digest);
-    CK_BYTE containerIdentity[sizeof(pContext->cardId) + 1];
-    memcpy(containerIdentity, pContext->cardId, sizeof(pContext->cardId));
-    containerIdentity[sizeof(pContext->cardId)] = (CK_BYTE)i;
+    CK_BYTE containerIdentity[512];
+    CK_ULONG containerIdentityLen = 0;
+    if (slot->keyType == CKK_RSA) {
+      containerIdentityLen = slot->rsa.modulusBits / 8;
+      if (containerIdentityLen > sizeof(containerIdentity)) {
+        g_pfnCspFree(*ppbData);
+        *ppbData = NULL;
+        *pcbData = 0;
+        CMD_RETURN(SCARD_E_INVALID_PARAMETER, "RSA modulus is too large for container identity");
+      }
+      memcpy(containerIdentity, slot->rsa.modulus, containerIdentityLen);
+    } else if (slot->keyType == CKK_EC) {
+      containerIdentityLen = slot->ecc.cbPrivate * 2;
+      if (containerIdentityLen > sizeof(containerIdentity)) {
+        g_pfnCspFree(*ppbData);
+        *ppbData = NULL;
+        *pcbData = 0;
+        CMD_RETURN(SCARD_E_INVALID_PARAMETER, "EC public key is too large for container identity");
+      }
+      memcpy(containerIdentity, slot->ecc.x, slot->ecc.cbPrivate);
+      memcpy(containerIdentity + slot->ecc.cbPrivate, slot->ecc.y, slot->ecc.cbPrivate);
+    } else {
+      continue;
+    }
     CK_RV rv = C_DigestInit(pContext->session, &mech);
     if (rv != CKR_OK) {
       g_pfnCspFree(*ppbData);
@@ -682,7 +675,7 @@ static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, 
       *pcbData = 0;
       return map_pkcs11_write_error(rv);
     }
-    rv = C_Digest(pContext->session, containerIdentity, sizeof(containerIdentity), digest, &digLen);
+    rv = C_Digest(pContext->session, containerIdentity, containerIdentityLen, digest, &digLen);
     if (rv != CKR_OK) {
       C_SessionCancel(pContext->session, CKF_DIGEST);
       g_pfnCspFree(*ppbData);
@@ -698,9 +691,8 @@ static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, 
 
     // Set flags
     rec->bFlags = CONTAINER_MAP_VALID_CONTAINER;
-    if (!defaultAssigned) {
+    if (i == defaultIndex) {
       rec->bFlags |= CONTAINER_MAP_DEFAULT_CONTAINER;
-      defaultAssigned = TRUE;
     }
     // Set signature key size bits
     if (canokey_slot_can_sign(slot)) {
@@ -708,9 +700,11 @@ static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, 
     }
     if (canokey_slot_can_decrypt(slot) && slot->keyType == CKK_RSA) {
       rec->wKeyExchangeKeySizeBits = (WORD)slot->rsa.modulusBits;
-    } else if (canokey_slot_can_derive(slot) && slot->keyType == CKK_EC) {
-      rec->wKeyExchangeKeySizeBits = (WORD)canokey_ec_curve_bits(slot);
     }
+    // Keep EC ECDH available through PKCS#11, but do not advertise its
+    // companion Windows key-spec view: current CPDK/Windows propagation drops
+    // the associated EC certificate when that field is populated. RSA 9D is
+    // the one validated Windows key-exchange view and is set above.
     CMD_DEBUG("Container %d: %ls, flags: %d, wSigKeySizeBits: %d, wKeyExchangeKeySizeBits: %d", i, rec->wszGuid,
               rec->bFlags, rec->wSigKeySizeBits, rec->wKeyExchangeKeySizeBits);
   }

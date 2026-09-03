@@ -245,10 +245,10 @@ The crypto tests use Windows CryptoAPI/CNG APIs directly instead of parsing
 - CNG RSA/SHA256 PSS through Microsoft Smart Card Key Storage Provider
 - CNG ECDSA P-256/P-384/P-521 with SHA256 through Microsoft Smart Card Key
   Storage Provider
-- CNG ECDH P-256/P-384/P-521 raw-secret derivation through Microsoft Smart Card
-  Key Storage Provider, checked against software-generated peer keys
-- CNG RSA PKCS#1 decrypt for discovered key-exchange RSA containers
-- CNG RSA OAEP-SHA256 decrypt for discovered key-exchange RSA containers
+- PKCS#11 ECDH P-256/P-384/P-521 raw-secret derivation through the managed
+  backend, checked against software-generated peer keys
+- RSA PKCS#1/OAEP decrypt through PKCS#11 for supported PIV RSA slots; Windows
+  key-exchange containers are intentionally not advertised during propagation
 
 Like the smoke wrapper, it defaults to building x64 Debug, running the debug
 install target, discovering and resetting the DevKit control port, and passing
@@ -269,14 +269,12 @@ All four scripts share `scripts\minidriver-test-common.ps1`, so
 signing, decrypt, and derive tests without recompiling or reloading between
 groups.
 
-For the current development card, the full matrix passes with 9A RSA-2048
-signing, 9C EC P-256 signing plus ECDH raw-secret derivation, and 9D RSA-2048
-signing plus key exchange. The script opens CNG RSA signature keys with
-`LegacyKeySpec = AT_SIGNATURE`, RSA decryption keys with
-`LegacyKeySpec = AT_KEYEXCHANGE`, ECDSA keys with the matching `AT_ECDSA_*`
-spec, and ECDH keys with the matching `AT_ECDHE_*` spec; using `0` for a
-container that appears as multiple key specs can fail or open the wrong
-algorithm group.
+For the current development card, Windows discovery covers signature
+containers with `LegacyKeySpec = AT_SIGNATURE`. RSA decrypt and ECDH remain
+covered by the PKCS#11 API-level tests because their Windows key-spec views are
+EC ECDH is hidden during certificate propagation; using `AT_ECDHE_*` requires
+an explicitly enabled future Windows bridge. RSA 9D `AT_KEYEXCHANGE` is
+currently supported and covered by the Windows test path.
 
 ECDH currently supports only raw secret derivation (`BCRYPT_KDF_RAW_SECRET`,
 which maps to PKCS#11 `CKD_NULL`). `CardDeriveKey` does not yet implement
@@ -317,7 +315,8 @@ provisioning login.
 non-silent `NCryptFinalizeKey` through Microsoft Smart Card KSP and verifies a
 signature with the resulting key.
 
-Certificate files (`kscN` and `kxcN`) are different from key generation.
+Certificate files (`kscNN` and `kxcNN`, with a two-digit container index) are
+different from key generation.
 Windows expects user certificate files to behave like everyone-read/user-write
 files for enumeration and enrollment plumbing, so `CardGetFileInfo` reports
 `EveryoneReadUserWriteAc` for them. The actual PIV certificate write is still a

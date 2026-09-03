@@ -37,23 +37,21 @@ Visual Studio generator with `-T ClangCL` as unsupported on this development
 machine; use the documented Ninja flow.
 
 For the Windows cache matrix, verify that `CP_CARD_CACHE_MODE` reports
-`CP_CACHE_MODE_GLOBAL_CACHE`, repeated reads return stable `cardcf` freshness,
-and `cmapfile` exposes the same container GUIDs across contexts and card
-reinsertion. A certificate-only mutation must change file freshness without
-renaming containers. A key replacement must change container freshness while
-preserving the fixed index/GUID and must leave signing/derivation usable.
-Compatibility writes from Base CSP/KSP must be accepted without replacing the
-live PKCS#11-derived inventory.
+`CP_CACHE_MODE_NO_CACHE` and that `cardcf` returns the current version with
+zero freshness fields. PIV has no durable PIN freshness value, so this is
+required to prevent stale Base CSP authorization after an external PIN change.
+Repeated reads must expose stable public-key-derived container GUIDs across
+contexts and card reinsertion. Compatibility writes from Base CSP/KSP must be
+accepted without replacing the live PKCS#11-derived inventory.
 
 Repeat the cache matrix after mutations made by an external PKCS#11/PIV
 process, not only through minidriver APIs. With an existing `CARD_DATA`
-context, read `cardcf`, `cmapfile`, and the affected `kscN`/`kxcN` files again;
-the minidriver must refresh live metadata, report changed freshness, preserve
-container GUIDs, and expose the new certificate/key material. The first read
-uses the acquisition snapshot; later reads may reuse it for up to one second,
-so the test must allow that bounded interval before asserting new freshness.
-A PIN-only mutation is an authentication-state test and must not be confused
-with key or file freshness.
+context, read `cardcf`, `cmapfile`, and the affected zero-padded `kscNN`/`kxcNN`
+files again; the minidriver must refresh live metadata within its bounded
+one-second read interval, report the changed freshness value, preserve
+container GUIDs, and expose the new certificate/key material. A PIN-only
+mutation is an authentication-state test and must not be confused with key or
+file freshness.
 
 ## Review Procedure
 
