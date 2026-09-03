@@ -204,8 +204,10 @@ DWORD RefreshCardMetadata(CMD_CONTEXT_PTR pContext) {
 }
 
 static BOOL IsMetadataFile(LPSTR pszDirectoryName, LPSTR pszFileName) {
-  return (pszDirectoryName == NULL && strcmp(pszFileName, szCACHE_FILE) == 0) ||
-         (pszDirectoryName != NULL && strcmp(pszDirectoryName, szBASE_CSP_DIR) == 0 &&
+  // cardcf is a virtual, zero-freshness compatibility file. It contains no
+  // live inventory, so reading it must not trigger a full card scan. The
+  // container map and certificate views do depend on the current snapshot.
+  return (pszDirectoryName != NULL && strcmp(pszDirectoryName, szBASE_CSP_DIR) == 0 &&
           (strcmp(pszFileName, szCONTAINER_MAP_FILE) == 0 ||
            strncmp(pszFileName, szUSER_KEYEXCHANGE_CERT_PREFIX, 3) == 0 ||
            strncmp(pszFileName, szUSER_SIGNATURE_CERT_PREFIX, 3) == 0));
@@ -241,8 +243,8 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
   CMD_GET_CTX(pCardData, pContext);
 
   // External PKCS#11/PIV tools can mutate keys or certificates while this
-  // minidriver context remains alive. Refresh before serving cache or
-  // certificate views so cardcf freshness is based on the current card.
+  // minidriver context remains alive. Refresh before serving live container or
+  // certificate views; cardcf is virtual and deliberately does not refresh.
   DWORD refresh = RefreshMetadataIfStale(pContext, pszDirectoryName, pszFileName);
   if (refresh != SCARD_S_SUCCESS)
     CMD_RETURN(refresh, "Failed to refresh live metadata for cache view");

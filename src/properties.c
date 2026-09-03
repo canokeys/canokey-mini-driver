@@ -68,7 +68,8 @@ static DWORD getCardCacheMode(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, 
   }
   // PIN changes have no durable freshness counter in PIV. Disable Base CSP
   // caching so Windows cannot reuse a stale authorization decision after an
-  // external PKCS#11/PIV mutation. CardReadFile still bounds metadata reads.
+  // external PKCS#11/PIV mutation. Live map/certificate reads are still
+  // bounded; the virtual cardcf read itself does not need a metadata refresh.
   *(DWORD *)pbData = CP_CACHE_MODE_NO_CACHE;
   CMD_RET_OK;
 }

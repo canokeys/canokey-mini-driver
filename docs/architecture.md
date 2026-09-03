@@ -129,9 +129,11 @@ The minidriver reports `CP_CACHE_MODE_NO_CACHE`. PIV exposes no durable PIN
 freshness counter, so a global Base CSP cache could retain an authorization
 decision after an external PIN change. `cardcf` remains a versioned,
 zero-freshness compatibility file; Windows must reread `cmapfile` and
-certificate files from the live metadata snapshot. Reads are rate-limited to
-one metadata scan per context per second, and the generation counter advances
-only when the snapshot actually changes.
+certificate files from the live metadata snapshot. Reads of the live container
+map and certificate views are rate-limited to one metadata scan per context per
+second, and the generation counter advances only when the snapshot actually
+changes. Reading the virtual `cardcf` does not scan the card because its
+zero-freshness payload contains no live inventory.
 
 Windows propagation exposes signature views for all six containers and
 populates `wKeyExchangeKeySizeBits`/`pbKeyExPublicKey` only for an RSA 9D
@@ -145,10 +147,11 @@ generated view comes from live PKCS#11 metadata.
 External PKCS#11/PIV tools may mutate keys or certificates while Windows holds
 a `CARD_DATA` context. Reads of the live virtual files refresh metadata at most
 once per second, avoiding a full six-slot scan for every repeated KSP query
-while ensuring an external mutation becomes visible promptly. Container GUIDs
-remain stable while the map's key sizes and certificate bytes reflect the
-external mutation. PIN changes are handled by PKCS#11 authentication state and
-are not inferred from cache freshness values.
+while ensuring an external mutation becomes visible promptly. The virtual
+`cardcf` payload is returned without a scan. Container GUIDs remain stable
+while the map's key sizes and certificate bytes reflect the external mutation.
+PIN changes are handled by PKCS#11 authentication state and are not inferred
+from cache freshness values.
 
 Container generation/import and certificate writes call
 `RefreshCardMetadata` after card mutation so subsequent Windows queries see the

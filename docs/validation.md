@@ -47,7 +47,8 @@ accepted without replacing the live PKCS#11-derived inventory.
 Repeat the cache matrix after mutations made by an external PKCS#11/PIV
 process, not only through minidriver APIs. With an existing `CARD_DATA`
 context, read `cardcf`, `cmapfile`, and the affected zero-padded `kscNN`/`kxcNN`
-files again; the minidriver must refresh live metadata within its bounded
+files again. The virtual `cardcf` read must remain fast and must not trigger a
+metadata scan; the minidriver must refresh live metadata within its bounded
 one-second read interval, preserve container GUIDs, and expose the new
 certificate/key material. Because the cache mode is `CP_CACHE_MODE_NO_CACHE`,
 the test must verify reread content rather than expecting freshness counters to
