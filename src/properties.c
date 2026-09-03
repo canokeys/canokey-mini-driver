@@ -66,10 +66,10 @@ static DWORD getCardCacheMode(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, 
   if (cbData < sizeof(DWORD)) {
     CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
   }
-  // The cardcf/cmapfile views are virtual and are not persisted through the
-  // card file system. Disable Base CSP global caching so each context reads
-  // the live minidriver inventory instead of reusing stale container records.
-  *(DWORD *)pbData = CP_CACHE_MODE_NO_CACHE;
+  // The virtual cardcf freshness values are derived from persistent PIV
+  // key/certificate contents. This lets the Base CSP global cache survive
+  // context churn while invalidating exactly when the live inventory changes.
+  *(DWORD *)pbData = CP_CACHE_MODE_GLOBAL_CACHE;
   CMD_RET_OK;
 }
 

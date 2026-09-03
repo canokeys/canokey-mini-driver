@@ -102,30 +102,14 @@ static WORD ComputeFreshness(const CMD_CONTEXT *pContext, BOOL includeCertificat
 }
 
 static DWORD AllocCacheFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, PDWORD pcbData) {
-  WORD containerHash = ComputeFreshness(pContext, FALSE);
-  WORD fileHash = ComputeFreshness(pContext, TRUE);
-  if (!pContext->cache_initialized) {
-    pContext->cache_file = (CARD_CACHE_FILE_FORMAT){.bVersion = CARD_CACHE_FILE_CURRENT_VERSION,
-                                                    .bPinsFreshness = 0,
-                                                    .wContainersFreshness = containerHash,
-                                                    .wFilesFreshness = fileHash};
-    pContext->cache_container_hash = containerHash;
-    pContext->cache_file_hash = fileHash;
-    pContext->cache_initialized = TRUE;
-  } else {
-    if (containerHash != pContext->cache_container_hash) {
-      pContext->cache_file.wContainersFreshness = containerHash;
-      pContext->cache_container_hash = containerHash;
-    }
-    if (fileHash != pContext->cache_file_hash) {
-      pContext->cache_file.wFilesFreshness = fileHash;
-      pContext->cache_file_hash = fileHash;
-    }
-  }
+  CARD_CACHE_FILE_FORMAT cache = {.bVersion = CARD_CACHE_FILE_CURRENT_VERSION,
+                                  .bPinsFreshness = 0,
+                                  .wContainersFreshness = ComputeFreshness(pContext, FALSE),
+                                  .wFilesFreshness = ComputeFreshness(pContext, TRUE)};
 
-  CMD_DEBUG("cardcf freshness: pins=%u containers=%u files=%u", pContext->cache_file.bPinsFreshness,
-            pContext->cache_file.wContainersFreshness, pContext->cache_file.wFilesFreshness);
-  return AllocCopy(&pContext->cache_file, sizeof(pContext->cache_file), ppbData, pcbData);
+  CMD_DEBUG("cardcf freshness: pins=%u containers=%u files=%u", cache.bPinsFreshness, cache.wContainersFreshness,
+            cache.wFilesFreshness);
+  return AllocCopy(&cache, sizeof(cache), ppbData, pcbData);
 }
 
 static DWORD HashCardIdentity(CK_SESSION_HANDLE session, CK_BYTE_PTR identity, CK_ULONG identityLen, BYTE cardId[16]) {
@@ -385,13 +369,9 @@ DWORD WINAPI CardWriteFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
     if (cacheFile->bVersion != CARD_CACHE_FILE_CURRENT_VERSION) {
       CMD_RETURN(ERROR_REVISION_MISMATCH, "Cache file version mismatch");
     }
-    // Keep the Base CSP/KSP freshness counters in this virtual card context.
-    // Live metadata remains authoritative and will advance the relevant
-    // counter on the next read when key/certificate content changes.
-    pContext->cache_file = *cacheFile;
-    pContext->cache_container_hash = ComputeFreshness(pContext, FALSE);
-    pContext->cache_file_hash = ComputeFreshness(pContext, TRUE);
-    pContext->cache_initialized = TRUE;
+    // The virtual file is derived from persistent PIV contents. Accept the
+    // compatibility write, but never let process-local counters replace the
+    // deterministic value returned by the next read.
     CMD_RET_OK;
   }
 

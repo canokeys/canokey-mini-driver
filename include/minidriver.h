@@ -86,10 +86,6 @@ struct CMD_CONTEXT {
   LONG metadataGeneration;
   CANOKEY canokey;
   BYTE cardId[16];
-  CARD_CACHE_FILE_FORMAT cache_file;
-  WORD cache_container_hash;
-  WORD cache_file_hash;
-  BOOL cache_initialized;
   PIN_SET authenticatedPins;
   CMD_DH_AGREEMENT dhAgreements[CMD_MAX_DH_AGREEMENTS];
 };
