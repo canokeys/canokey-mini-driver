@@ -10,6 +10,7 @@
 #include <pkcs11_canokey.h>
 
 #include "cardmod.h"
+#include "config.h"
 #include "logging.h"
 #include "minidriver.h"
 
@@ -216,8 +217,12 @@ static BOOL IsMetadataFile(LPSTR pszDirectoryName, LPSTR pszFileName) {
 static DWORD RefreshMetadataIfStale(CMD_CONTEXT_PTR pContext, LPSTR pszDirectoryName, LPSTR pszFileName) {
   if (!IsMetadataFile(pszDirectoryName, pszFileName))
     return SCARD_S_SUCCESS;
+  const CMD_CONFIG *config = cmd_get_config();
+  if (!config->refresh_device_keys)
+    return SCARD_S_SUCCESS;
   ULONGLONG now = GetTickCount64();
-  if (!pContext->metadata_refresh_valid || now - pContext->last_metadata_refresh_ms >= 1000)
+  ULONGLONG refresh_window_ms = (ULONGLONG)config->refresh_window_seconds * 1000ULL;
+  if (!pContext->metadata_refresh_valid || now - pContext->last_metadata_refresh_ms >= refresh_window_ms)
     return RefreshCardMetadata(pContext);
   return SCARD_S_SUCCESS;
 }

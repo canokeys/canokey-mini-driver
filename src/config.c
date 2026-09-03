@@ -57,6 +57,9 @@ void cmd_load_config(CMD_CONFIG *config) {
               .level = CMD_LOG_LEVEL_NONE,
               .unsafe_log_apdu = false,
           },
+      .protect_management = true,
+      .refresh_device_keys = true,
+      .refresh_window_seconds = 60,
       .new_key_touch_policy = CNK_PIV_TOUCH_POLICY_NEVER,
       .has_new_key_pin_policy = false,
       .new_key_pin_policy = CNK_PIV_PIN_POLICY_ONCE,
@@ -79,6 +82,12 @@ void cmd_load_config(CMD_CONFIG *config) {
       }
       read_registry_bool(key, "LogSensitiveData", &local.logging.unsafe_log_apdu);
     }
+
+    // Match YubiKey Minidriver semantics: disabling this delegates
+    // PIN-managed management-key provisioning to an external solution.
+    read_registry_bool(key, "ProtectManagement", &local.protect_management);
+    read_registry_bool(key, "RefreshDeviceKeys", &local.refresh_device_keys);
+    read_registry_dword(key, "RefreshWindow", &local.refresh_window_seconds);
 
     DWORD new_key_touch_policy = 0;
     if (read_registry_dword(key, "NewKeyTouchPolicy", &new_key_touch_policy) &&

@@ -98,6 +98,9 @@ Windows Registry Editor Version 5.00
 "LogPath"="C:\\canokey-minidriver\\logs"
 "LogLevel"="debug"
 "LogSensitiveData"=dword:00000000
+"ProtectManagement"=dword:00000001
+"RefreshDeviceKeys"=dword:00000001
+"RefreshWindow"=dword:0000003c
 "NewKeyTouchPolicy"=dword:00000001
 "NewKeyPinPolicy"=dword:00000002
 "PinCacheTimeout"=dword:0000003c
@@ -161,6 +164,23 @@ Supported values:
 - `LogSensitiveData` (`REG_DWORD` or text bool): set to `1`, `true`, `yes`, or
   `on` to enable raw APDU/hex dumps. Leave this off unless the sensitive wire
   traffic is needed for local debugging.
+- `ProtectManagement` (`REG_DWORD` or text bool): controls the automatic
+  YubiKey-compatible PIN-managed management-key recovery after a successful
+  USER PIN login. The default is `1`. Set it to `0` when an external solution
+  owns management-key provisioning; this avoids the extra ADMIN DATA/PRINTED
+  probe on every USER authentication. Explicit `ROLE_ADMIN` authentication is
+  unaffected. PIN-managed key generation/import requires this setting enabled
+  or a separate management-key authorization path.
+- `RefreshDeviceKeys` (`REG_DWORD` or text bool): controls periodic live
+  re-enumeration of PIV keys and certificates while serving `cmapfile` and
+  certificate files. The default is `1`. Set it to `0` when external card
+  mutations do not need to appear automatically in an existing Windows
+  context; initial discovery and refreshes after minidriver-owned writes still
+  run.
+- `RefreshWindow` (`REG_DWORD`): interval in seconds for periodic live
+  re-enumeration, default `60` seconds. A value of `0` refreshes on every live
+  metadata read; larger values reduce card traffic but allow external
+  PKCS#11/PIV changes to remain stale until the window expires.
 - `NewKeyTouchPolicy` (`REG_DWORD`): YubiKey-style touch policy for keys
   created/imported through the minidriver: `1` = never, `2` = always,
   `3` = cached. The default is `1`.

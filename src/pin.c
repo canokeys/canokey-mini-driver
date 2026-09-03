@@ -4,6 +4,7 @@
 #include <pkcs11_canokey.h>
 
 #include "cardmod.h"
+#include "config.h"
 #include "logging.h"
 #include "minidriver.h"
 
@@ -310,7 +311,7 @@ DWORD WINAPI CardAuthenticateEx(__in PCARD_DATA pCardData, __in PIN_ID PinId, __
     CMD_RETURN(map_pkcs11_login_error(rv, pinTries), "C_Login failed");
   } else {
     SET_PIN(pContext->authenticatedPins, PinId);
-    if (PinId == ROLE_USER) {
+    if (PinId == ROLE_USER && cmd_get_config()->protect_management) {
       try_login_pin_protected_management_key(pContext, pbPinData, cbPinData);
     }
     CMD_RET_OK;

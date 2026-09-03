@@ -293,6 +293,13 @@ EC keys in those slots       -> PKCS#11 ECDH-capable (not Windows-mapped)
   DLL; runtime behavior should come from `HKLM\SOFTWARE\Canokeys\ckmd`.
 - Keep registry parsing in the config layer. `LogPath` absence means no
   minidriver or managed PKCS#11 logging, even if `LogLevel` is present.
+  `ProtectManagement` defaults to `1`; setting it to `0` skips the automatic
+  PIN-managed management-key probe after USER authentication and delegates
+  management-key provisioning to an external solution.
+  `RefreshDeviceKeys` defaults to `1`; setting it to `0` disables periodic
+  external key/certificate re-enumeration while retaining initial discovery
+  and refreshes after minidriver-owned writes. `RefreshWindow` controls the
+  interval in seconds (default `60`; `0` means every live metadata read).
   `NewKeyTouchPolicy` maps to `CKA_CNK_PIV_TOUCH_POLICY` (`1` never, `2`
   always, `3` cached; default `1`). `NewKeyPinPolicy`, when present, maps to
   `CKA_CNK_PIV_PIN_POLICY` (`1` never, `2` once, `3` always). The minidriver

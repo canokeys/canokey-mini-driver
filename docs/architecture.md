@@ -105,9 +105,11 @@ PKCS#11 objects out of Windows instead of incorrectly labeling them P-256.
 
 `ROLE_USER` maps to the PIV PIN and `ROLE_ADMIN` maps to management-key
 authentication. After USER login, `C_CNK_LoginPinManaged` may validate ADMIN
-DATA and recover the PIN-protected management key entirely inside PKCS#11. The
-minidriver sets the ADMIN role bit only after that succeeds; it never parses
-PRINTED or receives raw management-key bytes.
+DATA and recover the PIN-protected management key entirely inside PKCS#11. This
+YubiKey-style bridge is enabled by default and can be disabled with the
+registry `ProtectManagement=0` setting when an external provisioning solution
+owns the management key. The minidriver sets the ADMIN role bit only after
+that succeeds; it never parses PRINTED or receives raw management-key bytes.
 
 PIN-never, PIN-once, and PIN-always enforcement remains in PKCS#11/firmware.
 The minidriver must not add a blanket USER-login check around private-key
@@ -131,9 +133,18 @@ decision after an external PIN change. `cardcf` remains a versioned,
 zero-freshness compatibility file; Windows must reread `cmapfile` and
 certificate files from the live metadata snapshot. Reads of the live container
 map and certificate views are rate-limited to one metadata scan per context per
-second, and the generation counter advances only when the snapshot actually
-changes. Reading the virtual `cardcf` does not scan the card because its
-zero-freshness payload contains no live inventory.
+`RefreshWindow` seconds (60 seconds by default), and the generation counter
+advances only when the snapshot actually changes. Reading the virtual `cardcf`
+does not scan the card because its zero-freshness payload contains no live
+inventory. `RefreshDeviceKeys=0` disables periodic live re-enumeration while
+retaining initial discovery and refreshes after minidriver-owned writes.
+
+The Base CSP cache mode remains `CP_CACHE_MODE_NO_CACHE` by default. The
+session-only mode would keep per-process certificate and container data stale
+after an external PKCS#11/PIV mutation until reinsertion, while global cache
+requires a durable `cardcf` freshness counter that this virtual card does not
+have. Use `RefreshDeviceKeys` and `RefreshWindow` for an explicit performance
+trade-off instead of advertising a cache mode that can hide live changes.
 
 Windows propagation exposes signature views for all six containers and
 populates `wKeyExchangeKeySizeBits`/`pbKeyExPublicKey` only for an RSA 9D
@@ -145,9 +156,10 @@ compatibility, but does not use those writes as authoritative state; every
 generated view comes from live PKCS#11 metadata.
 
 External PKCS#11/PIV tools may mutate keys or certificates while Windows holds
-a `CARD_DATA` context. Reads of the live virtual files refresh metadata at most
-once per second, avoiding a full six-slot scan for every repeated KSP query
-while ensuring an external mutation becomes visible promptly. The virtual
+a `CARD_DATA` context. When `RefreshDeviceKeys` is enabled, reads of the live
+virtual files refresh metadata at most once per `RefreshWindow` seconds,
+avoiding a full six-slot scan for every repeated KSP query while ensuring an
+external mutation becomes visible within the configured window. The virtual
 `cardcf` payload is returned without a scan. Container GUIDs remain stable
 while the map's key sizes and certificate bytes reflect the external mutation.
 PIN changes are handled by PKCS#11 authentication state and are not inferred
