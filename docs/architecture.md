@@ -59,6 +59,11 @@ Windows `AT_KEYEXCHANGE` view. EC ECDH companion views remain hidden because
 the current CPDK/Windows path drops the associated EC certificate when those
 fields are populated.
 
+When a card is only partially provisioned, the container map marks the first
+certificate-backed signing container as the default. A key without its matching
+certificate remains addressable by its stable index but must not be selected as
+Windows' default signing identity.
+
 The mapping is policy, not merely algorithm capability. PKCS#11 still performs
 RSA decrypt and ECDH in any supported PIV slot, and the minidriver crypto entry
 points remain available for a future Windows key-spec bridge.

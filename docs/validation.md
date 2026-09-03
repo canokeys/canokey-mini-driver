@@ -76,7 +76,10 @@ unfiltered system-wide probe):
    verify that authentication reaches `CardAuthenticateEx` and signing reaches
    `CardSignData`. Use PKCS#11 tests separately for capabilities intentionally
    hidden from Windows, such as ECDH or PQC.
-4. Repeat enumeration and one signing operation after a card reset/reinsert.
+4. On a partially provisioned card, verify that `mscp/cmapfile` marks the first
+   certificate-backed signing container as default; a key-only container must
+   not be selected as the default Windows signing identity.
+5. Repeat enumeration and one signing operation after a card reset/reinsert.
    Read `cardid`, `cardcf`, `cmapfile`, and certificate files again; `cardid`
    and `CP_CARD_GUID` must remain identical and the six container associations
    must not change.

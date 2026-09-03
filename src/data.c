@@ -630,22 +630,38 @@ static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, 
   PCONTAINER_MAP_RECORD recs = (PCONTAINER_MAP_RECORD)*ppbData;
   memset(recs, 0, total);
 
-  // Setup SHA-1 digest. Windows uses the first usable record as its default
-  // discovery context; retaining that ordering matches the card's stable
-  // container indices and the proven Base CSP behavior.
+  // Setup SHA-1 digest. Windows uses the default record as its discovery
+  // context; prefer a certificate-backed signing record so a partially
+  // provisioned card does not default to a key whose certificate is absent.
+  // If no certificate is present yet, retain the first usable record for
+  // key-generation/enrollment flows.
   CK_MECHANISM mech = {CKM_SHA_1, NULL, 0};
-  CK_ULONG defaultIndex = pCanokey->slotCount;
+  CK_ULONG firstUsableIndex = pCanokey->slotCount;
+  CK_ULONG firstCertificateIndex = pCanokey->slotCount;
+  for (CK_ULONG i = 0; i < pCanokey->slotCount; i++) {
+    SLOT *slot = &pCanokey->slots[i];
+    if (!canokey_slot_has_key(slot) ||
+        !(canokey_slot_can_sign(slot) || canokey_slot_can_decrypt(slot) || canokey_slot_can_derive(slot))) {
+      continue;
+    }
+    if (firstUsableIndex == pCanokey->slotCount)
+      firstUsableIndex = i;
+    if (firstCertificateIndex == pCanokey->slotCount && canokey_slot_can_sign(slot) && slot->certLen > 0)
+      firstCertificateIndex = i;
+  }
+  CK_ULONG defaultIndex = firstCertificateIndex != pCanokey->slotCount ? firstCertificateIndex : firstUsableIndex;
+  if (firstUsableIndex == pCanokey->slotCount) {
+    CMD_WARN("No usable Windows key container was found in the live PIV inventory");
+  } else if (firstCertificateIndex == pCanokey->slotCount) {
+    CMD_WARN("No certificate-backed signing container was found; defaulting to key-only container %lu",
+             (unsigned long)firstUsableIndex);
+  }
   for (CK_ULONG i = 0; i < pCanokey->slotCount; i++) {
     SLOT *slot = &pCanokey->slots[i];
     PCONTAINER_MAP_RECORD rec = &recs[i];
     if (!canokey_slot_has_key(slot)) {
       continue;
     }
-    if (defaultIndex == pCanokey->slotCount &&
-        (canokey_slot_can_sign(slot) || canokey_slot_can_decrypt(slot) || canokey_slot_can_derive(slot))) {
-      defaultIndex = i;
-    }
-
     // Base CSP derives its historical container identity from the public key
     // bytes. Preserve that compatibility identity so certificates already
     // associated with the card remain discoverable after a minidriver update.
