@@ -313,6 +313,12 @@ EC keys in those slots       -> PKCS#11 ECDH-capable (not Windows-mapped)
   `ROLE_USER`; PIN-never keys must be able to sign, decrypt, or derive without
   a user PIN, while PIN-once/PIN-always keys should return the PKCS#11
   login-required error path when no PIN is cached.
+- For PIN-always keys, retain the USER PIN only in the current `CARD_DATA`
+  context and use it for one `CKU_CONTEXT_SPECIFIC` retry after a sign/decrypt
+  operation returns `CKR_USER_NOT_LOGGED_IN`; clear it on every exit path.
+  Do not return the raw PIN as a Windows session PIN. `C_DeriveKey` has no
+  PKCS#11 init boundary, so its PIN-always path must remain fail-closed until a
+  dedicated vendor extension is added.
 - PIN management is intentionally narrow. `ROLE_USER` maps to the PIV PIN,
   `ROLE_ADMIN` maps to the PIV management key / `CKU_SO`, and `CMD_ROLE_PUK`
   maps to the PIV PUK only for unblock/reset. Do not support standalone

@@ -58,6 +58,13 @@ static SCARDHANDLE g_managed_card_handle = 0;
 static LONG g_managed_context_count = 0;
 static CMD_CONTEXT_PTR g_managed_contexts = NULL;
 
+void cmd_clear_all_user_pins(void) {
+  // All minidriver entry points hold g_cmd_context_lock while touching this
+  // registry, so each context can be scrubbed without taking another lock.
+  for (CMD_CONTEXT_PTR context = g_managed_contexts; context != NULL; context = context->managed_next)
+    cmd_clear_user_pin(context);
+}
+
 static void release_exclusive_context_lock(PSRWLOCK *lock) {
   if (lock != NULL && *lock != NULL)
     ReleaseSRWLockExclusive(*lock);
@@ -365,6 +372,9 @@ DWORD CardDeleteContext(__inout PCARD_DATA pCardData) {
   PSRWLOCK contextLock __attribute__((cleanup(release_exclusive_context_lock))) = &g_cmd_context_lock;
   if (pCardData->pvVendorSpecific) {
     CMD_CONTEXT_PTR context = (CMD_CONTEXT_PTR)pCardData->pvVendorSpecific;
+    // Closing a context must not leave its copied USER PIN behind, even when
+    // a later cleanup stage reports an error and the context is retained.
+    cmd_clear_user_pin(context);
     CK_RV rv = C_CloseSession(context->session);
     if (rv != CKR_OK && rv != CKR_SESSION_HANDLE_INVALID && rv != CKR_CRYPTOKI_NOT_INITIALIZED) {
       CMD_WARN("C_CloseSession failed: 0x%lx", rv);

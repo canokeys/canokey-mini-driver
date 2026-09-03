@@ -116,6 +116,15 @@ registry `ProtectManagement=0` setting when an external provisioning solution
 owns the management key. The minidriver sets the ADMIN role bit only after
 that succeeds; it never parses PRINTED or receives raw management-key bytes.
 
+For PIN-always private operations, `CardAuthenticateEx` retains a bounded USER
+PIN only inside the current `CARD_DATA` context. `CardSignData` and
+`CardRSADecrypt` use it for one `CKU_CONTEXT_SPECIFIC` retry after the
+underlying PKCS#11 operation reports `CKR_USER_NOT_LOGGED_IN`, then clear it.
+The Windows session-PIN mechanism remains unsupported, so the raw PIN is never
+returned through `ppbSessionPin`. ECDH derive remains fail-closed for
+PIN-always keys because PKCS#11 `C_DeriveKey` has no `Init` boundary for
+context-specific authentication.
+
 PIN-never, PIN-once, and PIN-always enforcement remains in PKCS#11/firmware.
 The minidriver must not add a blanket USER-login check around private-key
 operations.

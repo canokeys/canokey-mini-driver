@@ -24,6 +24,24 @@ checks below.
 - All sensitive buffers, temporary DH agreements, and failed key-operation
   allocations have a deterministic cleanup path.
 
+## Context-Specific PIN Gate
+
+For a PIV key with PIN-always policy, the minidriver must retain a bounded USER
+PIN only within the same `CARD_DATA` context and only until the next private
+operation or teardown. After `C_SignInit`/`C_DecryptInit`, a first
+`CKR_USER_NOT_LOGGED_IN` result may trigger exactly one
+`C_Login(CKU_CONTEXT_SPECIFIC)` and one retry of the active operation. PIN-once
+and PIN-never operations must not receive this extra login. The cached PIN must
+be cleared on every success, terminal error, cancellation, logout,
+`CardDeleteContext`, or card-handle change. Session-PIN flags remain
+unsupported; the minidriver must not return the raw USER PIN through
+`ppbSessionPin`.
+
+`C_DeriveKey` is a one-shot PKCS#11 API with no operation-initiation boundary,
+so the Windows ECDH path remains fail-closed for PIN-always keys until a
+dedicated context-authenticated vendor extension exists. Do not emulate a
+context-specific login outside an active PKCS#11 sign/decrypt operation.
+
 ## Required Checks
 
 For each changed callback, test valid input, invalid versions/flags, invalid

@@ -298,7 +298,9 @@ PIV PIN policy is enforced by PKCS#11 and firmware:
 - PIN-never keys may operate without a user login;
 - PIN-once keys require authentication once for the session;
 - PIN-always keys require the appropriate per-operation authentication path;
-  Windows provisioning rejects this policy until that path is available.
+  runtime sign/decrypt uses the same-context retry described below, while
+  Windows provisioning still rejects this policy because session-PIN bridging
+  is unavailable.
 
 The minidriver must not add a blanket `ROLE_USER` check around every private-key
 operation.
@@ -354,6 +356,12 @@ message through raw RSA. ECDSA is delegated directly to PKCS#11:
 For PSS, the CSP callback applies the requested hash and salt policy before the
 raw RSA operation; no `CK_RSA_PKCS_PSS_PARAMS` is sent to the token.
 
+When the selected PIV key reports PIN-always policy, the minidriver retries a
+`C_Sign` that returns `CKR_USER_NOT_LOGGED_IN` once after a
+`CKU_CONTEXT_SPECIFIC` login using the bounded USER PIN captured for the same
+`CARD_DATA` context. The PIN is cleared on every operation exit. Session-PIN
+flags remain unsupported and the raw PIN is never returned to Windows.
+
 ### 6.4 RSA Decryption
 
 `CardRSADecrypt` accepts an RSA key in `9D` and maps:
@@ -369,6 +377,9 @@ uses big-endian values. The minidriver reverses the ciphertext before
 `C_Decrypt` and reverses the returned plaintext before handing it to Windows,
 including modes where PKCS#11 removes padding.
 
+RSA decrypt uses the same one-shot context-specific retry for PIN-always keys;
+the cached PIN is not retained after the decrypt callback returns.
+
 ### 6.5 ECDH
 
 `CardConstructDHAgreement` creates a PKCS#11 session secret with
@@ -379,6 +390,9 @@ refers to that session object.
 encoding to the little-endian form expected by CNG
 `BCRYPT_KDF_RAW_SECRET`. `CardDestroyDHAgreement` clears the session object and
 agreement slot.
+
+PIN-always ECDH remains fail-closed because PKCS#11 `C_DeriveKey` has no
+operation-initiation boundary for context-specific login.
 
 ## 7. Windows Virtual Files
 

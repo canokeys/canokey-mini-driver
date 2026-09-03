@@ -13,6 +13,41 @@
 static CK_RV login_with_role(CMD_CONTEXT_PTR pContext, CK_USER_TYPE userType, PBYTE loginData, CK_ULONG loginDataLen,
                              BYTE *pPinTries);
 
+void cmd_clear_user_pin(CMD_CONTEXT_PTR pContext) {
+  if (pContext == NULL)
+    return;
+  SecureZeroMemory(pContext->userPin, sizeof(pContext->userPin));
+  pContext->userPinLen = 0;
+  pContext->userPinValid = FALSE;
+}
+
+void cmd_store_user_pin(CMD_CONTEXT_PTR pContext, const BYTE *pin, DWORD pinLen) {
+  if (pContext == NULL)
+    return;
+  cmd_clear_user_pin(pContext);
+  if (pin == NULL || pinLen == 0 || pinLen > CMD_MAX_USER_PIN_LEN)
+    return;
+  memcpy(pContext->userPin, pin, pinLen);
+  pContext->userPinLen = pinLen;
+  pContext->userPinValid = TRUE;
+}
+
+CK_RV cmd_login_context_specific(CMD_CONTEXT_PTR pContext) {
+  if (pContext == NULL || !pContext->userPinValid || pContext->userPinLen == 0 ||
+      pContext->userPinLen > sizeof(pContext->userPin))
+    return CKR_USER_NOT_LOGGED_IN;
+
+  BYTE pin[CMD_MAX_USER_PIN_LEN] = {0};
+  DWORD pinLen = pContext->userPinLen;
+  memcpy(pin, pContext->userPin, pinLen);
+  // This is a one-shot credential. Clear the context copy before the card call
+  // returns, regardless of whether the context-specific verification succeeds.
+  cmd_clear_user_pin(pContext);
+  CK_RV rv = C_CNK_Login(pContext->session, CKU_CONTEXT_SPECIFIC, pin, pinLen, NULL);
+  SecureZeroMemory(pin, sizeof(pin));
+  return rv;
+}
+
 static void try_login_pin_protected_management_key(CMD_CONTEXT_PTR pContext, PBYTE pin, CK_ULONG pinLen) {
   // USER authentication already supplied Windows with the retry count. This
   // best-effort extension keeps ADMIN DATA parsing and raw key bytes entirely
@@ -91,6 +126,7 @@ static int hex_digit_value(BYTE ch) {
 
 static DWORD logout_after_pin_update(CMD_CONTEXT_PTR pContext) {
   CK_RV rv = C_Logout(pContext->session);
+  cmd_clear_all_user_pins();
   pContext->authenticatedPins = PIN_SET_NONE;
   if (rv != CKR_OK && rv != CKR_USER_NOT_LOGGED_IN) {
     CMD_RETURN(map_pkcs11_pin_error(rv), "C_Logout after PIN update failed");
@@ -201,6 +237,7 @@ static CK_RV login_with_role(CMD_CONTEXT_PTR pContext, CK_USER_TYPE userType, PB
   if (rv != CKR_OK && rv != CKR_USER_NOT_LOGGED_IN) {
     return rv;
   }
+  cmd_clear_all_user_pins();
   pContext->authenticatedPins = PIN_SET_NONE;
   return C_CNK_Login(pContext->session, userType, loginData, loginDataLen, pPinTries);
 }
@@ -252,6 +289,11 @@ DWORD WINAPI CardAuthenticateEx(__in PCARD_DATA pCardData, __in PIN_ID PinId, __
 
   INJECT_HANDLES();
   CMD_GET_CTX(pCardData, pContext);
+
+  // A fresh USER authentication attempt supersedes any cached credential,
+  // including when Windows submits an incorrect PIN or revalidation fails.
+  if (PinId == ROLE_USER)
+    cmd_clear_user_pin(pContext);
 
   if (PinId != ROLE_USER && PinId != ROLE_ADMIN) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid PinId");
@@ -310,7 +352,15 @@ DWORD WINAPI CardAuthenticateEx(__in PCARD_DATA pCardData, __in PIN_ID PinId, __
     // the Base CSP/KSP resets the card
     CMD_RETURN(map_pkcs11_login_error(rv, pinTries), "C_Login failed");
   } else {
-    SET_PIN(pContext->authenticatedPins, PinId);
+    if (PinId == ROLE_USER) {
+      SET_PIN(pContext->authenticatedPins, PinId);
+      cmd_store_user_pin(pContext, pbPinData, cbPinData);
+    } else {
+      // SO authentication changes the token-wide login state and invalidates
+      // any USER PIN retained by another CARD_DATA context.
+      cmd_clear_all_user_pins();
+      SET_PIN(pContext->authenticatedPins, PinId);
+    }
     if (PinId == ROLE_USER && cmd_get_config()->protect_management) {
       try_login_pin_protected_management_key(pContext, pbPinData, cbPinData);
     }
@@ -337,6 +387,7 @@ DWORD WINAPI CardDeauthenticateEx(__in PCARD_DATA pCardData, __in PIN_SET PinId,
   }
 
   CK_RV rv = C_Logout(pContext->session);
+  cmd_clear_all_user_pins();
   if (rv == CKR_USER_NOT_LOGGED_IN) {
     pContext->authenticatedPins = PIN_SET_NONE;
     CMD_RET_OK;

@@ -25,6 +25,33 @@ static DWORD map_pkcs11_crypto_error(CK_RV rv) {
   }
 }
 
+static CK_RV sign_with_context_pin(CMD_CONTEXT_PTR pContext, CK_BYTE_PTR data, CK_ULONG dataLen, CK_BYTE_PTR signature,
+                                   CK_ULONG_PTR signatureLen) {
+  CK_RV rv = C_Sign(pContext->session, data, dataLen, signature, signatureLen);
+  if (rv != CKR_USER_NOT_LOGGED_IN)
+    return rv;
+
+  // C_Sign keeps the PIN-always operation active on this error. Authenticate
+  // once with the PIN captured by CardAuthenticateEx, then retry the same
+  // operation. cmd_login_context_specific consumes and clears that PIN.
+  CK_RV authRv = cmd_login_context_specific(pContext);
+  if (authRv != CKR_OK)
+    return authRv == CKR_OPERATION_NOT_INITIALIZED ? CKR_USER_NOT_LOGGED_IN : authRv;
+  return C_Sign(pContext->session, data, dataLen, signature, signatureLen);
+}
+
+static CK_RV decrypt_with_context_pin(CMD_CONTEXT_PTR pContext, CK_BYTE_PTR encryptedData, CK_ULONG encryptedLen,
+                                      CK_BYTE_PTR plainData, CK_ULONG_PTR plainLen) {
+  CK_RV rv = C_Decrypt(pContext->session, encryptedData, encryptedLen, plainData, plainLen);
+  if (rv != CKR_USER_NOT_LOGGED_IN)
+    return rv;
+
+  CK_RV authRv = cmd_login_context_specific(pContext);
+  if (authRv != CKR_OK)
+    return authRv == CKR_OPERATION_NOT_INITIALIZED ? CKR_USER_NOT_LOGGED_IN : authRv;
+  return C_Decrypt(pContext->session, encryptedData, encryptedLen, plainData, plainLen);
+}
+
 static DWORD map_oaep_hash_alg(LPCWSTR pszAlgId, CK_MECHANISM_TYPE *pHashAlg, CK_RSA_PKCS_MGF_TYPE *pMgf) {
   CMD_ENSURE_NONNULL(pHashAlg, SCARD_E_INVALID_PARAMETER);
   CMD_ENSURE_NONNULL(pMgf, SCARD_E_INVALID_PARAMETER);
@@ -167,6 +194,8 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
     CMD_RET_OK;
   }
 
+  CMD_CONTEXT_PTR userPinGuard CMD_USER_PIN_GUARD = pContext;
+
   CMD_NONNULL_PARAM(pCardSigningInfo->pbData);
 
   if (slot->keyType == CKK_RSA) {
@@ -200,9 +229,11 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
     }
 
     pCardSigningInfo->cbSignedData = paddedLen;
-    rv = C_Sign(pContext->session, pCardSigningInfo->pbSignedData, paddedLen, pCardSigningInfo->pbSignedData,
-                &pCardSigningInfo->cbSignedData);
+    rv = sign_with_context_pin(pContext, pCardSigningInfo->pbSignedData, paddedLen, pCardSigningInfo->pbSignedData,
+                               &pCardSigningInfo->cbSignedData);
     if (rv != CKR_OK) {
+      C_SessionCancel(pContext->session, CKF_SIGN);
+      SecureZeroMemory(pCardSigningInfo->pbSignedData, paddedLen);
       g_pfnCspFree(pCardSigningInfo->pbSignedData);
       pCardSigningInfo->pbSignedData = NULL;
       pCardSigningInfo->cbSignedData = 0;
@@ -231,9 +262,11 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
       CMD_RETURN(SCARD_E_NO_MEMORY, "signature output allocation failed");
     }
 
-    rv = C_Sign(pContext->session, pCardSigningInfo->pbData, pCardSigningInfo->cbData, pCardSigningInfo->pbSignedData,
-                &pCardSigningInfo->cbSignedData);
+    rv = sign_with_context_pin(pContext, pCardSigningInfo->pbData, pCardSigningInfo->cbData,
+                               pCardSigningInfo->pbSignedData, &pCardSigningInfo->cbSignedData);
     if (rv != CKR_OK) {
+      C_SessionCancel(pContext->session, CKF_SIGN);
+      SecureZeroMemory(pCardSigningInfo->pbSignedData, pCardSigningInfo->cbSignedData);
       g_pfnCspFree(pCardSigningInfo->pbSignedData);
       pCardSigningInfo->pbSignedData = NULL;
       pCardSigningInfo->cbSignedData = 0;
@@ -454,6 +487,8 @@ DWORD WINAPI CardDeriveKey(__in PCARD_DATA pCardData, __inout PCARD_DERIVE_KEY p
     CMD_RET_OK;
   }
 
+  CMD_CONTEXT_PTR userPinGuard CMD_USER_PIN_GUARD = pContext;
+
   if (pAgreementInfo->pbDerivedKey == NULL) {
     pAgreementInfo->pbDerivedKey = (PBYTE)g_pfnCspAlloc(outputLen);
     CMD_ENSURE_NONNULL(pAgreementInfo->pbDerivedKey, SCARD_E_NO_MEMORY);
@@ -517,6 +552,7 @@ DWORD WINAPI CardRSADecrypt(__in PCARD_DATA pCardData, __inout PCARD_RSA_DECRYPT
     CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
 
   CMD_GET_CTX(pCardData, pContext);
+  CMD_CONTEXT_PTR userPinGuard CMD_USER_PIN_GUARD = pContext;
   if (pInfo->bContainerIndex >= pContext->canokey.slotCount)
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
 
@@ -575,9 +611,10 @@ DWORD WINAPI CardRSADecrypt(__in PCARD_DATA pCardData, __inout PCARD_RSA_DECRYPT
   }
 
   CK_ULONG cbPlain = pInfo->cbData;
-  rv = C_Decrypt(pContext->session, encryptedData, pInfo->cbData, pInfo->pbData, &cbPlain);
+  rv = decrypt_with_context_pin(pContext, encryptedData, pInfo->cbData, pInfo->pbData, &cbPlain);
   g_pfnCspFree(encryptedData);
   if (rv != CKR_OK) {
+    C_SessionCancel(pContext->session, CKF_DECRYPT);
     CMD_RETURN(map_pkcs11_crypto_error(rv), "C_Decrypt failed");
   }
 
