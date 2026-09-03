@@ -277,6 +277,12 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
     }
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot read canokey");
   }
+  // The initial inventory is already a live metadata snapshot. Reuse it for
+  // the first cache-file reads; subsequent reads refresh at the bounded
+  // interval enforced by CardReadFile so external PKCS#11 mutations remain
+  // visible without rescanning all six containers for every Windows query.
+  context->last_metadata_refresh_ms = GetTickCount64();
+  context->metadata_refresh_valid = TRUE;
   context->metadataGeneration = InterlockedCompareExchange(&g_cmd_metadata_generation, 0, 0);
 
   DWORD dwRet = GenerateCardIdentifier(context);

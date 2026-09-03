@@ -233,6 +233,8 @@ DWORD RefreshCardMetadata(CMD_CONTEXT_PTR pContext) {
   }
   pContext->canokey = snapshot;
   pContext->metadataGeneration = InterlockedIncrement(&g_cmd_metadata_generation);
+  pContext->last_metadata_refresh_ms = GetTickCount64();
+  pContext->metadata_refresh_valid = TRUE;
   CMD_RET_OK;
 }
 
@@ -264,9 +266,15 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
        (strcmp(pszFileName, szCONTAINER_MAP_FILE) == 0 ||
         strncmp(pszFileName, szUSER_KEYEXCHANGE_CERT_PREFIX, 3) == 0 ||
         strncmp(pszFileName, szUSER_SIGNATURE_CERT_PREFIX, 3) == 0))) {
-    DWORD refresh = RefreshCardMetadata(pContext);
-    if (refresh != SCARD_S_SUCCESS)
-      CMD_RETURN(refresh, "Failed to refresh live metadata for cache view");
+    // KSP can ask for cardcf/map/cert files repeatedly during one discovery.
+    // Avoid rescanning all PIV slots for every query while still detecting an
+    // external PKCS#11 mutation after a short bounded interval.
+    ULONGLONG now = GetTickCount64();
+    if (!pContext->metadata_refresh_valid || now - pContext->last_metadata_refresh_ms >= 1000) {
+      DWORD refresh = RefreshCardMetadata(pContext);
+      if (refresh != SCARD_S_SUCCESS)
+        CMD_RETURN(refresh, "Failed to refresh live metadata for cache view");
+    }
   }
 
   if (pszDirectoryName == NULL) { // Root directory

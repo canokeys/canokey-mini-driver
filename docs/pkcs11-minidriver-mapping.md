@@ -313,6 +313,10 @@ remain outside the Windows interface. Metadata determines key presence,
 algorithm, public key, certificate presence, PIN policy, touch policy, and
 operation capabilities.
 
+Consequently, a P-521 key in PIV `84` (object ID 7) is visible to PKCS#11 but
+does not create a seventh Windows container. P-521 is exposed to Windows only
+when it is provisioned into one of the six mapped slots above.
+
 Firmware 5.7 and newer may provide the fast metadata-directory extension.
 Older supported firmware falls back to individual metadata reads. Version and
 algorithm-extension checks remain inside PKCS#11.

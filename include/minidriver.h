@@ -86,6 +86,8 @@ struct CMD_CONTEXT {
   LONG metadataGeneration;
   CANOKEY canokey;
   BYTE cardId[16];
+  ULONGLONG last_metadata_refresh_ms;
+  BOOL metadata_refresh_valid;
   PIN_SET authenticatedPins;
   CMD_DH_AGREEMENT dhAgreements[CMD_MAX_DH_AGREEMENTS];
 };

@@ -62,6 +62,12 @@ The mapping is policy, not merely algorithm capability. PKCS#11 can perform an
 RSA private operation in another slot, but the minidriver must not expose that
 slot as a Windows key-exchange container.
 
+P-521 is supported by the Windows translation layer when a P-521 key occupies
+one of these six mapped containers. A P-521 key in the card's retired `84`
+slot (object ID 7), like Ed25519, X25519, and PQC keys in later slots, remains
+available through PKCS#11 but is intentionally outside the six-container
+Windows ABI.
+
 The current managed-mode bridge intentionally supports one physical CanoKey per
 process. Windows may nevertheless create several `CARD_DATA`/PKCS#11 contexts
 for that same card. Their PC/SC handles may rotate, so each entry point
@@ -119,12 +125,15 @@ use those writes as authoritative state; every generated view comes from live
 PKCS#11 metadata.
 
 External PKCS#11/PIV tools may mutate keys or certificates while Windows holds
-a `CARD_DATA` context. Cache and certificate-file reads therefore refresh live
-metadata before producing their response. A subsequent `cardcf` read exposes
-the changed freshness values; container GUIDs remain stable while the map's
-key sizes and certificate bytes reflect the external mutation. PIN changes are
-handled by PKCS#11 authentication state and are not inferred from key/file
-freshness.
+a `CARD_DATA` context. The first cache read reuses the live inventory captured
+by `CardAcquireContext`; later cache and certificate-file reads refresh live
+metadata at most once per second. This bounded refresh interval avoids
+rescanning all six PIV containers for every repeated KSP query while ensuring
+an external mutation becomes visible promptly. A subsequent `cardcf` read
+exposes the changed freshness values; container GUIDs remain stable while the
+map's key sizes and certificate bytes reflect the external mutation. PIN
+changes are handled by PKCS#11 authentication state and are not inferred from
+key/file freshness.
 
 Container generation/import and certificate writes call
 `RefreshCardMetadata` after card mutation so subsequent Windows queries see the
