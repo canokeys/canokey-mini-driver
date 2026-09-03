@@ -109,6 +109,15 @@ operations.
 authoritative. Certificate files are readable for enumeration but writes still
 require ADMIN authentication.
 
+The cache policy is intentionally `CP_CACHE_MODE_GLOBAL_CACHE`. `cardcf`
+freshness is derived from the persistent PIV inventory: key/public-key changes
+advance container freshness, and certificate changes advance file freshness.
+Container GUIDs are derived from `cardid` plus the fixed container index, so a
+key replacement never renames a Windows container. The minidriver accepts
+Base CSP/KSP writes to `cardcf` and `cmapfile` for compatibility, but does not
+use those writes as authoritative state; every generated view comes from live
+PKCS#11 metadata.
+
 Container generation/import and certificate writes call
 `RefreshCardMetadata` after card mutation so subsequent Windows queries see the
 new inventory and card identifier.

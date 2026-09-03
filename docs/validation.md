@@ -36,6 +36,15 @@ derivation, and key-generation tests when hardware is available. Treat the
 Visual Studio generator with `-T ClangCL` as unsupported on this development
 machine; use the documented Ninja flow.
 
+For the Windows cache matrix, verify that `CP_CARD_CACHE_MODE` reports
+`CP_CACHE_MODE_GLOBAL_CACHE`, repeated reads return stable `cardcf` freshness,
+and `cmapfile` exposes the same container GUIDs across contexts and card
+reinsertion. A certificate-only mutation must change file freshness without
+renaming containers. A key replacement must change container freshness while
+preserving the fixed index/GUID and must leave signing/derivation usable.
+Compatibility writes from Base CSP/KSP must be accepted without replacing the
+live PKCS#11-derived inventory.
+
 ## Review Procedure
 
 1. Inspect the complete minidriver diff and the exact submodule commit.
