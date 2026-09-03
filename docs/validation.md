@@ -48,10 +48,45 @@ Repeat the cache matrix after mutations made by an external PKCS#11/PIV
 process, not only through minidriver APIs. With an existing `CARD_DATA`
 context, read `cardcf`, `cmapfile`, and the affected zero-padded `kscNN`/`kxcNN`
 files again; the minidriver must refresh live metadata within its bounded
-one-second read interval, report the changed freshness value, preserve
-container GUIDs, and expose the new certificate/key material. A PIN-only
-mutation is an authentication-state test and must not be confused with key or
-file freshness.
+one-second read interval, preserve container GUIDs, and expose the new
+certificate/key material. Because the cache mode is `CP_CACHE_MODE_NO_CACHE`,
+the test must verify reread content rather than expecting freshness counters to
+change. A PIN-only mutation is an authentication-state test and must not be
+confused with key or file freshness.
+
+## Windows Propagation Gate
+
+Every minidriver code change is considered broken until it passes the Windows
+smart-card propagation gate. A successful DLL build or PKCS#11 unit-test run
+is not sufficient: the Windows-facing contract must still enumerate and use
+the card's certificates and associated private keys.
+
+With a development card present, run the targeted reader flow (not an
+unfiltered system-wide probe):
+
+1. Confirm `SCardSvr` and `CertPropSvc` are running and the CanoKey reader name
+   is visible through PC/SC.
+2. Run `certutil -silent -scinfo "<reader>"` and verify the CanoKey card is
+   identified, the six policy containers (`9A`, `9C`, `9D`, `9E`, `82`, `83`)
+   are enumerated, and every provisioned certificate has a matching private
+   key container. The output must not regress to `cannot retrieve certificate`
+   or `cannot open key` for a provisioned container.
+3. Run `sign-test.ps1`/`crypto-test.ps1` for the Windows signature surface and
+   verify that authentication reaches `CardAuthenticateEx` and signing reaches
+   `CardSignData`. Use PKCS#11 tests separately for capabilities intentionally
+   hidden from Windows, such as ECDH or PQC.
+4. Repeat enumeration and one signing operation after a card reset/reinsert.
+   Read `cardid`, `cardcf`, `cmapfile`, and certificate files again; `cardid`
+   and `CP_CARD_GUID` must remain identical and the six container associations
+   must not change.
+
+If any gate step fails, do not merge or release the minidriver change. Do not
+classify a failure as a cache issue merely because deleting Calais state or
+restarting Windows makes it disappear; first fix the cardmod file, identity,
+container-map, certificate, or authentication behavior that caused the
+regression. CI without a physical card can validate build and unit-test
+invariants, but it cannot replace this hardware-backed Windows acceptance
+test.
 
 ## Review Procedure
 

@@ -20,9 +20,10 @@ pending owners are coherent, unsupported calls do not mutate state, and
 private objects are not visible in PUBLIC state. Run with ASan and UBSan; use
 MSan or Valgrind where the platform supports them.
 
-LLVM libFuzzer is the primary engine on Linux. Windows builds replay the same
-corpus and reproduce minimized crashes without requiring a long-running fuzz
-job.
+LLVM libFuzzer is the primary engine on Linux. Windows ClangCL and Apple Clang
+builds use the same `LLVMFuzzerTestOneInput` targets through a native bounded
+mutation/replay main because those toolchains do not ship a usable libFuzzer
+runtime library. All paths are no-card and never connect to a physical card.
 
 ## Phase 2: PIV TLV and APDU Parser Fuzzing
 
@@ -49,8 +50,12 @@ transport failures. Verify operation counters, finalize admission, cancellation
 wakeup, fail-closed logout, retryable backend cleanup, queued reader events,
 and session/token state after malformed card responses.
 
-The fake transport must not be linked into production binaries. Failure cases
-become permanent regression tests associated with the relevant API contract.
+The initial fake transport is now available under `BUILD_FUZZING=ON`. It
+replaces the backend's `SCard*` calls only in that test build and
+`cnk_fuzz_pcsc` drives transaction begin/end, APDU transmit failures, and
+operation-counter cleanup. The fake transport must not be linked into release
+binaries. Failure cases become permanent regression tests associated with the
+relevant API contract.
 
 ## Phase 4: Non-Destructive Hardware Fuzzing
 
@@ -100,8 +105,8 @@ identity, stdout/stderr/log paths, destructive flag, and minimized input.
 
 ## CI and Exit Criteria
 
-- Pull requests replay a fixed corpus with sanitizers; they do not run long
-  fuzz jobs or attach physical cards.
+- Pull requests run bounded no-card fuzz jobs; Linux includes ASan/UBSan,
+  while Windows and macOS use the native replay harness without sanitizers.
 - Nightly jobs run fake-PC/SC fuzzing for a bounded duration.
 - Hardware workflows are manual, require explicit slot and serial, and keep
   destructive mode disabled by default.
@@ -109,5 +114,12 @@ identity, stdout/stderr/log paths, destructive flag, and minimized input.
 - Every reproduced bug becomes a focused unit/regression test and an update to
   the corresponding API contract.
 
-Implementation starts with Phase 1 and Phase 2. Phase 3 follows once the
-transport seam is defined; only then should the hardware phases be enabled.
+Implementation status: initial Phase 1/2/3 targets are now available as
+`cnk_fuzz_api`, `cnk_fuzz_tlv`, and `cnk_fuzz_concurrency` when
+`BUILD_FUZZING=ON`: libFuzzer on Linux and the bounded replay harness on
+Windows/macOS. The concurrency target starts four workers per input and stays
+on no-card validation paths; session/token transport races require Phase 3.
+They intentionally exercise only no-card validation and the pure TLV length
+parser, and register short CTest smoke replays. The broader API state-machine
+driver and parser-specific adapters remain follow-up work; hardware phases are
+still disabled.
