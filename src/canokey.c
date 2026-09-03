@@ -31,6 +31,15 @@ static CK_BYTE capabilities_for_piv_slot(CK_BYTE pivId) {
   }
 }
 
+static const CNK_PIV_METADATA_DIRECTORY_ENTRY *
+find_metadata_directory_entry(const CNK_PIV_METADATA_DIRECTORY_ENTRY *entries, CK_ULONG entryCount, CK_BYTE pivSlot) {
+  for (CK_ULONG i = 0; i < entryCount; i++) {
+    if (entries[i].pivSlot == pivSlot)
+      return &entries[i];
+  }
+  return NULL;
+}
+
 CK_BBOOL canokey_slot_can_sign(const SLOT *slot) {
   return canokey_slot_has_key(slot) && (slot->capabilities & CANOKEY_SLOT_CAP_SIGN) != 0;
 }
@@ -184,6 +193,15 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
   CANOKEY snapshot = {0};
   snapshot.slotCount = WINDOWS_CONTAINER_COUNT;
 
+  // The directory APDU is a single read-only snapshot of all PIV slots. Keep
+  // the old FindObjects path as a compatibility fallback for older firmware.
+  CNK_PIV_METADATA_DIRECTORY_ENTRY directory[CNK_PIV_METADATA_DIRECTORY_MAX_ENTRIES];
+  CK_ULONG directoryCount = CNK_PIV_METADATA_DIRECTORY_MAX_ENTRIES;
+  CK_RV directoryRv = C_CNK_GetPivMetadataDirectory(session, directory, &directoryCount);
+  CK_BBOOL haveDirectory = directoryRv == CKR_OK ? CK_TRUE : CK_FALSE;
+  if (directoryRv != CKR_OK && directoryRv != CKR_FUNCTION_NOT_SUPPORTED)
+    CMD_RETURN(directoryRv, "C_CNK_GetPivMetadataDirectory failed");
+
   for (CK_BYTE i = 1; i <= WINDOWS_CONTAINER_COUNT; i++) {
     CMD_DEBUG("Reading slot %d", i);
 
@@ -193,24 +211,30 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
     slot->capabilities = capabilities_for_piv_slot(slot->pivId);
 
     CK_OBJECT_CLASS objectClass = CKO_PUBLIC_KEY;
-    CK_ATTRIBUTE templates[] = {
-        {CKA_ID, &i, sizeof(i)},
-        {CKA_CLASS, &objectClass, sizeof(objectClass)},
-    };
-    CK_RV rv = C_FindObjectsInit(session, templates, 2);
-    if (rv != CKR_OK)
-      CMD_RETURN(rv, "C_FindObjectsInit failed");
-
-    CK_OBJECT_HANDLE hObject;
+    CK_OBJECT_HANDLE hObject = CANOKEY_MAKE_OBJECT_HANDLE(CKO_PUBLIC_KEY, i);
     CK_ULONG ulObjectCount = 0;
-    rv = C_FindObjects(session, &hObject, 1, &ulObjectCount);
-    if (rv != CKR_OK) {
-      C_FindObjectsFinal(session);
-      CMD_RETURN(rv, "C_FindObjects failed");
+    CK_RV rv = CKR_OK;
+    if (haveDirectory) {
+      const CNK_PIV_METADATA_DIRECTORY_ENTRY *entry =
+          find_metadata_directory_entry(directory, directoryCount, slot->pivId);
+      ulObjectCount = entry != NULL && (entry->flags & CNK_PIV_METADATA_DIRECTORY_FLAG_KEY) != 0;
+    } else {
+      CK_ATTRIBUTE templates[] = {
+          {CKA_ID, &i, sizeof(i)},
+          {CKA_CLASS, &objectClass, sizeof(objectClass)},
+      };
+      rv = C_FindObjectsInit(session, templates, 2);
+      if (rv != CKR_OK)
+        CMD_RETURN(rv, "C_FindObjectsInit failed");
+      rv = C_FindObjects(session, &hObject, 1, &ulObjectCount);
+      if (rv != CKR_OK) {
+        C_FindObjectsFinal(session);
+        CMD_RETURN(rv, "C_FindObjects failed");
+      }
+      rv = C_FindObjectsFinal(session);
+      if (rv != CKR_OK)
+        CMD_RETURN(rv, "C_FindObjectsFinal failed");
     }
-    rv = C_FindObjectsFinal(session);
-    if (rv != CKR_OK)
-      CMD_RETURN(rv, "C_FindObjectsFinal failed");
     if ((slot->capabilities & (CANOKEY_SLOT_CAP_SIGN | CANOKEY_SLOT_CAP_DECRYPT | CANOKEY_SLOT_CAP_DERIVE)) == 0) {
       CMD_DEBUG("Slot %d: PIV 0x%02x has no minidriver capability, skipping", i, slot->pivId);
       continue;
@@ -271,18 +295,29 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
     slot->present = CK_TRUE;
 
     objectClass = CKO_CERTIFICATE;
-    rv = C_FindObjectsInit(session, templates, 2);
-    if (rv != CKR_OK)
-      CMD_RETURN(rv, "C_FindObjectsInit failed");
-
-    rv = C_FindObjects(session, &hObject, 1, &ulObjectCount);
-    if (rv != CKR_OK) {
-      C_FindObjectsFinal(session);
-      CMD_RETURN(rv, "C_FindObjects failed");
+    hObject = CANOKEY_MAKE_OBJECT_HANDLE(CKO_CERTIFICATE, i);
+    ulObjectCount = 0;
+    if (haveDirectory) {
+      const CNK_PIV_METADATA_DIRECTORY_ENTRY *entry =
+          find_metadata_directory_entry(directory, directoryCount, slot->pivId);
+      ulObjectCount = entry != NULL && (entry->flags & CNK_PIV_METADATA_DIRECTORY_FLAG_CERT) != 0;
+    } else {
+      CK_ATTRIBUTE templates[] = {
+          {CKA_ID, &i, sizeof(i)},
+          {CKA_CLASS, &objectClass, sizeof(objectClass)},
+      };
+      rv = C_FindObjectsInit(session, templates, 2);
+      if (rv != CKR_OK)
+        CMD_RETURN(rv, "C_FindObjectsInit failed");
+      rv = C_FindObjects(session, &hObject, 1, &ulObjectCount);
+      if (rv != CKR_OK) {
+        C_FindObjectsFinal(session);
+        CMD_RETURN(rv, "C_FindObjects failed");
+      }
+      rv = C_FindObjectsFinal(session);
+      if (rv != CKR_OK)
+        CMD_RETURN(rv, "C_FindObjectsFinal failed");
     }
-    rv = C_FindObjectsFinal(session);
-    if (rv != CKR_OK)
-      CMD_RETURN(rv, "C_FindObjectsFinal failed");
     if (ulObjectCount == 0) {
       CMD_DEBUG("No certificate found for slot %d", i);
     } else {
