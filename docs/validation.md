@@ -96,6 +96,11 @@ pass the ARM64 `-DllPath` to scripts that default to x64. A wrong-architecture
 mapping is a failed test, even if a separate x64 process can enumerate the
 reader.
 
+The Windows CI matrix also cross-builds an ARM64 DLL on the x64 hosted runners.
+That job verifies the ARM64 artifact and linker inputs only; it cannot replace
+the native ARM64 propagation gate because hosted runners have no CanoKey and
+do not run the minidriver inside native ARM64 `SCardSvr`.
+
 ## Review Procedure
 
 1. Inspect the complete minidriver diff and the exact submodule commit.

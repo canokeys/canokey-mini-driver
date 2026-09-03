@@ -18,8 +18,16 @@ jobs:
         include:
           - name: Windows Server 2022 / Visual Studio 2022
             os: windows-2022
+            arch: x64
+          - name: Windows Server 2022 / Visual Studio 2022 / ARM64
+            os: windows-2022
+            arch: arm64
           - name: Windows Server 2025 / Visual Studio 2026
             os: windows-2025-vs2026
+            arch: x64
+          - name: Windows Server 2025 / Visual Studio 2026 / ARM64
+            os: windows-2025-vs2026
+            arch: arm64
 
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
@@ -47,12 +55,14 @@ jobs:
         shell: pwsh
         run: |
           $python = python -c "import sys; print(sys.executable)"
-          .\build.ps1 -Arch x64 -Config Debug -VerboseBuild -Python3Executable $python
+          .\build.ps1 -Arch $env:TARGET_ARCH -Config Debug -VerboseBuild -Python3Executable $python
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: canokey-mini-driver-${{ matrix.os }}
+          name: canokey-mini-driver-${{ matrix.os }}-${{ matrix.arch }}
           if-no-files-found: error
           path: |
             out/build/**/canokey-minidriver.dll
