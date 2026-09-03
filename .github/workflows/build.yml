@@ -15,16 +15,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2022, windows-2025-vs2026]
-        arch: [x86, x64, arm64]
-        config: [Debug, Release]
         include:
           - os: windows-2022
-            vs: Visual Studio 2022
+            name: Windows Server 2022 / Visual Studio 2022
           - os: windows-2025-vs2026
-            vs: Visual Studio 2026
+            name: Windows Server 2025 / Visual Studio 2026
 
-    name: ${{ matrix.os }} / ${{ matrix.vs }} / ${{ matrix.arch }} ${{ matrix.config }}
+    name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout code
@@ -46,17 +43,52 @@ jobs:
           python -m pip install --disable-pip-version-check
           --prefer-binary -r external/canokey-pkcs11/cmake/tf-psa-crypto-generator-requirements.txt
 
-      - name: Build ${{ matrix.arch }} ${{ matrix.config }}
+      - name: Build x86 Debug
         shell: pwsh
         run: |
           $python = python -c "import sys; print(sys.executable)"
-          .\build.ps1 -Arch "${{ matrix.arch }}" -Config "${{ matrix.config }}" -Python3Executable $python
-          if ($LASTEXITCODE -ne 0) { throw "Build failed for ${{ matrix.arch }} ${{ matrix.config }}" }
+          .\build.ps1 -Arch x86 -Config Debug -Python3Executable $python
+          if ($LASTEXITCODE -ne 0) { throw "Build failed for x86 Debug" }
+
+      - name: Build x86 Release
+        shell: pwsh
+        run: |
+          $python = python -c "import sys; print(sys.executable)"
+          .\build.ps1 -Arch x86 -Config Release -Python3Executable $python
+          if ($LASTEXITCODE -ne 0) { throw "Build failed for x86 Release" }
+
+      - name: Build x64 Debug
+        shell: pwsh
+        run: |
+          $python = python -c "import sys; print(sys.executable)"
+          .\build.ps1 -Arch x64 -Config Debug -Python3Executable $python
+          if ($LASTEXITCODE -ne 0) { throw "Build failed for x64 Debug" }
+
+      - name: Build x64 Release
+        shell: pwsh
+        run: |
+          $python = python -c "import sys; print(sys.executable)"
+          .\build.ps1 -Arch x64 -Config Release -Python3Executable $python
+          if ($LASTEXITCODE -ne 0) { throw "Build failed for x64 Release" }
+
+      - name: Build ARM64 Debug
+        shell: pwsh
+        run: |
+          $python = python -c "import sys; print(sys.executable)"
+          .\build.ps1 -Arch arm64 -Config Debug -Python3Executable $python
+          if ($LASTEXITCODE -ne 0) { throw "Build failed for ARM64 Debug" }
+
+      - name: Build ARM64 Release
+        shell: pwsh
+        run: |
+          $python = python -c "import sys; print(sys.executable)"
+          .\build.ps1 -Arch arm64 -Config Release -Python3Executable $python
+          if ($LASTEXITCODE -ne 0) { throw "Build failed for ARM64 Release" }
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: canokey-mini-driver-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.config }}
+          name: canokey-mini-driver-${{ matrix.os }}
           if-no-files-found: error
           path: |
             out/build/**/canokey-minidriver.dll
