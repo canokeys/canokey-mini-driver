@@ -447,6 +447,10 @@ DWORD WINAPI CardGetFileInfo(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryN
 
   if (pszDirectoryName == NULL) {
     if (strcmp(pszFileName, szCACHE_FILE) == 0) {
+      // CardCF is a Base CSP/KSP synchronization file. Windows requires user
+      // write access even though this implementation treats the payload as a
+      // compatibility view and does not persist it independently.
+      pCardFileInfo->AccessCondition = EveryoneReadUserWriteAc;
       pCardFileInfo->cbFileSize = sizeof(CARD_CACHE_FILE_FORMAT);
       CMD_RET_OK;
     }
@@ -534,10 +538,10 @@ DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
     CMD_RETURN(SCARD_E_DIR_NOT_FOUND, "Directory not found");
   }
 
-  // msroots is optional and must not be advertised without a real PKCS#7
-  // enterprise root store. Returning an empty file makes Base CSP attempt to
-  // parse invalid root data before it reaches the user certificates.
-  DWORD total = sizeof(szCONTAINER_MAP_FILE);
+  // Keep the standard mscp file view complete. An empty msroots file is a
+  // valid empty PKCS#7 root store for cards without enterprise roots; omitting
+  // it makes some Windows propagation paths stop before enumerating certs.
+  DWORD total = sizeof(szROOT_STORE_FILE) + sizeof(szCONTAINER_MAP_FILE);
   for (CK_ULONG i = 0; i < pContext->canokey.slotCount; i++) {
     SLOT *slot = &pContext->canokey.slots[i];
     if (!canokey_slot_has_key(slot)) {
@@ -552,6 +556,9 @@ DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
     if (canokey_slot_can_sign(slot)) {
       total += (DWORD)snprintf(NULL, 0, "%s%02lu", szUSER_SIGNATURE_CERT_PREFIX, (unsigned long)i) + 1;
     }
+    if (canokey_slot_can_decrypt(slot)) {
+      total += (DWORD)snprintf(NULL, 0, "%s%02lu", szUSER_KEYEXCHANGE_CERT_PREFIX, (unsigned long)i) + 1;
+    }
   }
   total += 1;
   if (total > INT_MAX) {
@@ -563,7 +570,14 @@ DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
   LPSTR cursor = files;
   DWORD remaining = total;
 
-  int written = snprintf(cursor, remaining, "%s", szCONTAINER_MAP_FILE);
+  int written = snprintf(cursor, remaining, "%s", szROOT_STORE_FILE);
+  if (written < 0 || written >= (int)remaining) {
+    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to format root store file name");
+  }
+  cursor += written + 1;
+  remaining -= (DWORD)written + 1;
+
+  written = snprintf(cursor, remaining, "%s", szCONTAINER_MAP_FILE);
   if (written < 0 || written >= (int)remaining) {
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to format container map file name");
   }
@@ -582,6 +596,14 @@ DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
       written = snprintf(cursor, remaining, "%s%02lu", szUSER_SIGNATURE_CERT_PREFIX, (unsigned long)i);
       if (written < 0 || written >= (int)remaining) {
         CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to format signature cert file name");
+      }
+      cursor += written + 1;
+      remaining -= (DWORD)written + 1;
+    }
+    if (canokey_slot_can_decrypt(slot)) {
+      written = snprintf(cursor, remaining, "%s%02lu", szUSER_KEYEXCHANGE_CERT_PREFIX, (unsigned long)i);
+      if (written < 0 || written >= (int)remaining) {
+        CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to format key exchange cert file name");
       }
       cursor += written + 1;
       remaining -= (DWORD)written + 1;
@@ -723,10 +745,6 @@ static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, 
     if (canokey_slot_can_decrypt(slot) && slot->keyType == CKK_RSA) {
       rec->wKeyExchangeKeySizeBits = (WORD)slot->rsa.modulusBits;
     }
-    // Keep EC ECDH available through PKCS#11, but do not advertise its
-    // companion Windows key-spec view: current CPDK/Windows propagation drops
-    // the associated EC certificate when that field is populated. RSA 9D is
-    // the one validated Windows key-exchange view and is set above.
     CMD_DEBUG("Container %d: %ls, flags: %d, wSigKeySizeBits: %d, wKeyExchangeKeySizeBits: %d", i, rec->wszGuid,
               rec->bFlags, rec->wSigKeySizeBits, rec->wKeyExchangeKeySizeBits);
   }
