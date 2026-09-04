@@ -24,6 +24,32 @@ checks below.
 - All sensitive buffers, temporary DH agreements, and failed key-operation
   allocations have a deterministic cleanup path.
 
+## Review Change Protocol
+
+Review findings are hypotheses, not implementation instructions. Before changing
+an API or capability flag, trace the complete representation path across this
+repository and `external/canokey-pkcs11`, then check the cited specification
+against the actual caller and callee contracts. A review that inspects only a
+final buffer is incomplete when an intermediate layer unwraps, encodes, or
+reconstructs that buffer.
+
+For Windows-facing changes, preserve a known-good hardware checkpoint and run a
+single-variable acceptance test before and after the change. The checkpoint
+must include the reader, firmware/PIV versions, card identity, mapped slots,
+certificate fingerprints, and the exact command used for `certutil -scinfo`.
+If the gate regresses, restore the last known-good binary first, then use
+`git bisect` with the same card and test predicate. Do not compensate by
+deleting Calais state or changing unrelated cache settings; export any exact
+cache subtree before a narrowly scoped cleanup and prove that cleanup is
+necessary.
+
+For every capability or file-format change, require both evidence sources:
+the normative specification and a real caller result. In particular, a
+successful `CardReadFile` trace is not enough: certificate propagation must
+reach the user store and `certutil` must match each certificate to its private
+container. Record the result and the reason for rejecting any review finding
+that conflicts with the specification or the golden hardware test.
+
 ## Context-Specific PIN Gate
 
 For a PIV key with PIN-always policy, the minidriver must retain a bounded USER
