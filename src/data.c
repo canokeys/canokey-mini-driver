@@ -265,9 +265,11 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
   }
 
   if (strcmp(pszDirectoryName, szBASE_CSP_DIR) == 0) {
-    if (strcmp(pszFileName, szROOT_STORE_FILE) == 0) {
-      return AllocCopy(NULL, 0, ppbData, pcbData);
-    }
+    // Enterprise roots are optional. Returning an empty msroots file is not
+    // equivalent to an absent store: CertPropSvc treats the successful empty
+    // read as the end of propagation and never asks for kscNN certificates.
+    if (strcmp(pszFileName, szROOT_STORE_FILE) == 0)
+      CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Enterprise root store is not provisioned");
 
     if (strcmp(pszFileName, szCONTAINER_MAP_FILE) == 0) {
       DWORD res = GenerateContainerMapFile(pContext, ppbData, pcbData);
@@ -465,10 +467,8 @@ DWORD WINAPI CardGetFileInfo(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryN
     // Windows enrollment expects user-write visibility for mscp files. Actual
     // PIV certificate mutation remains guarded by ROLE_ADMIN in CardWriteFile.
     pCardFileInfo->AccessCondition = EveryoneReadUserWriteAc;
-    if (strcmp(pszFileName, szROOT_STORE_FILE) == 0) {
-      pCardFileInfo->cbFileSize = 0;
-      CMD_RET_OK;
-    }
+    if (strcmp(pszFileName, szROOT_STORE_FILE) == 0)
+      CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Enterprise root store is not provisioned");
     if (strcmp(pszFileName, szCONTAINER_MAP_FILE) == 0) {
       pCardFileInfo->cbFileSize = (DWORD)(pContext->canokey.slotCount * sizeof(CONTAINER_MAP_RECORD));
       CMD_RET_OK;
@@ -538,10 +538,9 @@ DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
     CMD_RETURN(SCARD_E_DIR_NOT_FOUND, "Directory not found");
   }
 
-  // Keep the standard mscp file view complete. An empty msroots file is a
-  // valid empty PKCS#7 root store for cards without enterprise roots; omitting
-  // it makes some Windows propagation paths stop before enumerating certs.
-  DWORD total = sizeof(szROOT_STORE_FILE) + sizeof(szCONTAINER_MAP_FILE);
+  // The enterprise root store is optional. Do not advertise a fabricated empty
+  // PKCS#7 file; CertPropSvc must continue to the user certificate files.
+  DWORD total = sizeof(szCONTAINER_MAP_FILE);
   for (CK_ULONG i = 0; i < pContext->canokey.slotCount; i++) {
     SLOT *slot = &pContext->canokey.slots[i];
     if (!canokey_slot_has_key(slot)) {
@@ -570,14 +569,7 @@ DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
   LPSTR cursor = files;
   DWORD remaining = total;
 
-  int written = snprintf(cursor, remaining, "%s", szROOT_STORE_FILE);
-  if (written < 0 || written >= (int)remaining) {
-    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to format root store file name");
-  }
-  cursor += written + 1;
-  remaining -= (DWORD)written + 1;
-
-  written = snprintf(cursor, remaining, "%s", szCONTAINER_MAP_FILE);
+  int written = snprintf(cursor, remaining, "%s", szCONTAINER_MAP_FILE);
   if (written < 0 || written >= (int)remaining) {
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to format container map file name");
   }
