@@ -353,11 +353,11 @@ signing, decrypt, and derive tests without recompiling or reloading between
 groups.
 
 For the current development card, Windows discovery covers signature
-containers with `LegacyKeySpec = AT_SIGNATURE`. RSA decrypt and ECDH remain
-covered by the PKCS#11 API-level tests because their Windows key-spec views are
-EC ECDH is hidden during certificate propagation; using `AT_ECDHE_*` requires
-an explicitly enabled future Windows bridge. RSA 9D `AT_KEYEXCHANGE` is
-currently supported and covered by the Windows test path.
+containers with `LegacyKeySpec = AT_SIGNATURE`. EC ECDH remains covered by the
+PKCS#11 API-level tests because its Windows key-spec view is hidden during
+certificate propagation; using `AT_ECDHE_*` is intentionally rejected. RSA
+decrypt is covered by the PKCS#11 API-level tests, and RSA 9D
+`AT_KEYEXCHANGE` is supported when slot 9D contains an RSA key.
 
 ECDH currently supports only raw secret derivation (`BCRYPT_KDF_RAW_SECRET`,
 which maps to PKCS#11 `CKD_NULL`). `CardDeriveKey` does not yet implement

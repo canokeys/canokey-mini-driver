@@ -147,13 +147,14 @@ artifact beside the INF source:
   copies x86 to the WOW64 system directory, and registers Arm64X in the native
   Calais view.
 
-The INF uses `FLG_ADDREG_64BITKEY` for native 64-bit writes. Its WOW64 Calais
+The current development INF omits `CatalogFile`; release packaging must add a
+signed catalog before SetupAPI installation. The INF uses `FLG_ADDREG_64BITKEY` for native 64-bit writes. Its WOW64 Calais
 section uses the explicit `Wow6432Node` path because INF verification rejects
 two different `80000001` values in one logical key when they are expressed only
 with `FLG_ADDREG_32BITKEY`. This path is installer data; runtime applications
-must use normal registry view APIs instead of hardcoding it. The INF declares a
-catalog and enables `PnpLockdown`; formal release validation still requires a
-signed catalog, SetupAPI installation, and post-installation propagation tests.
+must use normal registry view APIs instead of hardcoding it. The INF enables
+`PnpLockdown`; formal release validation still requires a signed catalog,
+SetupAPI installation, and post-installation propagation tests.
 
 ## ARM32 Status
 

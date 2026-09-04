@@ -87,10 +87,10 @@ outside this design and requires a per-token backend boundary.
 
 The process-wide allocator and crypto runtime are shared. Token authentication
 and metadata are shared only for the one bound card, while each context owns
-its PKCS#11 session and minidriver state. The planned lifecycle change is for
-`CardDeleteContext` to release one context reference and for the final context
-to perform PKCS#11 finalization and reset the managed binding; the current
-implementation still needs this explicit context registry.
+its PKCS#11 session and minidriver state. `CardAcquireContext` registers each
+context and increments the managed PKCS#11 reference; `CardDeleteContext`
+removes one context, closes its session, and the final context performs
+PKCS#11 finalization and resets the managed binding.
 
 The static PKCS#11 dependency is compiled with function/data sections and the
 minidriver DLL is linked with reference elimination and identical-code folding.

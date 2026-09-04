@@ -25,6 +25,15 @@ static DWORD map_pkcs11_crypto_error(CK_RV rv) {
   }
 }
 
+static DWORD cancel_context_operation(CMD_CONTEXT_PTR pContext, CK_FLAGS flags, DWORD fallback) {
+  CK_RV cancelRv = C_SessionCancel(pContext->session, flags);
+  if (cancelRv != CKR_OK && cancelRv != CKR_OPERATION_NOT_INITIALIZED) {
+    CMD_ERROR("C_SessionCancel failed for flags 0x%lx: 0x%lx", (unsigned long)flags, (unsigned long)cancelRv);
+    return SCARD_F_INTERNAL_ERROR;
+  }
+  return fallback;
+}
+
 static CK_RV sign_with_context_pin(CMD_CONTEXT_PTR pContext, CK_BYTE_PTR data, CK_ULONG dataLen, CK_BYTE_PTR signature,
                                    CK_ULONG_PTR signatureLen) {
   CK_RV rv = C_Sign(pContext->session, data, dataLen, signature, signatureLen);
@@ -269,19 +278,19 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
     pCardSigningInfo->cbSignedData = signatureCapacity;
     pCardSigningInfo->pbSignedData = (PBYTE)g_pfnCspAlloc(signatureCapacity);
     if (pCardSigningInfo->pbSignedData == NULL) {
-      C_SessionCancel(pContext->session, CKF_SIGN);
-      CMD_RETURN(SCARD_E_NO_MEMORY, "signature output allocation failed");
+      DWORD cancelRet = cancel_context_operation(pContext, CKF_SIGN, SCARD_E_NO_MEMORY);
+      CMD_RETURN(cancelRet, "signature output allocation failed");
     }
 
     rv = sign_with_context_pin(pContext, pCardSigningInfo->pbData, pCardSigningInfo->cbData,
                                pCardSigningInfo->pbSignedData, &pCardSigningInfo->cbSignedData);
     if (rv != CKR_OK) {
-      C_SessionCancel(pContext->session, CKF_SIGN);
+      DWORD cancelRet = cancel_context_operation(pContext, CKF_SIGN, map_pkcs11_crypto_error(rv));
       SecureZeroMemory(pCardSigningInfo->pbSignedData, signatureCapacity);
       g_pfnCspFree(pCardSigningInfo->pbSignedData);
       pCardSigningInfo->pbSignedData = NULL;
       pCardSigningInfo->cbSignedData = 0;
-      CMD_RETURN(map_pkcs11_crypto_error(rv), "C_Sign failed");
+      CMD_RETURN(cancelRet, "C_Sign failed");
     }
 
     CMD_DEBUG("Signed data: %d bytes (@%p)", pCardSigningInfo->cbSignedData, pCardSigningInfo->pbSignedData);
@@ -624,8 +633,8 @@ DWORD WINAPI CardRSADecrypt(__in PCARD_DATA pCardData, __inout PCARD_RSA_DECRYPT
   rv = decrypt_with_context_pin(pContext, encryptedData, pInfo->cbData, pInfo->pbData, &cbPlain);
   g_pfnCspFree(encryptedData);
   if (rv != CKR_OK) {
-    C_SessionCancel(pContext->session, CKF_DECRYPT);
-    CMD_RETURN(map_pkcs11_crypto_error(rv), "C_Decrypt failed");
+    DWORD cancelRet = cancel_context_operation(pContext, CKF_DECRYPT, map_pkcs11_crypto_error(rv));
+    CMD_RETURN(cancelRet, "C_Decrypt failed");
   }
 
   // CardRSADecrypt returns RSA data to Windows in little-endian order, even

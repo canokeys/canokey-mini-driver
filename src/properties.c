@@ -110,6 +110,7 @@ static DWORD getCardPinInfo(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PD
   if (p->dwVersion != PIN_INFO_CURRENT_VERSION) {
     CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
   }
+  p->dwFlags = 0;
   p->PinType = AlphaNumericPinType;
   p->PinCachePolicy.dwVersion = PIN_CACHE_POLICY_CURRENT_VERSION;
   if (dwFlags == ROLE_ADMIN) {
