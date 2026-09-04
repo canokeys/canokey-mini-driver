@@ -141,6 +141,9 @@ each package contains `canokey-minidriver-x86.*`,
 `canokey-minidriver-arm64x.*` files. The Arm64X forwarder uses the x64 and
 ARM64 DLLs from the same package at runtime.
 
+See [`docs/architecture-distribution.md`](docs/architecture-distribution.md)
+for the complete registry, INF, artifact, and ARM32 support matrix.
+
 The DLL mapped for the native `SCardSvr`/`CertPropSvc` process must be the
 ARM64 build. Use an explicit `-DllPath` for scripts that do not expose an
 architecture parameter; x64 processes under emulation are not an ARM64 host
