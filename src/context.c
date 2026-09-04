@@ -78,12 +78,11 @@ static void release_exclusive_context_lock(PSRWLOCK *lock) {
 }
 
 static CK_RV cleanup_failed_acquire(CK_SESSION_HANDLE session, BOOL sessionOpen) {
-  CK_RV result = CKR_OK;
   if (sessionOpen) {
     CK_RV closeRv = C_CloseSession(session);
     if (closeRv != CKR_OK && closeRv != CKR_SESSION_HANDLE_INVALID && closeRv != CKR_CRYPTOKI_NOT_INITIALIZED) {
       CMD_WARN("C_CloseSession during acquire cleanup failed: 0x%lx", closeRv);
-      result = closeRv;
+      return closeRv;
     }
   }
   // Each successful C_Initialize owns one managed reference. C_Finalize here
@@ -92,10 +91,9 @@ static CK_RV cleanup_failed_acquire(CK_SESSION_HANDLE session, BOOL sessionOpen)
   CK_RV finalizeRv = C_Finalize(NULL);
   if (finalizeRv != CKR_OK && finalizeRv != CKR_CRYPTOKI_NOT_INITIALIZED) {
     CMD_WARN("C_Finalize during acquire cleanup failed: 0x%lx", finalizeRv);
-    if (result == CKR_OK)
-      result = finalizeRv;
+    return finalizeRv;
   }
-  return result;
+  return CKR_OK;
 }
 
 /*

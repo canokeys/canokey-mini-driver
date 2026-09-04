@@ -59,14 +59,22 @@ try {
         -ReaderName $ReaderName `
         -PinArg $pinArg `
         -ContinueOnError:$ContinueOnError
-    $results += Invoke-MinidriverDecryptTests `
-        -Selection $selection `
-        -PinArg $pinArg `
-        -ContinueOnError:$ContinueOnError
-    $results += Invoke-MinidriverDeriveTests `
-        -Selection $selection `
-        -PinArg $pinArg `
-        -ContinueOnError:$ContinueOnError
+    if ($selection.DecryptKspContainers.Count -gt 0) {
+        $results += Invoke-MinidriverDecryptTests `
+            -Selection $selection `
+            -PinArg $pinArg `
+            -ContinueOnError:$ContinueOnError
+    } else {
+        Write-Host "Skipping optional RSA decrypt coverage because no RSA 9D key-exchange container was discovered."
+    }
+    if ($selection.EcdhKspContainers.Count -gt 0) {
+        $results += Invoke-MinidriverDeriveTests `
+            -Selection $selection `
+            -PinArg $pinArg `
+            -ContinueOnError:$ContinueOnError
+    } else {
+        Write-Host "Skipping optional ECDH coverage because no Windows-mapped ECDH container was discovered."
+    }
 
     Complete-MinidriverTestRun -Results $results
 } finally {

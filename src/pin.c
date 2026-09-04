@@ -401,6 +401,11 @@ DWORD WINAPI CardDeauthenticateEx(__in PCARD_DATA pCardData, __in PIN_SET PinId,
   if (!IS_PIN_SET(PinId, ROLE_USER) && !IS_PIN_SET(PinId, ROLE_ADMIN)) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid PinId");
   }
+  PIN_SET activeRoles = pContext->authenticatedPins & (CREATE_PIN_SET(ROLE_USER) | CREATE_PIN_SET(ROLE_ADMIN));
+  if (activeRoles != PIN_SET_NONE && (activeRoles & ~PinId) != 0) {
+    CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE,
+               "Role-specific deauthentication is unavailable while another role remains active");
+  }
 
   CK_RV rv = C_Logout(pContext->session);
   cmd_clear_all_user_pins();
