@@ -142,7 +142,9 @@ each package contains `canokey-minidriver-x86.*`,
 ARM64 DLLs from the same package at runtime.
 
 See [`docs/architecture-distribution.md`](docs/architecture-distribution.md)
-for the complete registry, INF, artifact, and ARM32 support matrix.
+for the complete registry, INF, artifact, and ARM32 support matrix. The CI
+artifacts intentionally contain DLL and import-library files only; INF
+packaging remains a separate follow-up.
 
 The DLL mapped for the native `SCardSvr`/`CertPropSvc` process must be the
 ARM64 build. Use an explicit `-DllPath` for scripts that do not expose an

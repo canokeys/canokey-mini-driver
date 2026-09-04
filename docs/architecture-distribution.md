@@ -21,16 +21,12 @@ Each artifact contains one file set for every supported output architecture:
 ```text
 canokey-minidriver-x86.dll
 canokey-minidriver-x86.lib
-canokey-minidriver-x86.inf
 canokey-minidriver-x64.dll
 canokey-minidriver-x64.lib
-canokey-minidriver-x64.inf
 canokey-minidriver-arm64.dll
 canokey-minidriver-arm64.lib
-canokey-minidriver-arm64.inf
 canokey-minidriver-arm64x.dll
 canokey-minidriver-arm64x.lib
-canokey-minidriver-arm64x.inf
 ```
 
 The `.lib` files are import libraries for applications that link to the
@@ -127,9 +123,10 @@ forwarder is loaded.
 
 ## Current INF Status
 
-The generated `canokey-minidriver.inf` is currently a build artifact, not a
-complete multi-architecture release installer. These issues must be fixed
-before using it for package installation:
+The generated `canokey-minidriver.inf` remains in each build directory for
+development and future packaging, but it is intentionally excluded from CI
+artifacts. It is not a complete multi-architecture release installer. These
+issues must be fixed before using it for package installation:
 
 1. `CanoKey.NTamd64.6.1`, `CanoKey.NTx86.6.1`, and `CanoKey.NTarm64.10` all
    reference `CanoKeyMiniDriver_amd64_Install`.
@@ -142,8 +139,8 @@ before using it for package installation:
 4. The template still uses the old `SmartCardModuleAMD64` name
    (`canokey-minidriver-amd64.dll`), while the CI artifact uses the explicit
    `canokey-minidriver-x64.dll` name.
-5. The current ARM64X artifact INF is not self-contained: renaming the INF file
-   does not rewrite its source-disk and copy-file entries.
+5. The CI artifact deliberately contains no INF until the source-disk and
+   copy-file entries can describe each package layout accurately.
 
 The formal INF should use separate architecture-specific install sections and
 register the filename that is actually copied for that OS. For an ARM64X
