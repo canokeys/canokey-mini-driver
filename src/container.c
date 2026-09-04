@@ -46,6 +46,19 @@ static BOOL container_index_is_piv_9d(BYTE bContainerIndex) {
   return C_CNK_ObjIdToPivTag(canokey_container_object_id(bContainerIndex), &pivTag) == CKR_OK && pivTag == 0x9D;
 }
 
+static DWORD refresh_metadata_after_committed_key_write(CMD_CONTEXT_PTR pContext, const char *operation) {
+  DWORD ret = RefreshCardMetadata(pContext);
+  if (ret == SCARD_S_SUCCESS) {
+    return ret;
+  }
+  // Key generation/import is already committed on-card; force a later refresh
+  // attempt instead of reporting a rollback that did not occur.
+  pContext->metadata_refresh_valid = FALSE;
+  CMD_WARN("%s committed but metadata refresh failed with %#lx; deferring reconciliation", operation,
+           (unsigned long)ret);
+  CMD_RET_OK;
+}
+
 static DWORD validate_create_container_request(BYTE bContainerIndex, DWORD dwFlags, DWORD dwKeySpec, DWORD dwKeySize,
                                                PBYTE pbKeyData) {
   if (bContainerIndex >= WINDOWS_CONTAINER_COUNT) {
@@ -187,7 +200,7 @@ static DWORD create_keypair(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWOR
     CMD_RETURN(map_pkcs11_container_error(rv), "C_GenerateKeyPair failed");
   }
 
-  return RefreshCardMetadata(pContext);
+  return refresh_metadata_after_committed_key_write(pContext, "C_GenerateKeyPair");
 }
 
 static void reverse_copy(CK_BYTE *destination, const CK_BYTE *source, CK_ULONG length) {
@@ -313,7 +326,7 @@ static DWORD import_rsa_key(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWOR
   if (rv != CKR_OK) {
     CMD_RETURN(map_pkcs11_container_error(rv), "C_CreateObject RSA import failed");
   }
-  return RefreshCardMetadata(pContext);
+  return refresh_metadata_after_committed_key_write(pContext, "C_CreateObject RSA import");
 }
 
 static DWORD ecc_private_magic_for_key_spec(DWORD dwKeySpec, ULONG *pMagic, ULONG *pKeyBytes) {
@@ -410,7 +423,7 @@ static DWORD import_ec_key(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWORD
   if (rv != CKR_OK) {
     CMD_RETURN(map_pkcs11_container_error(rv), "C_CreateObject EC import failed");
   }
-  return RefreshCardMetadata(pContext);
+  return refresh_metadata_after_committed_key_write(pContext, "C_CreateObject EC import");
 }
 
 static DWORD import_key(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWORD dwKeySpec, DWORD dwKeySize,
