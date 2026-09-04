@@ -45,6 +45,10 @@ static __attribute__((unused)) void cmd_release_context_state_lock(CMD_CONTEXT_P
   CK_RV _cmd_managed_ret = C_CNK_EnableManagedMode(&_cmd_managed_args);                                                \
   if (_cmd_managed_ret != CKR_OK && _cmd_managed_ret != CKR_CRYPTOKI_ALREADY_INITIALIZED)                              \
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot enable managed mode");                                                  \
+  /* Returned buffers use this CARD_DATA allocator; PKCS#11 core allocations stay on its process heap. */              \
+  g_pfnCspAlloc = pCardData->pfnCspAlloc;                                                                              \
+  g_pfnCspFree = pCardData->pfnCspFree;                                                                                \
+  g_pfnCspPadData = pCardData->pfnCspPadData;                                                                          \
   CMD_CONTEXT_PTR _cmd_state_guard CMD_CONTEXT_STATE_GUARD = NULL;                                                     \
   /* Keep per-CARD_DATA role bits consistent with token-wide PKCS#11 logout. */                                        \
   if (pCardData->pvVendorSpecific != NULL) {                                                                           \
