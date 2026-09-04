@@ -24,8 +24,6 @@ if ($Algorithm -ne "RSA" -and $KeyRole -ne "Signature") {
 }
 
 Write-Host "Creating $Algorithm/$KeyRole key '$ContainerName' through Microsoft Smart Card KSP..."
-$beforeContainers = @([CanokeyMinidriver.SignTestNative]::EnumCngKeys() |
-    Select-Object -ExpandProperty Name -Unique)
 $requestedLegacyKeySpec = if ($Algorithm -eq "RSA" -and $KeyRole -eq "KeyExchange") {
     1
 } elseif ($Algorithm -eq "RSA") {
@@ -41,9 +39,6 @@ $key = [CanokeyMinidriver.SignTestNative]::CreateCngKey(
     $KeySize,
     $requestedLegacyKeySpec)
 
-$expectedGroup = if ($Algorithm -eq "RSA") { "RSA" } else { "ECDSA" }
-$newKeys = @([CanokeyMinidriver.SignTestNative]::EnumCngKeys() |
-    Where-Object { $beforeContainers -notcontains $_.Name -and $_.AlgorithmGroup -match $expectedGroup })
 $actualContainer = $key.Name
 $actualGroup = $key.AlgorithmGroup
 

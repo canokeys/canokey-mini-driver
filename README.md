@@ -147,10 +147,12 @@ artifact contains one multi-architecture `canokey-minidriver.inf` plus the DLL
 and import-library files it references. Choose either INF installation or the
 registry-only deployment flow; do not combine them.
 
-The DLL mapped for the native `SCardSvr`/`CertPropSvc` process must be the
-ARM64 build. Use an explicit `-DllPath` for scripts that do not expose an
-architecture parameter; x64 processes under emulation are not an ARM64 host
-validation.
+For native-only validation, the DLL mapped for `SCardSvr`/`CertPropSvc` may be
+the plain ARM64 build. When native ARM64 and x64-emulated callers share one
+Calais mapping, register `canokey-minidriver-arm64x.dll` and keep both the x64
+and ARM64 implementation DLLs beside it. Use an explicit `-DllPath` for scripts
+that do not expose an architecture parameter; x64 processes under emulation are
+not an ARM64 host validation.
 
 If the TF-PSA-Crypto generator needs a specific Python environment, pass it
 explicitly:

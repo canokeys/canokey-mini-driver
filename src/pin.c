@@ -153,6 +153,9 @@ static DWORD change_user_pin(CMD_CONTEXT_PTR pContext, PBYTE pbOldPin, DWORD cbO
     CMD_RETURN(map_pkcs11_pin_error(rv), "C_SetPIN failed");
   }
 
+  // The old PIN is no longer valid on the card. Clear every context copy
+  // before re-authenticating, then retain the new PIN only after success.
+  cmd_clear_all_user_pins();
   BYTE pinTries = 0;
   rv = login_with_role(pContext, CKU_USER, pbNewPin, cbNewPin, &pinTries);
   if (rv != CKR_OK) {
@@ -160,6 +163,7 @@ static DWORD change_user_pin(CMD_CONTEXT_PTR pContext, PBYTE pbOldPin, DWORD cbO
   }
   maybe_set_attempts_remaining(pcAttemptsRemaining, pinTries);
   SET_PIN(pContext->authenticatedPins, ROLE_USER);
+  cmd_store_user_pin(pContext, pbNewPin, cbNewPin);
   CMD_RET_OK;
 }
 

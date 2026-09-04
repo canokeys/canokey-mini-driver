@@ -265,8 +265,9 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
       CMD_RETURN(map_pkcs11_crypto_error(rv), "C_SignInit failed");
     }
 
-    pCardSigningInfo->cbSignedData = slot->ecc.cbPrivate * 2;
-    pCardSigningInfo->pbSignedData = (PBYTE)g_pfnCspAlloc(pCardSigningInfo->cbSignedData);
+    DWORD signatureCapacity = (DWORD)(slot->ecc.cbPrivate * 2);
+    pCardSigningInfo->cbSignedData = signatureCapacity;
+    pCardSigningInfo->pbSignedData = (PBYTE)g_pfnCspAlloc(signatureCapacity);
     if (pCardSigningInfo->pbSignedData == NULL) {
       C_SessionCancel(pContext->session, CKF_SIGN);
       CMD_RETURN(SCARD_E_NO_MEMORY, "signature output allocation failed");
@@ -276,7 +277,7 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
                                pCardSigningInfo->pbSignedData, &pCardSigningInfo->cbSignedData);
     if (rv != CKR_OK) {
       C_SessionCancel(pContext->session, CKF_SIGN);
-      SecureZeroMemory(pCardSigningInfo->pbSignedData, pCardSigningInfo->cbSignedData);
+      SecureZeroMemory(pCardSigningInfo->pbSignedData, signatureCapacity);
       g_pfnCspFree(pCardSigningInfo->pbSignedData);
       pCardSigningInfo->pbSignedData = NULL;
       pCardSigningInfo->cbSignedData = 0;

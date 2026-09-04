@@ -447,7 +447,12 @@ namespace CanokeyMinidriver {
             } finally {
                 if (hKey != IntPtr.Zero) {
                     if (finalized && !completed) {
-                        if (NCryptDeleteKey(hKey, 0) == 0) hKey = IntPtr.Zero;
+                        int deleteStatus = NCryptDeleteKey(hKey, 0);
+                        if (deleteStatus == 0) {
+                            hKey = IntPtr.Zero;
+                        } else {
+                            Console.Error.WriteLine($"NCryptDeleteKey cleanup failed: 0x{deleteStatus:X8}");
+                        }
                     }
                     if (hKey != IntPtr.Zero) NCryptFreeObject(hKey);
                 }
