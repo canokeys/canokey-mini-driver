@@ -7,6 +7,8 @@ set(CMD_ARM64X_X64_DLL_NAME "canokey-minidriver-x64.dll" CACHE STRING
     "Deployment name for the x64 implementation used by the Arm64X forwarder")
 set(CMD_ARM64X_ARM64_DLL_NAME "canokey-minidriver-arm64.dll" CACHE STRING
     "Deployment name for the Arm64 implementation used by the Arm64X forwarder")
+set(CMD_ARM64X_FORWARDER_DLL_NAME "canokey-minidriver-arm64x.dll" CACHE STRING
+    "Deployment name for the Arm64X forwarder")
 
 foreach(required_var IN ITEMS
         CMD_ARM64X_X64_DLL
@@ -124,7 +126,7 @@ add_custom_target(${CMD_LIB_NAME}-debug-install
   COMMAND ${CMAKE_COMMAND} -E make_directory "${CMD_DEBUG_INSTALL_DIR}"
   COMMAND ${CMAKE_COMMAND} -E make_directory "${CMD_DEBUG_LOG_DIR}"
   COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMD_ARM64X_OUTPUT_DLL}"
-          "${CMD_DEBUG_INSTALL_DIR}/${CMD_LIB_NAME}.dll"
+          "${CMD_DEBUG_INSTALL_DIR}/${CMD_ARM64X_FORWARDER_DLL_NAME}"
   COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMD_ARM64X_DEPLOY_X64}"
           "${CMD_DEBUG_INSTALL_DIR}/${CMD_ARM64X_X64_DLL_NAME}"
   COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMD_ARM64X_DEPLOY_ARM64}"

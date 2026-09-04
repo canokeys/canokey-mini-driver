@@ -104,28 +104,136 @@ jobs:
       - name: Stage Debug artifact
         shell: pwsh
         run: |
+          function Get-LibTool {
+            $vsWhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+            if (!(Test-Path -LiteralPath $vsWhere)) {
+              throw "vswhere.exe was not found."
+            }
+            $vsInstall = & $vsWhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vsInstall)) {
+              throw "Visual Studio with C++ tools was not found."
+            }
+
+            $msvcRoot = Join-Path $vsInstall.Trim() "VC\Tools\MSVC"
+            $toolset = Get-ChildItem -LiteralPath $msvcRoot -Directory |
+              Sort-Object Name -Descending |
+              Select-Object -First 1
+            if ($null -eq $toolset) {
+              throw "No MSVC toolset was found under $msvcRoot."
+            }
+
+            $libTool = Join-Path $toolset.FullName "bin\Hostx64\x64\lib.exe"
+            if (!(Test-Path -LiteralPath $libTool)) {
+              throw "lib.exe was not found at $libTool."
+            }
+            return $libTool
+          }
+
+          function New-ImportLibrary {
+            param(
+              [string]$LibTool,
+              [string]$StageDir,
+              [string]$Stem,
+              [string]$Machine
+            )
+
+            $defPath = Join-Path $StageDir "$Stem.def"
+            @(
+              "LIBRARY $Stem"
+              "EXPORTS"
+              "  DllMain"
+              "  CardAcquireContext"
+            ) | Set-Content -LiteralPath $defPath
+            & $LibTool /nologo "/machine:$Machine" "/def:$defPath" "/out:$(Join-Path $StageDir "$Stem.lib")"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to create import library for $Stem."
+            }
+            Remove-Item -LiteralPath $defPath
+          }
+
           $stage = Join-Path $env:GITHUB_WORKSPACE "artifact-staging\debug"
+          $libTool = Get-LibTool
+          $machines = @{
+            x86 = "x86"
+            x64 = "x64"
+            arm64 = "arm64"
+            arm64x = "arm64x"
+          }
           Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
           foreach ($arch in @("x86", "x64", "arm64", "arm64x")) {
             $source = Join-Path $env:GITHUB_WORKSPACE "out\build\$arch-Clang-Debug"
             $stem = "canokey-minidriver-$arch"
             New-Item -ItemType Directory -Force -Path $stage | Out-Null
             Copy-Item -LiteralPath (Join-Path $source "canokey-minidriver.dll") -Destination (Join-Path $stage "$stem.dll")
-            Copy-Item -LiteralPath (Join-Path $source "canokey-minidriver.lib") -Destination (Join-Path $stage "$stem.lib")
+            New-ImportLibrary -LibTool $libTool -StageDir $stage -Stem $stem -Machine $machines[$arch]
           }
           Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE "out\build\arm64x-Clang-Debug\canokey-minidriver.inf") -Destination (Join-Path $stage "canokey-minidriver.inf")
 
       - name: Stage Release artifact
         shell: pwsh
         run: |
+          function Get-LibTool {
+            $vsWhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+            if (!(Test-Path -LiteralPath $vsWhere)) {
+              throw "vswhere.exe was not found."
+            }
+            $vsInstall = & $vsWhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vsInstall)) {
+              throw "Visual Studio with C++ tools was not found."
+            }
+
+            $msvcRoot = Join-Path $vsInstall.Trim() "VC\Tools\MSVC"
+            $toolset = Get-ChildItem -LiteralPath $msvcRoot -Directory |
+              Sort-Object Name -Descending |
+              Select-Object -First 1
+            if ($null -eq $toolset) {
+              throw "No MSVC toolset was found under $msvcRoot."
+            }
+
+            $libTool = Join-Path $toolset.FullName "bin\Hostx64\x64\lib.exe"
+            if (!(Test-Path -LiteralPath $libTool)) {
+              throw "lib.exe was not found at $libTool."
+            }
+            return $libTool
+          }
+
+          function New-ImportLibrary {
+            param(
+              [string]$LibTool,
+              [string]$StageDir,
+              [string]$Stem,
+              [string]$Machine
+            )
+
+            $defPath = Join-Path $StageDir "$Stem.def"
+            @(
+              "LIBRARY $Stem"
+              "EXPORTS"
+              "  DllMain"
+              "  CardAcquireContext"
+            ) | Set-Content -LiteralPath $defPath
+            & $LibTool /nologo "/machine:$Machine" "/def:$defPath" "/out:$(Join-Path $StageDir "$Stem.lib")"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to create import library for $Stem."
+            }
+            Remove-Item -LiteralPath $defPath
+          }
+
           $stage = Join-Path $env:GITHUB_WORKSPACE "artifact-staging\release"
+          $libTool = Get-LibTool
+          $machines = @{
+            x86 = "x86"
+            x64 = "x64"
+            arm64 = "arm64"
+            arm64x = "arm64x"
+          }
           Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
           foreach ($arch in @("x86", "x64", "arm64", "arm64x")) {
             $source = Join-Path $env:GITHUB_WORKSPACE "out\build\$arch-Clang-Release"
             $stem = "canokey-minidriver-$arch"
             New-Item -ItemType Directory -Force -Path $stage | Out-Null
             Copy-Item -LiteralPath (Join-Path $source "canokey-minidriver.dll") -Destination (Join-Path $stage "$stem.dll")
-            Copy-Item -LiteralPath (Join-Path $source "canokey-minidriver.lib") -Destination (Join-Path $stage "$stem.lib")
+            New-ImportLibrary -LibTool $libTool -StageDir $stage -Stem $stem -Machine $machines[$arch]
           }
           Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE "out\build\arm64x-Clang-Release\canokey-minidriver.inf") -Destination (Join-Path $stage "canokey-minidriver.inf")
 

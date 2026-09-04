@@ -70,22 +70,30 @@ with the same configuration:
 The `arm64x-Clang-Release` directory contains the forwarder
 `canokey-minidriver.dll`, its import library, and private implementation copies
 named `canokey-minidriver-x64.dll` and `canokey-minidriver-arm64.dll`. The
-forwarder itself is linked with `/nodefaultlib` and only consumes the Windows
-SDK `arm64rt.lib` support symbols; the implementation DLLs keep the normal
-CMake CRT setting (`/MD` for Release and `/MDd` for Debug). Do not combine
-Debug and Release inputs, or replace either implementation without rebuilding
-the forwarder.
+debug-install target deploys that forwarder as
+`canokey-minidriver-arm64x.dll` so the Calais mapping can point at the distinct
+ARM64 filename documented for registry-only testing. The forwarder itself is
+linked with `/nodefaultlib` and only consumes the Windows SDK `arm64rt.lib`
+support symbols; the implementation DLLs keep the normal CMake CRT setting
+(`/MD` for Release and `/MDd` for Debug). Do not combine Debug and Release
+inputs, or replace either implementation without rebuilding the forwarder.
 
-Copy the DLL and create the default debug log directory:
+For registry-only ARM64 debugging, build the matching Debug forwarder and copy
+the deployed DLL set into the debug directory:
 
 ```powershell
-cmake --build out\build\x64-Clang-Debug --target canokey-minidriver-debug-install
+.\build.ps1 -Arch x64 -Config Debug
+.\build.ps1 -Arch arm64 -Config Debug
+.\build.ps1 -Arch arm64x -Config Debug
+cmake --build out\build\arm64x-Clang-Debug --target canokey-minidriver-debug-install
 ```
 
 By default this copies:
 
 ```text
-C:\canokey-minidriver\canokey-minidriver.dll
+C:\canokey-minidriver\canokey-minidriver-arm64x.dll
+C:\canokey-minidriver\canokey-minidriver-x64.dll
+C:\canokey-minidriver\canokey-minidriver-arm64.dll
 ```
 
 and creates a convenience log directory:
@@ -105,7 +113,7 @@ Windows Registry Editor Version 5.00
 "ATRMask"=hex:ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff
 "Crypto Provider"="Microsoft Base Smart Card Crypto Provider"
 "Smart Card Key Storage Provider"="Microsoft Smart Card Key Storage Provider"
-"80000001"="C:\\canokey-minidriver\\canokey-minidriver.dll"
+"80000001"="C:\\canokey-minidriver\\canokey-minidriver-arm64x.dll"
 ```
 
 Optional minidriver behavior is configured separately under

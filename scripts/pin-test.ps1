@@ -330,13 +330,14 @@ namespace CanokeyMinidriver {
                         // The caller will see the original failure. This is a best-effort restore.
                     }
                 }
-                if (acquired && data.pfnCardDeleteContext != IntPtr.Zero) {
+                bool contextDeleted = data.pvVendorSpecific == IntPtr.Zero;
+                if (!contextDeleted && data.pfnCardDeleteContext != IntPtr.Zero) {
                     CardDeleteContext deleteContext = Marshal.GetDelegateForFunctionPointer<CardDeleteContext>(data.pfnCardDeleteContext);
-                    deleteContext(ref data);
+                    contextDeleted = deleteContext(ref data) == 0 && data.pvVendorSpecific == IntPtr.Zero;
                 }
                 if (card != IntPtr.Zero) SCardDisconnect(card, SCARD_LEAVE_CARD);
                 if (context != IntPtr.Zero) SCardReleaseContext(context);
-                if (module != IntPtr.Zero) FreeLibrary(module);
+                if (module != IntPtr.Zero && contextDeleted) FreeLibrary(module);
                 if (atr != IntPtr.Zero) Marshal.FreeHGlobal(atr);
                 if (cardName != IntPtr.Zero) Marshal.FreeHGlobal(cardName);
             }
