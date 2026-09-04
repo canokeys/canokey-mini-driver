@@ -83,7 +83,9 @@ static CK_RV cleanup_failed_acquire(CK_SESSION_HANDLE session, BOOL sessionOpen)
     CK_RV closeRv = C_CloseSession(session);
     if (closeRv != CKR_OK && closeRv != CKR_SESSION_HANDLE_INVALID && closeRv != CKR_CRYPTOKI_NOT_INITIALIZED) {
       CMD_WARN("C_CloseSession during acquire cleanup failed: 0x%lx", closeRv);
-      result = closeRv;
+      // The session reference is still owned by this context. Do not finalize
+      // it away while retaining the context for a later cleanup retry.
+      return closeRv;
     }
   }
   // Each successful C_Initialize owns one managed reference. C_Finalize here

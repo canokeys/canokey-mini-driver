@@ -26,9 +26,10 @@ installation and release validation are still in progress.
 - Runtime sign/decrypt/ECDH operations honor the stored PIV PIN policy through
   `canokey-pkcs11`: PIN-never keys can operate without a user PIN, while
   PIN-once and PIN-always keys still require PIN login.
-- Windows provisioning rejects new PIN-always keys until a per-operation
-  context-PIN bridge is available; PKCS#11 continues to enforce the policy for
-  existing card keys.
+- Windows provisioning rejects new PIN-always ECDH keys because `C_DeriveKey`
+  has no per-operation context-PIN boundary. Signing and RSA decryption use the
+  implemented one-shot context-PIN bridge; PKCS#11 continues to enforce the
+  policy for existing card keys.
 - Windows PIN management is partially supported: the user PIN can be changed
   with the current PIN, and the user PIN can be unblocked/reset with the PIV
   PUK on cards that are not configured for PIN-managed management-key recovery.

@@ -251,12 +251,12 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
     rv = sign_with_context_pin(pContext, pCardSigningInfo->pbSignedData, paddedLen, pCardSigningInfo->pbSignedData,
                                &pCardSigningInfo->cbSignedData);
     if (rv != CKR_OK) {
-      C_SessionCancel(pContext->session, CKF_SIGN);
+      DWORD cancelRet = cancel_context_operation(pContext, CKF_SIGN, map_pkcs11_crypto_error(rv));
       SecureZeroMemory(pCardSigningInfo->pbSignedData, paddedLen);
       g_pfnCspFree(pCardSigningInfo->pbSignedData);
       pCardSigningInfo->pbSignedData = NULL;
       pCardSigningInfo->cbSignedData = 0;
-      CMD_RETURN(map_pkcs11_crypto_error(rv), "C_Sign failed");
+      CMD_RETURN(cancelRet, "C_Sign failed");
     }
 
     CMD_DEBUG("Signed data: %d bytes (@%p)", pCardSigningInfo->cbSignedData, pCardSigningInfo->pbSignedData);

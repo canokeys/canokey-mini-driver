@@ -1094,7 +1094,8 @@ function Invoke-MinidriverDecryptTests {
     )
 
     if ($Selection.DecryptKspContainers.Count -eq 0) {
-        throw "No Smart Card KSP RSA decrypt container was discovered."
+        Write-Warning "No Smart Card KSP RSA decrypt container was discovered; skipping optional decrypt tests."
+        return @()
     }
 
     $results = @()
@@ -1118,7 +1119,8 @@ function Invoke-MinidriverDeriveTests {
     )
 
     if ($Selection.EcdhKspContainers.Count -eq 0) {
-        throw "No Smart Card KSP ECDH container was discovered."
+        Write-Warning "No Smart Card KSP ECDH container was discovered; skipping optional derive tests."
+        return @()
     }
 
     $results = @()

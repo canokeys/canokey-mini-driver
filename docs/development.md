@@ -207,8 +207,9 @@ Supported values:
   `3` = cached. The default is `1`.
 - `NewKeyPinPolicy` (`REG_DWORD`): optional YubiKey-style PIN policy override
   for keys created/imported through the minidriver: `1` = never, `2` = once,
-  `3` = always. Value `3` is currently rejected because the Windows minidriver
-  has no per-operation context-PIN bridge. If absent, generated keys use PIV defaults: 9E uses never and
+  `3` = always. Value `3` is rejected for ECDH because `C_DeriveKey` has no
+  per-operation context-PIN boundary; signing and RSA decryption use the
+  implemented one-shot bridge. If absent, generated keys use PIV defaults: 9E uses never and
   every other supported key slot uses once.
 - `PinCacheTimeout` (`REG_DWORD`): number of seconds reported to Base CSP in
   `CP_CARD_PIN_INFO` as a timed PIN cache recommendation.

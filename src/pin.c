@@ -401,6 +401,12 @@ DWORD WINAPI CardDeauthenticateEx(__in PCARD_DATA pCardData, __in PIN_SET PinId,
   if (!IS_PIN_SET(PinId, ROLE_USER) && !IS_PIN_SET(PinId, ROLE_ADMIN)) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid PinId");
   }
+  // PKCS#11 logout is token-wide. Reject a subset request when another role
+  // is also authenticated instead of claiming that only one role was cleared.
+  if ((IS_PIN_SET(pContext->authenticatedPins, ROLE_USER) && !IS_PIN_SET(PinId, ROLE_USER)) ||
+      (IS_PIN_SET(pContext->authenticatedPins, ROLE_ADMIN) && !IS_PIN_SET(PinId, ROLE_ADMIN))) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Token-wide logout cannot honor a role subset");
+  }
 
   CK_RV rv = C_Logout(pContext->session);
   cmd_clear_all_user_pins();

@@ -308,7 +308,9 @@ EC keys in those slots       -> PKCS#11 ECDH-capable (not Windows-mapped)
   `NewKeyTouchPolicy` maps to `CKA_CNK_PIV_TOUCH_POLICY` (`1` never, `2`
   always, `3` cached; default `1`). `NewKeyPinPolicy`, when present, maps to
   `CKA_CNK_PIV_PIN_POLICY` (`1` never, `2` once, `3` always). The minidriver
-  rejects value `3` until a Windows per-operation authentication bridge exists.
+  rejects value `3` for ECDH because `C_DeriveKey` has no Windows
+  per-operation authentication boundary; signing and RSA decryption already
+  use the context-specific retry bridge.
   If
   `NewKeyPinPolicy` is absent, generated keys use the PIV defaults: 9E never,
   all other supported key slots once. `PinCacheTimeout` is reported through
