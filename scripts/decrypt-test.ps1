@@ -3,7 +3,7 @@ param(
     [string]$Pin = "123456",
     [string]$Arch = "x64",
     [string]$Config = "Debug",
-    [string]$ComPort = "COM3",
+    [string]$ComPort,
     [string[]]$DecryptKspContainer,
     [switch]$RunScinfo,
     [switch]$SkipBuild,

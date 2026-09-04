@@ -25,6 +25,52 @@ static DWORD map_pkcs11_crypto_error(CK_RV rv) {
   }
 }
 
+static DWORD cancel_context_operation(CMD_CONTEXT_PTR pContext, CK_FLAGS flags, DWORD fallback) {
+  CK_RV cancelRv = C_SessionCancel(pContext->session, flags);
+  if (cancelRv != CKR_OK && cancelRv != CKR_OPERATION_NOT_INITIALIZED) {
+    CMD_ERROR("C_SessionCancel failed for flags 0x%lx: 0x%lx", (unsigned long)flags, (unsigned long)cancelRv);
+    return SCARD_F_INTERNAL_ERROR;
+  }
+  return fallback;
+}
+
+static CK_RV sign_with_context_pin(CMD_CONTEXT_PTR pContext, CK_BYTE_PTR data, CK_ULONG dataLen, CK_BYTE_PTR signature,
+                                   CK_ULONG_PTR signatureLen) {
+  CK_RV rv = C_Sign(pContext->session, data, dataLen, signature, signatureLen);
+  if (rv != CKR_USER_NOT_LOGGED_IN)
+    return rv;
+
+  // C_Sign keeps the PIN-always operation active on this error. Authenticate
+  // once with the PIN captured by CardAuthenticateEx, then retry the same
+  // operation. cmd_login_context_specific consumes and clears that PIN.
+  CMD_DEBUG("C_Sign requires context-specific USER authentication; retrying once");
+  CK_RV authRv = cmd_login_context_specific(pContext);
+  if (authRv != CKR_OK) {
+    CMD_DEBUG("C_Sign context-specific authentication failed: 0x%lx", authRv);
+    return authRv == CKR_OPERATION_NOT_INITIALIZED ? CKR_USER_NOT_LOGGED_IN : authRv;
+  }
+  rv = C_Sign(pContext->session, data, dataLen, signature, signatureLen);
+  CMD_DEBUG("C_Sign context-specific retry returned 0x%lx", rv);
+  return rv;
+}
+
+static CK_RV decrypt_with_context_pin(CMD_CONTEXT_PTR pContext, CK_BYTE_PTR encryptedData, CK_ULONG encryptedLen,
+                                      CK_BYTE_PTR plainData, CK_ULONG_PTR plainLen) {
+  CK_RV rv = C_Decrypt(pContext->session, encryptedData, encryptedLen, plainData, plainLen);
+  if (rv != CKR_USER_NOT_LOGGED_IN)
+    return rv;
+
+  CMD_DEBUG("C_Decrypt requires context-specific USER authentication; retrying once");
+  CK_RV authRv = cmd_login_context_specific(pContext);
+  if (authRv != CKR_OK) {
+    CMD_DEBUG("C_Decrypt context-specific authentication failed: 0x%lx", authRv);
+    return authRv == CKR_OPERATION_NOT_INITIALIZED ? CKR_USER_NOT_LOGGED_IN : authRv;
+  }
+  rv = C_Decrypt(pContext->session, encryptedData, encryptedLen, plainData, plainLen);
+  CMD_DEBUG("C_Decrypt context-specific retry returned 0x%lx", rv);
+  return rv;
+}
+
 static DWORD map_oaep_hash_alg(LPCWSTR pszAlgId, CK_MECHANISM_TYPE *pHashAlg, CK_RSA_PKCS_MGF_TYPE *pMgf) {
   CMD_ENSURE_NONNULL(pHashAlg, SCARD_E_INVALID_PARAMETER);
   CMD_ENSURE_NONNULL(pMgf, SCARD_E_INVALID_PARAMETER);
@@ -57,14 +103,14 @@ static DWORD ec_key_spec_for_slot(const SLOT *slot, DWORD *pKeySpec) {
   CMD_ENSURE_NONNULL(slot, SCARD_E_INVALID_PARAMETER);
   CMD_ENSURE_NONNULL(pKeySpec, SCARD_E_INVALID_PARAMETER);
 
-  switch (slot->ecc.cbPrivate) {
-  case 32:
+  switch (slot->ecCurve) {
+  case CANOKEY_EC_CURVE_P256:
     *pKeySpec = AT_ECDHE_P256;
     CMD_RET_OK;
-  case 48:
+  case CANOKEY_EC_CURVE_P384:
     *pKeySpec = AT_ECDHE_P384;
     CMD_RET_OK;
-  case 66:
+  case CANOKEY_EC_CURVE_P521:
     *pKeySpec = AT_ECDHE_P521;
     CMD_RET_OK;
   default:
@@ -76,14 +122,14 @@ static DWORD expected_ecdh_public_magic(const SLOT *slot, ULONG *pMagic) {
   CMD_ENSURE_NONNULL(slot, SCARD_E_INVALID_PARAMETER);
   CMD_ENSURE_NONNULL(pMagic, SCARD_E_INVALID_PARAMETER);
 
-  switch (slot->ecc.cbPrivate) {
-  case 32:
+  switch (slot->ecCurve) {
+  case CANOKEY_EC_CURVE_P256:
     *pMagic = BCRYPT_ECDH_PUBLIC_P256_MAGIC;
     CMD_RET_OK;
-  case 48:
+  case CANOKEY_EC_CURVE_P384:
     *pMagic = BCRYPT_ECDH_PUBLIC_P384_MAGIC;
     CMD_RET_OK;
-  case 66:
+  case CANOKEY_EC_CURVE_P521:
     *pMagic = BCRYPT_ECDH_PUBLIC_P521_MAGIC;
     CMD_RET_OK;
   default:
@@ -167,6 +213,8 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
     CMD_RET_OK;
   }
 
+  CMD_CONTEXT_PTR userPinGuard CMD_USER_PIN_GUARD = pContext;
+
   CMD_NONNULL_PARAM(pCardSigningInfo->pbData);
 
   if (slot->keyType == CKK_RSA) {
@@ -192,14 +240,24 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
     CK_MECHANISM mech = {CKM_RSA_X_509, NULL, 0};
     CK_OBJECT_HANDLE hKey = CMD_MAKE_OBJECT_HANDLE(0, CKO_PRIVATE_KEY, slot->id);
     CK_RV rv = C_SignInit(pContext->session, &mech, hKey);
-    if (rv != CKR_OK)
+    if (rv != CKR_OK) {
+      g_pfnCspFree(pCardSigningInfo->pbSignedData);
+      pCardSigningInfo->pbSignedData = NULL;
+      pCardSigningInfo->cbSignedData = 0;
       CMD_RETURN(map_pkcs11_crypto_error(rv), "C_SignInit failed");
+    }
 
     pCardSigningInfo->cbSignedData = paddedLen;
-    rv = C_Sign(pContext->session, pCardSigningInfo->pbSignedData, paddedLen, pCardSigningInfo->pbSignedData,
-                &pCardSigningInfo->cbSignedData);
-    if (rv != CKR_OK)
-      CMD_RETURN(map_pkcs11_crypto_error(rv), "C_Sign failed");
+    rv = sign_with_context_pin(pContext, pCardSigningInfo->pbSignedData, paddedLen, pCardSigningInfo->pbSignedData,
+                               &pCardSigningInfo->cbSignedData);
+    if (rv != CKR_OK) {
+      DWORD cancelRet = cancel_context_operation(pContext, CKF_SIGN, map_pkcs11_crypto_error(rv));
+      SecureZeroMemory(pCardSigningInfo->pbSignedData, paddedLen);
+      g_pfnCspFree(pCardSigningInfo->pbSignedData);
+      pCardSigningInfo->pbSignedData = NULL;
+      pCardSigningInfo->cbSignedData = 0;
+      CMD_RETURN(cancelRet, "C_Sign failed");
+    }
 
     CMD_DEBUG("Signed data: %d bytes (@%p)", pCardSigningInfo->cbSignedData, pCardSigningInfo->pbSignedData);
     CMD_PRINT_HEX(pCardSigningInfo->pbSignedData, pCardSigningInfo->cbSignedData);
@@ -210,17 +268,30 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
     CK_MECHANISM mech = {CKM_ECDSA, NULL, 0};
     CK_OBJECT_HANDLE hKey = CMD_MAKE_OBJECT_HANDLE(0, CKO_PRIVATE_KEY, slot->id);
     CK_RV rv = C_SignInit(pContext->session, &mech, hKey);
-    if (rv != CKR_OK)
+    if (rv != CKR_OK) {
+      pCardSigningInfo->pbSignedData = NULL;
+      pCardSigningInfo->cbSignedData = 0;
       CMD_RETURN(map_pkcs11_crypto_error(rv), "C_SignInit failed");
+    }
 
-    pCardSigningInfo->cbSignedData = slot->ecc.cbPrivate * 2;
-    pCardSigningInfo->pbSignedData = (PBYTE)g_pfnCspAlloc(pCardSigningInfo->cbSignedData);
-    CMD_ENSURE_NONNULL(pCardSigningInfo->pbSignedData, SCARD_E_NO_MEMORY);
+    DWORD signatureCapacity = (DWORD)(slot->ecc.cbPrivate * 2);
+    pCardSigningInfo->cbSignedData = signatureCapacity;
+    pCardSigningInfo->pbSignedData = (PBYTE)g_pfnCspAlloc(signatureCapacity);
+    if (pCardSigningInfo->pbSignedData == NULL) {
+      DWORD cancelRet = cancel_context_operation(pContext, CKF_SIGN, SCARD_E_NO_MEMORY);
+      CMD_RETURN(cancelRet, "signature output allocation failed");
+    }
 
-    rv = C_Sign(pContext->session, pCardSigningInfo->pbData, pCardSigningInfo->cbData, pCardSigningInfo->pbSignedData,
-                &pCardSigningInfo->cbSignedData);
-    if (rv != CKR_OK)
-      CMD_RETURN(map_pkcs11_crypto_error(rv), "C_Sign failed");
+    rv = sign_with_context_pin(pContext, pCardSigningInfo->pbData, pCardSigningInfo->cbData,
+                               pCardSigningInfo->pbSignedData, &pCardSigningInfo->cbSignedData);
+    if (rv != CKR_OK) {
+      DWORD cancelRet = cancel_context_operation(pContext, CKF_SIGN, map_pkcs11_crypto_error(rv));
+      SecureZeroMemory(pCardSigningInfo->pbSignedData, signatureCapacity);
+      g_pfnCspFree(pCardSigningInfo->pbSignedData);
+      pCardSigningInfo->pbSignedData = NULL;
+      pCardSigningInfo->cbSignedData = 0;
+      CMD_RETURN(cancelRet, "C_Sign failed");
+    }
 
     CMD_DEBUG("Signed data: %d bytes (@%p)", pCardSigningInfo->cbSignedData, pCardSigningInfo->pbSignedData);
     CMD_PRINT_HEX(pCardSigningInfo->pbSignedData, pCardSigningInfo->cbSignedData);
@@ -323,6 +394,7 @@ DWORD WINAPI CardConstructDHAgreement(__in PCARD_DATA pCardData, __inout PCARD_D
 
   CK_OBJECT_HANDLE hBaseKey = CMD_MAKE_OBJECT_HANDLE(0, CKO_PRIVATE_KEY, slot->id);
   CK_OBJECT_HANDLE hSecret = 0;
+  CMD_CONTEXT_PTR userPinGuard CMD_USER_PIN_GUARD = pContext;
   CK_RV rv =
       C_DeriveKey(pContext->session, &mech, hBaseKey, template, sizeof(template) / sizeof(template[0]), &hSecret);
   SecureZeroMemory(peerPoint, sizeof(peerPoint));
@@ -333,7 +405,9 @@ DWORD WINAPI CardConstructDHAgreement(__in PCARD_DATA pCardData, __inout PCARD_D
   BYTE agreementIndex;
   ret = find_free_dh_agreement(pContext, &agreementIndex);
   if (ret != SCARD_S_SUCCESS) {
-    (void)C_DestroyObject(pContext->session, hSecret);
+    CK_RV destroyRv = C_DestroyObject(pContext->session, hSecret);
+    if (destroyRv != CKR_OK)
+      CMD_WARN("C_DestroyObject for ECDH secret failed: 0x%lx", destroyRv);
     CMD_RETURN(ret, "No free DH agreement slot");
   }
 
@@ -341,7 +415,11 @@ DWORD WINAPI CardConstructDHAgreement(__in PCARD_DATA pCardData, __inout PCARD_D
   clear_dh_agreement(agreement);
   CK_ATTRIBUTE valueAttr = {CKA_VALUE, agreement->secret, sizeof(agreement->secret)};
   rv = C_GetAttributeValue(pContext->session, hSecret, &valueAttr, 1);
-  (void)C_DestroyObject(pContext->session, hSecret);
+  CK_RV destroyRv = C_DestroyObject(pContext->session, hSecret);
+  if (destroyRv != CKR_OK) {
+    clear_dh_agreement(agreement);
+    CMD_RETURN(map_pkcs11_crypto_error(destroyRv), "C_DestroyObject for ECDH secret failed");
+  }
   if (rv != CKR_OK) {
     clear_dh_agreement(agreement);
     CMD_RETURN(map_pkcs11_crypto_error(rv), "C_GetAttributeValue for ECDH secret failed");
@@ -493,6 +571,7 @@ DWORD WINAPI CardRSADecrypt(__in PCARD_DATA pCardData, __inout PCARD_RSA_DECRYPT
     CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
 
   CMD_GET_CTX(pCardData, pContext);
+  CMD_CONTEXT_PTR userPinGuard CMD_USER_PIN_GUARD = pContext;
   if (pInfo->bContainerIndex >= pContext->canokey.slotCount)
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
 
@@ -551,10 +630,11 @@ DWORD WINAPI CardRSADecrypt(__in PCARD_DATA pCardData, __inout PCARD_RSA_DECRYPT
   }
 
   CK_ULONG cbPlain = pInfo->cbData;
-  rv = C_Decrypt(pContext->session, encryptedData, pInfo->cbData, pInfo->pbData, &cbPlain);
+  rv = decrypt_with_context_pin(pContext, encryptedData, pInfo->cbData, pInfo->pbData, &cbPlain);
   g_pfnCspFree(encryptedData);
   if (rv != CKR_OK) {
-    CMD_RETURN(map_pkcs11_crypto_error(rv), "C_Decrypt failed");
+    DWORD cancelRet = cancel_context_operation(pContext, CKF_DECRYPT, map_pkcs11_crypto_error(rv));
+    CMD_RETURN(cancelRet, "C_Decrypt failed");
   }
 
   // CardRSADecrypt returns RSA data to Windows in little-endian order, even

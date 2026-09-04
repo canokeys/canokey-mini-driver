@@ -16,23 +16,26 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Windows Server 2022 / Visual Studio 2022
-            os: windows-2022
-          - name: Windows Server 2025 / Visual Studio 2026
-            os: windows-2025-vs2026
+          - os: windows-2022
+            name: Windows Server 2022 / Visual Studio 2022
+            suffix: vs2022
+          - os: windows-2025
+            name: Windows Server 2025 / Visual Studio 2026
+            suffix: vs2026
 
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: recursive
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
-          python-version: '3.10'
+          python-version: '3.14'
           cache: pip
           cache-dependency-path: external/canokey-pkcs11/cmake/tf-psa-crypto-generator-requirements.txt
 
@@ -42,17 +45,157 @@ jobs:
           python -m pip install --disable-pip-version-check
           --prefer-binary -r external/canokey-pkcs11/cmake/tf-psa-crypto-generator-requirements.txt
 
+      - name: Build x86 Debug
+        shell: pwsh
+        run: |
+          $python = python -c "import sys; print(sys.executable)"
+          .\build.ps1 -Arch x86 -Config Debug -Python3Executable $python
+          if ($LASTEXITCODE -ne 0) { throw "Build failed for x86 Debug" }
+
+      - name: Build x86 Release
+        shell: pwsh
+        run: |
+          $python = python -c "import sys; print(sys.executable)"
+          .\build.ps1 -Arch x86 -Config Release -Python3Executable $python
+          if ($LASTEXITCODE -ne 0) { throw "Build failed for x86 Release" }
+
       - name: Build x64 Debug
         shell: pwsh
         run: |
           $python = python -c "import sys; print(sys.executable)"
-          .\build.ps1 -Arch x64 -Config Debug -VerboseBuild -Python3Executable $python
+          .\build.ps1 -Arch x64 -Config Debug -Python3Executable $python
+          if ($LASTEXITCODE -ne 0) { throw "Build failed for x64 Debug" }
 
-      - name: Upload artifacts
+      - name: Build x64 Release
+        shell: pwsh
+        run: |
+          $python = python -c "import sys; print(sys.executable)"
+          .\build.ps1 -Arch x64 -Config Release -Python3Executable $python
+          if ($LASTEXITCODE -ne 0) { throw "Build failed for x64 Release" }
+
+      - name: Build ARM64 Debug
+        shell: pwsh
+        run: |
+          $python = python -c "import sys; print(sys.executable)"
+          .\build.ps1 -Arch arm64 -Config Debug -Python3Executable $python
+          if ($LASTEXITCODE -ne 0) { throw "Build failed for ARM64 Debug" }
+
+      - name: Build ARM64 Release
+        shell: pwsh
+        run: |
+          $python = python -c "import sys; print(sys.executable)"
+          .\build.ps1 -Arch arm64 -Config Release -Python3Executable $python
+          if ($LASTEXITCODE -ne 0) { throw "Build failed for ARM64 Release" }
+
+      - name: Build ARM64X Debug forwarder
+        shell: pwsh
+        run: |
+          $python = python -c "import sys; print(sys.executable)"
+          .\build.ps1 -Arch arm64x -Config Debug -Python3Executable $python
+          if ($LASTEXITCODE -ne 0) { throw "Build failed for ARM64X Debug" }
+
+      - name: Build ARM64X Release forwarder
+        shell: pwsh
+        run: |
+          $python = python -c "import sys; print(sys.executable)"
+          .\build.ps1 -Arch arm64x -Config Release -Python3Executable $python
+          if ($LASTEXITCODE -ne 0) { throw "Build failed for ARM64X Release" }
+
+      - name: Stage artifacts
+        shell: pwsh
+        run: |
+          function Get-LibTool {
+            $vsWhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+            if (!(Test-Path -LiteralPath $vsWhere)) {
+              throw "vswhere.exe was not found."
+            }
+            $vsInstall = & $vsWhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vsInstall)) {
+              throw "Visual Studio with C++ tools was not found."
+            }
+
+            $msvcRoot = Join-Path $vsInstall.Trim() "VC\Tools\MSVC"
+            $toolset = Get-ChildItem -LiteralPath $msvcRoot -Directory |
+              Sort-Object Name -Descending |
+              Select-Object -First 1
+            if ($null -eq $toolset) {
+              throw "No MSVC toolset was found under $msvcRoot."
+            }
+
+            $libTool = Join-Path $toolset.FullName "bin\Hostx64\x64\lib.exe"
+            if (!(Test-Path -LiteralPath $libTool)) {
+              throw "lib.exe was not found at $libTool."
+            }
+            return $libTool
+          }
+
+          function New-ImportLibrary {
+            param(
+              [string]$LibTool,
+              [string]$StageDir,
+              [string]$Stem,
+              [string]$Machine,
+              [string]$DefinitionPath
+            )
+
+            $defPath = Join-Path $StageDir "$Stem.def"
+            try {
+              $definition = Get-Content -LiteralPath $DefinitionPath -Raw
+              $definition = $definition -replace '(?im)^LIBRARY\b[^\r\n]*$', "LIBRARY $Stem"
+              Set-Content -LiteralPath $defPath -Value $definition
+              & $LibTool /nologo "/machine:$Machine" "/def:$defPath" "/out:$(Join-Path $StageDir "$Stem.lib")"
+              if ($LASTEXITCODE -ne 0) {
+                throw "Failed to create import library for $Stem."
+              }
+            } finally {
+              Remove-Item -LiteralPath $defPath -ErrorAction SilentlyContinue
+            }
+          }
+
+          function Stage-ArtifactConfig {
+            param(
+              [string]$Config,
+              [string]$LibTool,
+              [string]$DefinitionPath,
+              [hashtable]$Machines
+            )
+
+            $stage = Join-Path $env:GITHUB_WORKSPACE "artifact-staging\$($Config.ToLowerInvariant())"
+            Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+            foreach ($arch in @("x86", "x64", "arm64", "arm64x")) {
+              $source = Join-Path $env:GITHUB_WORKSPACE "out\build\$arch-Clang-$Config"
+              $stem = "canokey-minidriver-$arch"
+              Copy-Item -LiteralPath (Join-Path $source "canokey-minidriver.dll") -Destination (Join-Path $stage "$stem.dll")
+              New-ImportLibrary -LibTool $LibTool -StageDir $stage -Stem $stem -Machine $Machines[$arch] -DefinitionPath $DefinitionPath
+            }
+
+            Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE "out\build\arm64x-Clang-$Config\canokey-minidriver.inf") -Destination (Join-Path $stage "canokey-minidriver.inf")
+          }
+
+          $libTool = Get-LibTool
+          $definitionPath = Join-Path $env:GITHUB_WORKSPACE "canokey-minidriver.def"
+          $machines = @{
+            x86 = "x86"
+            x64 = "x64"
+            arm64 = "arm64"
+            arm64x = "arm64x"
+          }
+
+          Stage-ArtifactConfig -Config "Debug" -LibTool $libTool -DefinitionPath $definitionPath -Machines $machines
+          Stage-ArtifactConfig -Config "Release" -LibTool $libTool -DefinitionPath $definitionPath -Machines $machines
+
+      - name: Upload Debug staging artifact
         uses: actions/upload-artifact@v7
         with:
-          name: canokey-mini-driver-${{ matrix.os }}
+          name: canokey-mini-driver-debug-${{ matrix.suffix }}
           if-no-files-found: error
-          path: |
-            out/build/**/canokey-minidriver.dll
-            out/build/**/canokey-minidriver.inf
+          path: artifact-staging/debug
+
+      - name: Upload Release staging artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: canokey-mini-driver-release-${{ matrix.suffix }}
+          if-no-files-found: error
+          path: artifact-staging/release

@@ -14,19 +14,13 @@
 // would be silently ignored by CSP.
 #define INVOKE_X_ON_NO_IMPL_FUNCS(X) \
 X(CardDeleteContainer) \
-X(CardCreateContainer) \
 X(CardGetChallenge) \
 X(CardAuthenticateChallenge) \
-X(CardUnblockPin) \
-X(CardChangeAuthenticator) \
 X(CardCreateDirectory) \
 X(CardDeleteDirectory) \
-X(CardCreateFile) \
-X(CardWriteFile) \
 X(CardDeleteFile) \
 X(CardSetContainerProperty) \
 X(CardGetChallengeEx) \
-X(CardChangeAuthenticatorEx) \
 X(MDImportSessionKey) \
 X(MDEncryptData) \
 X(CardImportSessionKey) \
@@ -35,8 +29,7 @@ X(CardGetAlgorithmProperty) \
 X(CardGetKeyProperty) \
 X(CardSetKeyProperty) \
 X(CardDestroyKey) \
-X(CardProcessEncryptedData) \
-X(CardCreateContainerEx)
+X(CardProcessEncryptedData)
 
 #define CMD_NO_IMPL_FUNC_NAME(NAME) __cmd_noimpl__ ## NAME
 #define CMD_GEN_NO_IMPL_FUNC(NAME) DWORD WINAPI CMD_NO_IMPL_FUNC_NAME(NAME)(__inout PCARD_DATA pCardData, ...) { \
@@ -47,21 +40,66 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_GEN_NO_IMPL_FUNC);
 #undef CMD_GEN_NO_IMPL_FUNC
 // clang-format on
 
-// Global function pointers for data caching mechanisms
-PFN_CSP_CACHE_ADD_FILE g_pfnCspCacheAddFile = NULL;
-PFN_CSP_CACHE_LOOKUP_FILE g_pfnCspCacheLookupFile = NULL;
-PFN_CSP_CACHE_DELETE_FILE g_pfnCspCacheDeleteFile = NULL;
-
 // Global function pointers for memory management
 PFN_CSP_ALLOC g_pfnCspAlloc = NULL;
-PFN_CSP_REALLOC g_pfnCspReAlloc = NULL;
 PFN_CSP_FREE g_pfnCspFree = NULL;
 
 // Global function pointer for padding
 PFN_CSP_PAD_DATA g_pfnCspPadData = NULL;
+SRWLOCK g_cmd_context_lock = SRWLOCK_INIT;
 
-// Global function pointer for padding removal
-PFN_CSP_UNPAD_DATA g_pfnCspUnpadData = NULL;
+// Managed mode is intentionally limited to one physical card per process.
+// Keep the first card identity and binding so additional Windows CARD_DATA
+// instances can share the card while a different card is rejected safely.
+static BYTE g_managed_card_id[16];
+static BOOL g_managed_card_id_valid = FALSE;
+static SCARDCONTEXT g_managed_card_context = 0;
+static SCARDHANDLE g_managed_card_handle = 0;
+static LONG g_managed_context_count = 0;
+static CMD_CONTEXT_PTR g_managed_contexts = NULL;
+
+void cmd_clear_all_user_pins(void) {
+  // All minidriver entry points hold g_cmd_context_lock while touching this
+  // registry, so each context can be scrubbed without taking another lock.
+  DWORD cleared = 0;
+  for (CMD_CONTEXT_PTR context = g_managed_contexts; context != NULL; context = context->managed_next) {
+    if (context->userPinValid)
+      ++cleared;
+    cmd_clear_user_pin(context);
+    context->authenticatedPins = PIN_SET_NONE;
+    context->pinManagedAdmin = FALSE;
+  }
+  if (cleared != 0)
+    CMD_DEBUG("Cleared cached USER PINs from %lu managed context(s)", (unsigned long)cleared);
+}
+
+static void release_exclusive_context_lock(PSRWLOCK *lock) {
+  if (lock != NULL && *lock != NULL)
+    ReleaseSRWLockExclusive(*lock);
+}
+
+static CK_RV cleanup_failed_acquire(CK_SESSION_HANDLE session, BOOL sessionOpen) {
+  CK_RV result = CKR_OK;
+  if (sessionOpen) {
+    CK_RV closeRv = C_CloseSession(session);
+    if (closeRv != CKR_OK && closeRv != CKR_SESSION_HANDLE_INVALID && closeRv != CKR_CRYPTOKI_NOT_INITIALIZED) {
+      CMD_WARN("C_CloseSession during acquire cleanup failed: 0x%lx", closeRv);
+      // The session reference is still owned by this context. Do not finalize
+      // it away while retaining the context for a later cleanup retry.
+      return closeRv;
+    }
+  }
+  // Each successful C_Initialize owns one managed reference. C_Finalize here
+  // releases only that reference; the PKCS#11 lifecycle layer tears down the
+  // shared backend only when the last reference is gone.
+  CK_RV finalizeRv = C_Finalize(NULL);
+  if (finalizeRv != CKR_OK && finalizeRv != CKR_CRYPTOKI_NOT_INITIALIZED) {
+    CMD_WARN("C_Finalize during acquire cleanup failed: 0x%lx", finalizeRv);
+    if (result == CKR_OK)
+      result = finalizeRv;
+  }
+  return result;
+}
 
 /*
  * Function: CardAcquireContext
@@ -100,46 +138,57 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
 
   // TODO: check pbAtr content
 
-  // Import the data caching functions
-  g_pfnCspCacheAddFile = pCardData->pfnCspCacheAddFile;
-  g_pfnCspCacheLookupFile = pCardData->pfnCspCacheLookupFile;
-  g_pfnCspCacheDeleteFile = pCardData->pfnCspCacheDeleteFile;
+  // CardAcquireContext and CardDeleteContext mutate the same process-wide
+  // managed binding. Keep the exclusive lock until the new CARD_DATA owns a
+  // fully initialized CMD_CONTEXT, so delete cannot finalize it mid-acquire.
+  AcquireSRWLockExclusive(&g_cmd_context_lock);
+  PSRWLOCK contextLock __attribute__((cleanup(release_exclusive_context_lock))) = &g_cmd_context_lock;
+  if (pCardData->pvVendorSpecific != NULL)
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "CARD_DATA context is already acquired");
 
-  // Import the memory management functions
+  // Validate the process-wide managed binding before publishing callbacks.
+  // Windows may supply a new card handle for the same physical card; the
+  // PKCS#11 bridge rotates that handle, but must never rotate allocators.
+  CNK_MANAGED_MODE_INIT_ARGS managedArgs = {.malloc_func = (CNK_MALLOC_FUNC)pCardData->pfnCspAlloc,
+                                            .free_func = (CNK_FREE_FUNC)pCardData->pfnCspFree,
+                                            .hSCardCtx = pCardData->hSCardCtx,
+                                            .hScard = pCardData->hScard};
+  CK_RV managedRv = C_CNK_EnableManagedMode(&managedArgs);
+  if (managedRv != CKR_OK && managedRv != CKR_CRYPTOKI_ALREADY_INITIALIZED)
+    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot bind managed card context");
+
+  // Import callbacks only after managed binding validation succeeds. They are
+  // process-global because PKCS#11 owns its allocations; all entry points are
+  // serialized by g_cmd_context_lock while using these CARD_DATA callbacks.
+  PFN_CSP_ALLOC previousAlloc = g_pfnCspAlloc;
+  PFN_CSP_FREE previousFree = g_pfnCspFree;
+  PFN_CSP_PAD_DATA previousPad = g_pfnCspPadData;
   g_pfnCspAlloc = pCardData->pfnCspAlloc;
-  g_pfnCspReAlloc = pCardData->pfnCspReAlloc;
   g_pfnCspFree = pCardData->pfnCspFree;
-
-  // Import the padding function
   g_pfnCspPadData = pCardData->pfnCspPadData;
 
-  // Import the padding removal function
-  if (pCardData->dwVersion >= CARD_DATA_VERSION_SEVEN) {
-    g_pfnCspUnpadData = pCardData->pfnCspUnpadData;
-  }
-
   // Set function pointers in pCardData
-  pCardData->pfnCardDeleteContext = CardDeleteContext;         // Yes
-  pCardData->pfnCardQueryCapabilities = CardQueryCapabilities; // Yes
-  pCardData->pfnCardDeleteContainer = NULL;                    // No
-  pCardData->pfnCardCreateContainer = NULL;                    // No
-  pCardData->pfnCardGetContainerInfo = CardGetContainerInfo;   // Yes
-  pCardData->pfnCardAuthenticatePin = CardAuthenticatePin;     // Yes
-  pCardData->pfnCardGetChallenge = NULL;                       // No (opt)
-  pCardData->pfnCardAuthenticateChallenge = NULL;              // No (opt)
-  pCardData->pfnCardUnblockPin = NULL;                         // No (opt)
-  pCardData->pfnCardChangeAuthenticator = NULL;                // No (opt)
-  pCardData->pfnCardDeauthenticate = NULL;                     // No (opt, NULL means Base CSP may reset the card)
-  pCardData->pfnCardCreateDirectory = NULL;                    // No
-  pCardData->pfnCardDeleteDirectory = NULL;                    // No
-  pCardData->pfnCardCreateFile = NULL;                         // No
-  pCardData->pfnCardReadFile = CardReadFile;                   // Yes
-  pCardData->pfnCardWriteFile = NULL;                          // No
-  pCardData->pfnCardDeleteFile = NULL;                         // No
-  pCardData->pfnCardEnumFiles = CardEnumFiles;                 // Yes
-  pCardData->pfnCardGetFileInfo = CardGetFileInfo;             // Yes
-  pCardData->pfnCardQueryFreeSpace = CardQueryFreeSpace;       // Yes
-  pCardData->pfnCardQueryKeySizes = CardQueryKeySizes;         // Yes
+  pCardData->pfnCardDeleteContext = CardDeleteContext;             // Yes
+  pCardData->pfnCardQueryCapabilities = CardQueryCapabilities;     // Yes
+  pCardData->pfnCardDeleteContainer = NULL;                        // No
+  pCardData->pfnCardCreateContainer = CardCreateContainer;         // Yes
+  pCardData->pfnCardGetContainerInfo = CardGetContainerInfo;       // Yes
+  pCardData->pfnCardAuthenticatePin = CardAuthenticatePin;         // Yes
+  pCardData->pfnCardGetChallenge = NULL;                           // No (opt)
+  pCardData->pfnCardAuthenticateChallenge = NULL;                  // No (opt)
+  pCardData->pfnCardUnblockPin = CardUnblockPin;                   // Yes (opt)
+  pCardData->pfnCardChangeAuthenticator = CardChangeAuthenticator; // Yes
+  pCardData->pfnCardDeauthenticate = NULL;                         // No (opt, NULL means Base CSP may reset the card)
+  pCardData->pfnCardCreateDirectory = NULL;                        // No
+  pCardData->pfnCardDeleteDirectory = NULL;                        // No
+  pCardData->pfnCardCreateFile = CardCreateFile;                   // Yes
+  pCardData->pfnCardReadFile = CardReadFile;                       // Yes
+  pCardData->pfnCardWriteFile = CardWriteFile;                     // Yes
+  pCardData->pfnCardDeleteFile = NULL;                             // No
+  pCardData->pfnCardEnumFiles = CardEnumFiles;                     // Yes
+  pCardData->pfnCardGetFileInfo = CardGetFileInfo;                 // Yes
+  pCardData->pfnCardQueryFreeSpace = CardQueryFreeSpace;           // Yes
+  pCardData->pfnCardQueryKeySizes = CardQueryKeySizes;             // Yes
 
   pCardData->pfnCardSignData = CardSignData;                         // Yes
   pCardData->pfnCardRSADecrypt = CardRSADecrypt;                     // Yes (opt)
@@ -151,27 +200,27 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
   // pCardData->pfnCspGetDHAgreement;
 
   // version 6 additions below here
-  pCardData->pfnCardGetChallengeEx = NULL;                           // No (opt)
-  pCardData->pfnCardAuthenticateEx = CardAuthenticateEx;             // Yes
-  pCardData->pfnCardChangeAuthenticatorEx = NULL;                    // No (opt)
-  pCardData->pfnCardDeauthenticateEx = CardDeauthenticateEx;         // Yes
-  pCardData->pfnCardGetContainerProperty = CardGetContainerProperty; // Yes
-  pCardData->pfnCardSetContainerProperty = NULL;                     // No
-  pCardData->pfnCardGetProperty = CardGetProperty;                   // Yes
-  pCardData->pfnCardSetProperty = CardSetProperty;                   // Yes
+  pCardData->pfnCardGetChallengeEx = NULL;                             // No (opt)
+  pCardData->pfnCardAuthenticateEx = CardAuthenticateEx;               // Yes
+  pCardData->pfnCardChangeAuthenticatorEx = CardChangeAuthenticatorEx; // Yes (opt)
+  pCardData->pfnCardDeauthenticateEx = CardDeauthenticateEx;           // Yes
+  pCardData->pfnCardGetContainerProperty = CardGetContainerProperty;   // Yes
+  pCardData->pfnCardSetContainerProperty = NULL;                       // No
+  pCardData->pfnCardGetProperty = CardGetProperty;                     // Yes
+  pCardData->pfnCardSetProperty = CardSetProperty;                     // Yes
 
   // version 7 additions below here
   // pCardData->pfnCspUnpadData;
-  pCardData->pfnMDImportSessionKey = NULL;       // No (opt)
-  pCardData->pfnMDEncryptData = NULL;            // No (opt)
-  pCardData->pfnCardImportSessionKey = NULL;     // No (opt)
-  pCardData->pfnCardGetSharedKeyHandle = NULL;   // No (opt)
-  pCardData->pfnCardGetAlgorithmProperty = NULL; // No (opt)
-  pCardData->pfnCardGetKeyProperty = NULL;       // No (opt)
-  pCardData->pfnCardSetKeyProperty = NULL;       // No (opt)
-  pCardData->pfnCardDestroyKey = NULL;           // No (opt)
-  pCardData->pfnCardProcessEncryptedData = NULL; // No (opt)
-  pCardData->pfnCardCreateContainerEx = NULL;    // No (opt)
+  pCardData->pfnMDImportSessionKey = NULL;                     // No (opt)
+  pCardData->pfnMDEncryptData = NULL;                          // No (opt)
+  pCardData->pfnCardImportSessionKey = NULL;                   // No (opt)
+  pCardData->pfnCardGetSharedKeyHandle = NULL;                 // No (opt)
+  pCardData->pfnCardGetAlgorithmProperty = NULL;               // No (opt)
+  pCardData->pfnCardGetKeyProperty = NULL;                     // No (opt)
+  pCardData->pfnCardSetKeyProperty = NULL;                     // No (opt)
+  pCardData->pfnCardDestroyKey = NULL;                         // No (opt)
+  pCardData->pfnCardProcessEncryptedData = NULL;               // No (opt)
+  pCardData->pfnCardCreateContainerEx = CardCreateContainerEx; // Yes (opt)
 
   // fill in generated stubs
 #pragma clang diagnostic push
@@ -195,8 +244,8 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
   for (uintptr_t *p = begin; p <= end; p++) {
     if (*p == 0 &&
         !(p == (uintptr_t *)&pCardData->pvUnused3 || p == (uintptr_t *)&pCardData->pvUnused4 ||
-          p == (uintptr_t *)&pCardData->pfnCardDeauthenticate ||
-          p == (uintptr_t *)&pCardData->pfnCspGetDHAgreement || p == (uintptr_t *)&pCardData->pfnCspUnpadData)) {
+          p == (uintptr_t *)&pCardData->pfnCardDeauthenticate || p == (uintptr_t *)&pCardData->pfnCspGetDHAgreement ||
+          p == (uintptr_t *)&pCardData->pfnCspUnpadData)) {
       CMD_ERROR("pCardData has NULL entry point at offset %lld to pfnCardDeleteContext, check CardAcquireContext!\n",
                 p - begin);
     }
@@ -204,64 +253,197 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
 
 #pragma clang diagnostic pop
 
-  // initialize canokey-pkcs11
-  INJECT_HANDLES();
-
-  CK_RV ret = C_Initialize(NULL);
-  if (ret != CKR_OK && ret != CKR_CRYPTOKI_ALREADY_INITIALIZED) {
-    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot initialize canokey-pkcs11");
-  }
+  // Allocate the retryable context before initialization. If a later cleanup
+  // callback fails, pvVendorSpecific remains available for CardDeleteContext.
   CMD_CONTEXT_PTR context = g_pfnCspAlloc(sizeof(CMD_CONTEXT));
   if (context == NULL) {
-    C_Finalize(NULL);
+    CK_RV resetRv = C_CNK_ResetManagedMode();
+    if (resetRv != CKR_OK)
+      CMD_WARN("Managed binding rollback after allocation failure failed: 0x%lx", resetRv);
+    g_pfnCspAlloc = previousAlloc;
+    g_pfnCspFree = previousFree;
+    g_pfnCspPadData = previousPad;
     CMD_RETURN(SCARD_E_NO_MEMORY, "cannot allocate context");
   }
   memset(context, 0, sizeof(*context));
+  InitializeSRWLock(&context->state_lock);
+  pCardData->pvVendorSpecific = context;
+
+  // initialize canokey-pkcs11
+  CK_RV ret = C_Initialize(NULL);
+  if (ret != CKR_OK && ret != CKR_CRYPTOKI_ALREADY_INITIALIZED) {
+    CK_RV resetRv = C_CNK_ResetManagedMode();
+    if (resetRv != CKR_OK)
+      CMD_WARN("Managed binding rollback after C_Initialize failure failed: 0x%lx", resetRv);
+    if (resetRv == CKR_OK) {
+      pCardData->pvVendorSpecific = NULL;
+      g_pfnCspFree(context);
+      g_pfnCspAlloc = previousAlloc;
+      g_pfnCspFree = previousFree;
+      g_pfnCspPadData = previousPad;
+    }
+    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot initialize canokey-pkcs11");
+  }
 
   ret = C_OpenSession(0, CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, &context->session);
   if (ret != CKR_OK) {
-    g_pfnCspFree(context);
-    C_Finalize(NULL);
+    CK_RV cleanupRv = cleanup_failed_acquire(CK_INVALID_HANDLE, FALSE);
+    if (cleanupRv == CKR_OK) {
+      pCardData->pvVendorSpecific = NULL;
+      g_pfnCspFree(context);
+      g_pfnCspAlloc = previousAlloc;
+      g_pfnCspFree = previousFree;
+      g_pfnCspPadData = previousPad;
+    } else {
+      CMD_WARN("Acquire cleanup was incomplete: 0x%lx", cleanupRv);
+    }
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot open session");
   }
 
   ret = read_canokey(context->session, &context->canokey);
   if (ret != CKR_OK) {
-    C_CloseSession(context->session);
-    g_pfnCspFree(context);
-    C_Finalize(NULL);
+    CK_RV cleanupRv = cleanup_failed_acquire(context->session, TRUE);
+    if (cleanupRv == CKR_OK) {
+      pCardData->pvVendorSpecific = NULL;
+      g_pfnCspFree(context);
+      g_pfnCspAlloc = previousAlloc;
+      g_pfnCspFree = previousFree;
+      g_pfnCspPadData = previousPad;
+    } else {
+      CMD_WARN("Acquire cleanup was incomplete: 0x%lx", cleanupRv);
+    }
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot read canokey");
   }
+  // The initial inventory is already a live metadata snapshot. Reuse it for
+  // the first cache-file reads; subsequent reads refresh at the bounded
+  // interval enforced by CardReadFile so external PKCS#11 mutations remain
+  // visible without rescanning all six containers for every Windows query.
+  context->last_metadata_refresh_ms = GetTickCount64();
+  context->metadata_refresh_valid = TRUE;
+  context->metadataGeneration = InterlockedCompareExchange(&g_cmd_metadata_generation, 0, 0);
 
   DWORD dwRet = GenerateCardIdentifier(context);
   if (dwRet != SCARD_S_SUCCESS) {
-    C_CloseSession(context->session);
-    g_pfnCspFree(context);
-    C_Finalize(NULL);
+    CK_RV cleanupRv = cleanup_failed_acquire(context->session, TRUE);
+    if (cleanupRv == CKR_OK) {
+      pCardData->pvVendorSpecific = NULL;
+      g_pfnCspFree(context);
+      g_pfnCspAlloc = previousAlloc;
+      g_pfnCspFree = previousFree;
+      g_pfnCspPadData = previousPad;
+    } else {
+      CMD_WARN("Acquire cleanup was incomplete: 0x%lx", cleanupRv);
+    }
     CMD_RETURN(dwRet, "cannot generate card identifier");
   }
 
-  pCardData->pvVendorSpecific = context;
+  if (!g_managed_card_id_valid) {
+    memcpy(g_managed_card_id, context->cardId, sizeof(g_managed_card_id));
+    g_managed_card_id_valid = TRUE;
+  } else if (memcmp(g_managed_card_id, context->cardId, sizeof(g_managed_card_id)) != 0) {
+    // The PKCS#11 bridge is process-wide. Do not let a second physical card
+    // inherit the first card's token login or metadata; restore the previous
+    // handle because C_CNK_EnableManagedMode may have rotated it while probing.
+    CK_RV cleanupRv = cleanup_failed_acquire(context->session, TRUE);
+    if (cleanupRv == CKR_OK) {
+      CNK_MANAGED_MODE_INIT_ARGS restoreArgs = {.malloc_func = (CNK_MALLOC_FUNC)g_pfnCspAlloc,
+                                                .free_func = (CNK_FREE_FUNC)g_pfnCspFree,
+                                                .hSCardCtx = g_managed_card_context,
+                                                .hScard = g_managed_card_handle};
+      CK_RV restoreRv = C_CNK_EnableManagedMode(&restoreArgs);
+      if (restoreRv != CKR_OK)
+        CMD_WARN("Failed to restore active managed card handle: 0x%lx", restoreRv);
+      pCardData->pvVendorSpecific = NULL;
+      g_pfnCspFree(context);
+      g_pfnCspAlloc = previousAlloc;
+      g_pfnCspFree = previousFree;
+      g_pfnCspPadData = previousPad;
+    } else {
+      CMD_WARN("Card identity rejection cleanup was incomplete: 0x%lx", cleanupRv);
+    }
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "different physical card is already bound");
+  }
+
+  context->card_context = pCardData->hSCardCtx;
+  context->card_handle = pCardData->hScard;
+  context->managed_next = g_managed_contexts;
+  g_managed_contexts = context;
+  g_managed_card_context = context->card_context;
+  g_managed_card_handle = context->card_handle;
+  g_managed_context_count++;
+
   CMD_RET_OK;
 }
 
 DWORD CardDeleteContext(__inout PCARD_DATA pCardData) {
   CMD_LOG_FUNC("pCardData %p", pCardData);
   CMD_NONNULL_PARAM(pCardData);
+  AcquireSRWLockExclusive(&g_cmd_context_lock);
+  PSRWLOCK contextLock __attribute__((cleanup(release_exclusive_context_lock))) = &g_cmd_context_lock;
   if (pCardData->pvVendorSpecific) {
     CMD_CONTEXT_PTR context = (CMD_CONTEXT_PTR)pCardData->pvVendorSpecific;
+    // Closing a context must not leave its copied USER PIN behind, even when
+    // a later cleanup stage reports an error and the context is retained.
+    cmd_clear_user_pin(context);
     CK_RV rv = C_CloseSession(context->session);
+    DWORD cleanupError = SCARD_S_SUCCESS;
     if (rv != CKR_OK && rv != CKR_SESSION_HANDLE_INVALID && rv != CKR_CRYPTOKI_NOT_INITIALIZED) {
       CMD_WARN("C_CloseSession failed: 0x%lx", rv);
+      // Continue into C_Finalize. Session-manager cleanup is the last owner
+      // capable of releasing a session when a card or transport disappeared;
+      // returning here would strand the process-wide managed binding.
+      cleanupError = SCARD_F_INTERNAL_ERROR;
+    }
+    // Managed C_Initialize/C_Finalize is reference-counted. Release this
+    // CARD_DATA's reference even when other contexts remain; the backend is
+    // destroyed only by the final reference.
+    rv = C_Finalize(NULL);
+    if (rv != CKR_OK && rv != CKR_CRYPTOKI_NOT_INITIALIZED) {
+      CMD_WARN("C_Finalize failed: 0x%lx", rv);
+      CMD_RETURN(SCARD_F_INTERNAL_ERROR, "C_Finalize failed");
+    }
+    if (rv == CKR_CRYPTOKI_NOT_INITIALIZED) {
+      CK_RV resetRv = C_CNK_ResetManagedMode();
+      if (resetRv == CKR_OPERATION_ACTIVE) {
+        // A failed initialize can leave a retryable backend cleanup pending
+        // while Cryptoki is uninitialized. Re-enter initialization to drain
+        // that cleanup, then finalize the temporary managed instance.
+        resetRv = C_Initialize(NULL);
+        if (resetRv == CKR_OK)
+          resetRv = C_Finalize(NULL);
+        if (resetRv == CKR_OK)
+          resetRv = C_CNK_ResetManagedMode();
+      }
+      if (resetRv != CKR_OK) {
+        CMD_WARN("Managed binding cleanup is still pending: 0x%lx", resetRv);
+        CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Managed binding cleanup is still pending");
+      }
+    }
+    BOOL removedFromManagedList = FALSE;
+    CMD_CONTEXT_PTR *link = &g_managed_contexts;
+    while (*link != NULL && *link != context)
+      link = &(*link)->managed_next;
+    if (*link == context) {
+      *link = context->managed_next;
+      removedFromManagedList = TRUE;
     }
     SecureZeroMemory(context->dhAgreements, sizeof(context->dhAgreements));
     pCardData->pfnCspFree(context);
     pCardData->pvVendorSpecific = NULL;
-
-    rv = C_Finalize(NULL);
-    if (rv != CKR_OK && rv != CKR_CRYPTOKI_NOT_INITIALIZED) {
-      CMD_WARN("C_Finalize failed: 0x%lx", rv);
+    if (removedFromManagedList && g_managed_context_count > 0)
+      g_managed_context_count--;
+    if (g_managed_context_count == 0) {
+      SecureZeroMemory(g_managed_card_id, sizeof(g_managed_card_id));
+      g_managed_card_id_valid = FALSE;
+      g_managed_card_context = 0;
+      g_managed_card_handle = 0;
+      g_managed_contexts = NULL;
+    } else if (g_managed_contexts != NULL) {
+      g_managed_card_context = g_managed_contexts->card_context;
+      g_managed_card_handle = g_managed_contexts->card_handle;
     }
+    if (cleanupError != SCARD_S_SUCCESS)
+      CMD_RETURN(cleanupError, "C_CloseSession failed after managed cleanup");
   }
   CMD_RET_OK;
 }

@@ -57,7 +57,12 @@ void cmd_load_config(CMD_CONFIG *config) {
               .level = CMD_LOG_LEVEL_NONE,
               .unsafe_log_apdu = false,
           },
-      .new_key_touch_policy = CMD_NEW_KEY_TOUCH_POLICY_NEVER,
+      .protect_management = true,
+      .refresh_device_keys = true,
+      .refresh_window_seconds = 60,
+      .new_key_touch_policy = CNK_PIV_TOUCH_POLICY_NEVER,
+      .has_new_key_pin_policy = false,
+      .new_key_pin_policy = CNK_PIV_PIN_POLICY_ONCE,
       .has_pin_cache_timeout = false,
       .pin_cache_timeout = 0,
   };
@@ -78,11 +83,22 @@ void cmd_load_config(CMD_CONFIG *config) {
       read_registry_bool(key, "LogSensitiveData", &local.logging.unsafe_log_apdu);
     }
 
+    // Match YubiKey Minidriver semantics: disabling this delegates
+    // PIN-managed management-key provisioning to an external solution.
+    read_registry_bool(key, "ProtectManagement", &local.protect_management);
+    read_registry_bool(key, "RefreshDeviceKeys", &local.refresh_device_keys);
+    read_registry_dword(key, "RefreshWindow", &local.refresh_window_seconds);
+
     DWORD new_key_touch_policy = 0;
     if (read_registry_dword(key, "NewKeyTouchPolicy", &new_key_touch_policy) &&
-        new_key_touch_policy >= CMD_NEW_KEY_TOUCH_POLICY_NEVER &&
-        new_key_touch_policy <= CMD_NEW_KEY_TOUCH_POLICY_CACHED) {
+        new_key_touch_policy >= CNK_PIV_TOUCH_POLICY_NEVER && new_key_touch_policy <= CNK_PIV_TOUCH_POLICY_CACHED) {
       local.new_key_touch_policy = new_key_touch_policy;
+    }
+    DWORD new_key_pin_policy = 0;
+    if (read_registry_dword(key, "NewKeyPinPolicy", &new_key_pin_policy) &&
+        new_key_pin_policy >= CNK_PIV_PIN_POLICY_NEVER && new_key_pin_policy <= CNK_PIV_PIN_POLICY_ALWAYS) {
+      local.has_new_key_pin_policy = true;
+      local.new_key_pin_policy = new_key_pin_policy;
     }
     if (read_registry_dword(key, "PinCacheTimeout", &local.pin_cache_timeout)) {
       local.has_pin_cache_timeout = true;

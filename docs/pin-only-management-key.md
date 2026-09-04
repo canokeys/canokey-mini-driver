@@ -1,0 +1,185 @@
+# PIN-Only Management Key Research
+
+This note records the current understanding of YubiKey-style PIN-only PIV
+management-key handling and the shape that would fit this minidriver.
+
+## Summary
+
+YubiKey PIN-only mode does not remove the PIV management key. It changes how
+software obtains that key. After the normal PIV user PIN has been verified, the
+software reads a PIN-protected data object from the card, recovers the stored
+management key, and performs management-key authentication in the same logical
+workflow. This lets enrollment, key generation, certificate import, and similar
+management operations proceed after a normal Windows PIN prompt.
+
+For CanoKey, the preferred boundary remains:
+
+- The minidriver should not issue raw PC/SC/APDU operations.
+- `canokey-pkcs11` should own PIV GET DATA / PUT DATA / GENERAL AUTHENTICATE.
+- The minidriver should use PKCS#11 object APIs or CanoKey PKCS#11 extension
+  APIs to recover the PIN-protected management key after `ROLE_USER`
+  authentication.
+
+## Source Findings
+
+Yubico documents two PIN-only modes: PIN-protected and PIN-derived.
+PIN-protected is the recommended mode. In that mode the SDK stores the
+management key in the PRINTED data object and records mode information in ADMIN
+DATA. When an operation later needs management-key authentication, the SDK
+obtains the key from PRINTED after PIN verification and authenticates the
+management key for that session. PIN-derived exists for compatibility and is
+not the preferred model.
+
+Yubico blocks the PUK when setting PIN-only mode so a PUK holder cannot reset
+the user's PIN and then recover the PIN-protected management key. CanoKey uses
+the same security requirement. Writing the ADMIN DATA `PukBlocked` bit is not
+sufficient: provisioning must drive the actual PUK retry counter to zero and
+confirm it before managed login is enabled.
+
+The Yubico .NET SDK `PinProtectedData` implementation stores its data in PIV
+data tag `0x005FC109`, the PRINTED storage area. Its format is a Yubico-defined
+TLV payload, not the standard PRINTED information layout:
+
+```text
+empty:
+  53 00
+
+with management key:
+  53 len
+    88 len
+      89 len
+        management-key bytes
+```
+
+The SDK accepts management key lengths of 16, 24, or 32 bytes. The current
+CanoKey path uses a 24-byte key; the algorithm is read from slot `0x9B`
+metadata and may be AES-192 or 3DES on compatible firmware.
+
+Yubico ADMIN DATA records whether the PUK is blocked, whether the management
+key is stored in a protected area, an optional salt for PIN-derived mode, and
+an optional PIN-last-updated timestamp. The card does not set ADMIN DATA
+automatically; the software that configures PIN-only mode must write consistent
+ADMIN DATA and protected management-key data.
+
+## Standards Context
+
+NIST SP 800-73 lists PRINTED Information as PIV data tag `5FC109` and marks it
+as PIN-or-OCC readable. It also describes standard PRINTED contents as printed
+cardholder information. Yubico's PIN-protected management-key payload is
+therefore an intentional overload of a PIN-protected data object rather than a
+standard PRINTED information structure.
+
+PC/SC is the lower-level transport API. On Windows, `SCardTransmit` sends a
+service request/APDU to the card and returns the response. PC/SC does not know
+about PKCS#11 objects, `CKO_DATA`, or `CKA_VALUE`.
+
+PKCS#11 has a standard data-object class, `CKO_DATA`, and a standard value
+attribute, `CKA_VALUE`. If `canokey-pkcs11` exposes PIV data objects as
+PKCS#11 data objects, the minidriver can stay out of PC/SC and use
+`C_FindObjects` plus `C_GetAttributeValue` to read the protected data.
+
+## Current Implementation
+
+`canokey-pkcs11` exposes selected PIV data objects as `CKO_DATA` and also
+provides `C_CNK_LoginPinManaged()` for the complete runtime authentication
+flow. The extension verifies the USER PIN, requires the PIN-protected bit in
+ADMIN DATA (`5FFF00`), strictly parses the management key from PRINTED
+(`5FC109`), authenticates and caches it, and clears every temporary buffer. It
+also requires ADMIN DATA to declare PUK blocking and checks the actual PUK
+retry counter. A nonzero counter returns `CKR_ACTION_PROHIBITED`.
+
+The minidriver calls this extension after normal USER authentication. It does
+not issue `SCardTransmit`, parse these TLVs, or receive the raw management key.
+
+## PIV Data Object Behavior
+
+Selected PIV data objects are modeled as `CKO_DATA`, with the writable surface
+intentionally narrow. This is not meant to become a fully mutable generic PIV
+object store.
+
+- `C_FindObjects` should be able to find selected PIV data objects with
+  `CKA_CLASS = CKO_DATA`.
+- `CKA_APPLICATION` can identify the object family, for example `PIV`.
+- `CKA_OBJECT_ID` should identify the raw PIV data tag, for example
+  `{ 0x5F, 0xC1, 0x09 }` for PRINTED.
+- `CKA_LABEL` can be a readable label such as `PIV data 5FC109`.
+- `CKA_VALUE` should return the raw GET DATA payload.
+- For PIN-protected tags such as `5FC109`, return a login/security error if
+  the PIN has not been verified.
+- `CKA_MODIFIABLE` should be `CK_FALSE`, because modification through
+  `C_SetAttributeValue` is not supported.
+- `CKA_DESTROYABLE` should be `CK_FALSE`, because `C_DestroyObject` does not
+  currently delete PIV data objects.
+- `CKA_COPYABLE` should be `CK_FALSE`, because `C_CopyObject` is not supported.
+
+Writing should use `C_CreateObject(CKO_DATA)` only:
+
+- The caller must be authenticated as SO.
+- The template must include `CKA_CLASS = CKO_DATA`, the PIV object identifier,
+  and `CKA_VALUE`.
+- Internally this performs PIV PUT DATA.
+- If the PIV data object already exists, overwrite it with the new value.
+
+Keep `C_SetAttributeValue` simple: return `CKR_ATTRIBUTE_READ_ONLY` for PIV
+token objects, including `CKO_DATA`. This matches the current direction of
+YKCS11 more closely than pretending PIV objects are generally mutable PKCS#11
+objects.
+
+## Minidriver Runtime Flow
+
+After `CardAuthenticateEx(ROLE_USER)` succeeds:
+
+1. Authenticate `ROLE_USER` through `C_CNK_Login` so Windows receives the PIN
+   retry count expected by the minidriver contract.
+2. Call `C_CNK_LoginPinManaged` with the same session and PIN.
+3. Mark `ROLE_ADMIN` authenticated only when the extension succeeds.
+
+The extension is used as a best-effort bridge. If the PIN-protected object is
+missing, malformed, or does not contain a supported management key, the
+minidriver keeps the ordinary USER role; an explicit `ROLE_ADMIN` path remains
+available for management operations that accept it. Windows key-container
+generation and import still require `ROLE_USER`.
+
+## Provisioning Notes
+
+Runtime support and provisioning are separate tasks.
+
+Runtime support only needs to read a correctly configured PIN-protected
+management key and authenticate it. Provisioning needs more:
+
+- Verify the user's PIN.
+- Authenticate the current management key.
+- Optionally generate a new random management key.
+- Change the on-card management key if the card supports that operation.
+- Write the PIN-protected management-key payload to PRINTED.
+- Permanently block the PUK with wrong, valid-length verification attempts and
+  confirm that metadata reports zero retries.
+- Write consistent ADMIN DATA with PUK-blocked and PIN-protected bits only
+  after the PUK is actually blocked.
+
+`canokey-pkcs11/scripts/finalize-pin-managed.ps1` is a narrow repair tool for
+development cards whose PRINTED and ADMIN DATA are already configured but whose
+PUK was not actually blocked. It calls `C_CNK_FinalizePinManaged()` and requires
+an explicit permanent-block acknowledgement. A future full provisioning tool
+should own the complete ordered workflow above.
+
+For development keys, it is acceptable to configure this with an external tool
+first and keep the minidriver runtime path read-only. Production provisioning
+needs a deliberate security design.
+
+## References
+
+- Yubico SDK manual, PIV PIN-only mode:
+  https://docs.yubico.com/yesdk/users-manual/application-piv/pin-only.html
+- Yubico SDK manual, PIV GET and PUT DATA:
+  https://docs.yubico.com/yesdk/users-manual/application-piv/get-and-put-data.html
+- Yubico .NET SDK `PinProtectedData` source:
+  https://github.com/Yubico/Yubico.NET.SDK/blob/90bb723f050e356469351fc9d87360b3d11d2ca1/Yubico.YubiKey/src/Yubico/YubiKey/Piv/Objects/PinProtectedData.cs
+- Yubico .NET SDK `AdminData` API documentation:
+  https://docs.yubico.com/yesdk/yubikey-api/Yubico.YubiKey.Piv.Objects.AdminData.html
+- NIST SP 800-73 Part 1, PIV data model and PRINTED tag `5FC109`:
+  https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73pt1-5.pdf
+- Microsoft `SCardTransmit` documentation:
+  https://learn.microsoft.com/en-us/windows/win32/api/winscard/nf-winscard-scardtransmit
+- OASIS PKCS#11 v3.1 specification:
+  https://docs.oasis-open.org/pkcs11/pkcs11-spec/v3.1/pkcs11-spec-v3.1.pdf

@@ -17,11 +17,61 @@ function Find-CMake {
     throw "cmake was not found in PATH or Visual Studio."
 }
 
+function Test-CiuControlPort {
+    param([string]$PortName)
+
+    $port = New-Object System.IO.Ports.SerialPort $PortName,115200,'None',8,'One'
+    try {
+        $port.NewLine = "`r`n"
+        $port.ReadTimeout = 750
+        $port.Open()
+        $port.DiscardInBuffer()
+        $port.WriteLine("status")
+        for ($line = 0; $line -lt 3; $line++) {
+            $response = $port.ReadLine()
+            if ($response.StartsWith("OK ") -and $response.Contains("ciu_power=")) {
+                return $true
+            }
+        }
+        return $false
+    } catch {
+        return $false
+    } finally {
+        if ($port.IsOpen) {
+            $port.Close()
+        }
+        $port.Dispose()
+    }
+}
+
+function Resolve-CiuControlPort {
+    param([string]$PortName)
+
+    $candidates = if ([string]::IsNullOrWhiteSpace($PortName)) {
+        @([System.IO.Ports.SerialPort]::GetPortNames() | Sort-Object)
+    } else {
+        @($PortName)
+    }
+
+    foreach ($candidate in $candidates) {
+        if (Test-CiuControlPort $candidate) {
+            return $candidate
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($PortName)) {
+        throw "No DevKit control port responded to the status command."
+    }
+    throw "$PortName is not a responding DevKit control port."
+}
+
 function Invoke-ComReset {
     param([string]$PortName)
 
-    Write-Host "Resetting CanoKey through $PortName..."
-    $port = New-Object System.IO.Ports.SerialPort $PortName,38400,'None',8,'One'
+    $resolvedPort = Resolve-CiuControlPort $PortName
+
+    Write-Host "Resetting CanoKey through $resolvedPort..."
+    $port = New-Object System.IO.Ports.SerialPort $resolvedPort,115200,'None',8,'One'
     try {
         $port.NewLine = "`r`n"
         $port.Open()
@@ -31,6 +81,7 @@ function Invoke-ComReset {
         if ($port.IsOpen) {
             $port.Close()
         }
+        $port.Dispose()
     }
     Start-Sleep -Seconds 6
 }
@@ -59,7 +110,7 @@ function Invoke-CertutilScinfo {
 }
 
 if (-not ("CanokeyMinidriver.SignTestNative" -as [type])) {
-    Add-Type -TypeDefinition @'
+    Add-Type -IgnoreWarnings -WarningAction SilentlyContinue -TypeDefinition @'
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -189,7 +240,8 @@ namespace CanokeyMinidriver {
         private static extern int NCryptOpenKey(IntPtr hProvider, out IntPtr phKey, string pszKeyName, int dwLegacyKeySpec, int dwFlags);
 
         [DllImport("ncrypt.dll", CharSet = CharSet.Unicode)]
-        private static extern int NCryptCreatePersistedKey(IntPtr hProvider, out IntPtr phKey, string pszAlgId, string pszKeyName, int dwLegacyKeySpec, int dwFlags);
+        private static extern int NCryptCreatePersistedKey(IntPtr hProvider, out IntPtr phKey, string pszAlgId,
+            string pszKeyName, int dwLegacyKeySpec, int dwFlags);
 
         [DllImport("ncrypt.dll")]
         private static extern int NCryptFinalizeKey(IntPtr hKey, int dwFlags);
@@ -229,6 +281,9 @@ namespace CanokeyMinidriver {
 
         [DllImport("ncrypt.dll")]
         private static extern int NCryptFreeObject(IntPtr hObject);
+
+        [DllImport("ncrypt.dll")]
+        private static extern int NCryptDeleteKey(IntPtr hKey, int flags);
 
         [DllImport("ncrypt.dll")]
         private static extern int NCryptFreeBuffer(IntPtr pvInput);
@@ -280,7 +335,11 @@ namespace CanokeyMinidriver {
         public static string[] EnumCapiContainers() {
             IntPtr hProv = IntPtr.Zero;
             try {
-                CheckWin32(CryptAcquireContext(out hProv, null, BaseSmartCardCsp, PROV_RSA_FULL, CRYPT_SILENT), "CryptAcquireContext(enum)");
+                if (!CryptAcquireContext(out hProv, null, BaseSmartCardCsp, PROV_RSA_FULL, CRYPT_SILENT)) {
+                    int error = Marshal.GetLastWin32Error();
+                    if (error == unchecked((int)0x80090016)) return new string[0]; // NTE_BAD_KEYSET
+                    throw new InvalidOperationException("CryptAcquireContext(enum) failed: " + FormatWin32(error));
+                }
                 System.Collections.Generic.List<string> containers = new System.Collections.Generic.List<string>();
                 uint flags = CRYPT_FIRST;
                 while (true) {
@@ -343,6 +402,60 @@ namespace CanokeyMinidriver {
                 return GetCngStringProperty(hKey, "Algorithm Group");
             } finally {
                 if (hKey != IntPtr.Zero) NCryptFreeObject(hKey);
+                if (hProvider != IntPtr.Zero) NCryptFreeObject(hProvider);
+            }
+        }
+
+        public static KeyName CreateCngKey(string reader, string pin, string algorithm, string container,
+            int keySize, int legacyKeySpec) {
+            IntPtr hProvider = IntPtr.Zero;
+            IntPtr hKey = IntPtr.Zero;
+            bool finalized = false;
+            bool completed = false;
+            try {
+                CheckStatus(NCryptOpenStorageProvider(out hProvider, SmartCardKsp, 0), "NCryptOpenStorageProvider");
+                byte[] readerBytes = Encoding.Unicode.GetBytes(reader + "\0");
+                CheckStatus(NCryptSetProperty(hProvider, "SmartCardReader", readerBytes, readerBytes.Length, 0),
+                    "NCryptSetProperty(SmartCardReader)");
+                bool rsa = String.Equals(algorithm, "RSA", StringComparison.OrdinalIgnoreCase);
+                if ((rsa && legacyKeySpec != (int)AT_SIGNATURE && legacyKeySpec != (int)AT_KEYEXCHANGE) ||
+                    (!rsa && legacyKeySpec != 0)) {
+                    throw new ArgumentOutOfRangeException("legacyKeySpec");
+                }
+                CheckStatus(NCryptCreatePersistedKey(hProvider, out hKey, algorithm, container, legacyKeySpec, 0),
+                    "NCryptCreatePersistedKey");
+                if (!String.IsNullOrEmpty(pin)) {
+                    byte[] pinBytes = Encoding.Unicode.GetBytes(pin + "\0");
+                    CheckStatus(NCryptSetProperty(hKey, "SmartCardPin", pinBytes, pinBytes.Length, 0),
+                        "NCryptSetProperty(SmartCardPin)");
+                }
+                if (rsa) {
+                    byte[] length = BitConverter.GetBytes(keySize);
+                    CheckStatus(NCryptSetProperty(hKey, "Length", length, length.Length, 0),
+                        "NCryptSetProperty(Length)");
+                }
+                CheckStatus(NCryptFinalizeKey(hKey, 0), "NCryptFinalizeKey");
+                finalized = true;
+                KeyName result = new KeyName {
+                    Name = GetCngStringProperty(hKey, "Name"),
+                    AlgorithmGroup = GetCngStringProperty(hKey, "Algorithm Group"),
+                    LegacyKeySpec = (uint)legacyKeySpec,
+                    Flags = 0
+                };
+                completed = true;
+                return result;
+            } finally {
+                if (hKey != IntPtr.Zero) {
+                    if (finalized && !completed) {
+                        int deleteStatus = NCryptDeleteKey(hKey, 0);
+                        if (deleteStatus == 0) {
+                            hKey = IntPtr.Zero;
+                        } else {
+                            Console.Error.WriteLine($"NCryptDeleteKey cleanup failed: 0x{deleteStatus:X8}");
+                        }
+                    }
+                    if (hKey != IntPtr.Zero) NCryptFreeObject(hKey);
+                }
                 if (hProvider != IntPtr.Zero) NCryptFreeObject(hProvider);
             }
         }
@@ -861,26 +974,26 @@ function Select-MinidriverTestKeys {
 
     $selectedEccKspContainers = @()
     if ($EccKspContainer) {
-        $selectedEccKspContainers = @($EccKspContainer | ForEach-Object {
-                [pscustomobject]@{
-                    Container = $_
-                    AlgorithmGroup = "ECDSA_P256"
-                    OpenKeySpec = 3
-                }
-            })
+        $selectedEccKspContainers = @($Discovery.EcdsaKspKeys |
+            Where-Object { $EccKspContainer -contains $_.Container })
+        $resolvedNames = @($selectedEccKspContainers | Select-Object -ExpandProperty Container -Unique)
+        $missingNames = @($EccKspContainer | Where-Object { $resolvedNames -notcontains $_ })
+        if ($missingNames.Count -gt 0) {
+            throw "Requested ECDSA container was not discovered: $($missingNames -join ', ')"
+        }
     } else {
         $selectedEccKspContainers = @($Discovery.EcdsaKspKeys)
     }
 
     $selectedEcdhKspContainers = @()
     if ($EcdhKspContainer) {
-        $selectedEcdhKspContainers = @($EcdhKspContainer | ForEach-Object {
-                [pscustomobject]@{
-                    Container = $_
-                    AlgorithmGroup = "ECDH_P256"
-                    OpenKeySpec = 6
-                }
-            })
+        $selectedEcdhKspContainers = @($Discovery.EcdhKspKeys |
+            Where-Object { $EcdhKspContainer -contains $_.Container })
+        $resolvedNames = @($selectedEcdhKspContainers | Select-Object -ExpandProperty Container -Unique)
+        $missingNames = @($EcdhKspContainer | Where-Object { $resolvedNames -notcontains $_ })
+        if ($missingNames.Count -gt 0) {
+            throw "Requested ECDH container was not discovered: $($missingNames -join ', ')"
+        }
     } else {
         $selectedEcdhKspContainers = @($Discovery.EcdhKspKeys)
     }
@@ -941,14 +1054,10 @@ function Invoke-MinidriverSignTests {
         [switch]$ContinueOnError
     )
 
-    if ($Selection.BaseCspContainers.Count -eq 0) {
-        throw "No Base Smart Card CSP RSA container was discovered."
-    }
-    if ($Selection.RsaKspContainers.Count -eq 0) {
-        throw "No Smart Card KSP RSA container was discovered."
-    }
-    if ($Selection.EccKspContainers.Count -eq 0) {
-        throw "No Smart Card KSP ECDSA container was discovered."
+    if ($Selection.BaseCspContainers.Count -eq 0 -and
+        $Selection.RsaKspContainers.Count -eq 0 -and
+        $Selection.EccKspContainers.Count -eq 0) {
+        throw "No signing container was discovered."
     }
 
     $results = @()
@@ -985,7 +1094,8 @@ function Invoke-MinidriverDecryptTests {
     )
 
     if ($Selection.DecryptKspContainers.Count -eq 0) {
-        throw "No Smart Card KSP RSA decrypt container was discovered."
+        Write-Warning "No Smart Card KSP RSA decrypt container was discovered; skipping optional decrypt tests."
+        return @()
     }
 
     $results = @()
@@ -1009,7 +1119,8 @@ function Invoke-MinidriverDeriveTests {
     )
 
     if ($Selection.EcdhKspContainers.Count -eq 0) {
-        throw "No Smart Card KSP ECDH container was discovered."
+        Write-Warning "No Smart Card KSP ECDH container was discovered; skipping optional derive tests."
+        return @()
     }
 
     $results = @()

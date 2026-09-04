@@ -3,29 +3,36 @@ Signature="$Windows NT$"
 Class=SmartCard
 ClassGuid={990A2BD7-E738-46c7-B26F-1CF8FB9F1391}
 Provider=%ManufacturerName%
-;CatalogFile=delta.cat
-;PnpLockdown=1
+PnpLockdown=1
 DriverVer=@CMD_DRIVERDATE@,@CMD_DRIVERVER@
 
 [Manufacturer]
 %ManufacturerName%=CanoKey,NTamd64.6.1,NTx86.6.1,NTarm64.10
 
-; Now we only compile and ship canokey_minidriver.dll natively on each arch,
-; TODO: enable and complete more DDInstall sections, and switch to those different sections
 [CanoKey.NTamd64.6.1]
 %CanoKeyMiniDriver%=CanoKeyMiniDriver_amd64_Install,%CanoKeyFilter%
 
 [CanoKey.NTx86.6.1]
-%CanoKeyMiniDriver%=CanoKeyMiniDriver_amd64_Install,%CanoKeyFilter%
+%CanoKeyMiniDriver%=CanoKeyMiniDriver_x86_Install,%CanoKeyFilter%
 
 [CanoKey.NTarm64.10]
-%CanoKeyMiniDriver%=CanoKeyMiniDriver_amd64_Install,%CanoKeyFilter%
+%CanoKeyMiniDriver%=CanoKeyMiniDriver_arm64x_Install,%CanoKeyFilter%
 
 [CanoKeyMiniDriver_amd64_Install.NT]
-CopyFiles=CopyFiles_amd64
-;CopyFiles=CopyFiles_wow64
-AddReg=AddReg_default
-;AddReg=AddReg_wow64
+CopyFiles=CopyFiles_amd64,CopyFiles_x86_wow64
+AddReg=AddReg_amd64,AddReg_x86_wow64
+Include=umpass.inf
+Needs=UmPass
+
+[CanoKeyMiniDriver_x86_Install.NT]
+CopyFiles=CopyFiles_x86_native
+AddReg=AddReg_x86_native
+Include=umpass.inf
+Needs=UmPass
+
+[CanoKeyMiniDriver_arm64x_Install.NT]
+CopyFiles=CopyFiles_arm64x,CopyFiles_x86_wow64
+AddReg=AddReg_arm64x,AddReg_x86_wow64
 Include=umpass.inf
 Needs=UmPass
 
@@ -45,42 +52,94 @@ Needs=UmPass.CoInstallers
 Include=umpass.inf
 Needs=UmPass.Interfaces
 
+[CanoKeyMiniDriver_x86_Install.NT.Services]
+Include=umpass.inf
+Needs=UmPass.Services
+
+[CanoKeyMiniDriver_x86_Install.NT.HW]
+Include=umpass.inf
+Needs=UmPass.HW
+
+[CanoKeyMiniDriver_x86_Install.NT.CoInstallers]
+Include=umpass.inf
+Needs=UmPass.CoInstallers
+
+[CanoKeyMiniDriver_x86_Install.NT.Interfaces]
+Include=umpass.inf
+Needs=UmPass.Interfaces
+
+[CanoKeyMiniDriver_arm64x_Install.NT.Services]
+Include=umpass.inf
+Needs=UmPass.Services
+
+[CanoKeyMiniDriver_arm64x_Install.NT.HW]
+Include=umpass.inf
+Needs=UmPass.HW
+
+[CanoKeyMiniDriver_arm64x_Install.NT.CoInstallers]
+Include=umpass.inf
+Needs=UmPass.CoInstallers
+
+[CanoKeyMiniDriver_arm64x_Install.NT.Interfaces]
+Include=umpass.inf
+Needs=UmPass.Interfaces
+
 [SourceDisksNames]
 1=%CanoKeyMiniDriverDisk%
 
 [SourceDisksFiles]
-%SmartCardModule%=1
-%SmartCardModuleAMD64%=1
+%SmartCardModuleX86%=1
+%SmartCardModuleX64%=1
 %SmartCardModuleARM64%=1
+%SmartCardModuleARM64X%=1
 
 [DestinationDirs]
 CopyFiles_amd64=10,system32
-CopyFiles_arm64=10,system32
-CopyFiles_x86=10,system32
-CopyFiles_wow64=10,syswow64
+CopyFiles_arm64x=10,system32
+CopyFiles_x86_native=10,system32
+CopyFiles_x86_wow64=10,syswow64
 
 [CopyFiles_amd64]
-%SmartCardModule%;,%SmartCardModuleAMD64%
+%SmartCardModuleX64%
 
-[CopyFiles_arm64]
-%SmartCardModule%;,%SmartCardModuleARM64%
+[CopyFiles_arm64x]
+%SmartCardModuleARM64X%
+%SmartCardModuleX64%
+%SmartCardModuleARM64%
 
-[CopyFiles_x86]
-%SmartCardModule%
+[CopyFiles_x86_native]
+%SmartCardModuleX86%
 
-[AddReg_default]
+[CopyFiles_x86_wow64]
+%SmartCardModuleX86%
+
+[AddReg_amd64]
+HKLM, %SmartCardKey%,"ATR",0x00001001,3b,f7,11,00,00,81,31,fe,65,43,61,6e,6f,6b,65,79,99
+HKLM, %SmartCardKey%,"ATRMask",0x00001001,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff
+HKLM, %SmartCardKey%,"Crypto Provider",0x00001000,"Microsoft Base Smart Card Crypto Provider"
+HKLM, %SmartCardKey%,"Smart Card Key Storage Provider",0x00001000,"Microsoft Smart Card Key Storage Provider"
+HKLM, %SmartCardKey%,"80000001",0x00001000,%SmartCardModuleX64%
+
+[AddReg_arm64x]
+HKLM, %SmartCardKey%,"ATR",0x00001001,3b,f7,11,00,00,81,31,fe,65,43,61,6e,6f,6b,65,79,99
+HKLM, %SmartCardKey%,"ATRMask",0x00001001,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff
+HKLM, %SmartCardKey%,"Crypto Provider",0x00001000,"Microsoft Base Smart Card Crypto Provider"
+HKLM, %SmartCardKey%,"Smart Card Key Storage Provider",0x00001000,"Microsoft Smart Card Key Storage Provider"
+HKLM, %SmartCardKey%,"80000001",0x00001000,%SmartCardModuleARM64X%
+
+[AddReg_x86_native]
 HKLM, %SmartCardKey%,"ATR",0x00000001,3b,f7,11,00,00,81,31,fe,65,43,61,6e,6f,6b,65,79,99
 HKLM, %SmartCardKey%,"ATRMask",0x00000001,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff
-HKLM ,%SmartCardKey%,"Crypto Provider",0x00000000,"Microsoft Base Smart Card Crypto Provider"
-HKLM ,%SmartCardKey%,"Smart Card Key Storage Provider",0x00000000,"Microsoft Smart Card Key Storage Provider"
-HKLM, %SmartCardKey%,"80000001",0x00000000,%SmartCardModule%
+HKLM, %SmartCardKey%,"Crypto Provider",0x00000000,"Microsoft Base Smart Card Crypto Provider"
+HKLM, %SmartCardKey%,"Smart Card Key Storage Provider",0x00000000,"Microsoft Smart Card Key Storage Provider"
+HKLM, %SmartCardKey%,"80000001",0x00000000,%SmartCardModuleX86%
 
-[AddReg_wow64]
+[AddReg_x86_wow64]
 HKLM, %SmartCardKeyWOW64%,"ATR",0x00000001,3b,f7,11,00,00,81,31,fe,65,43,61,6e,6f,6b,65,79,99
 HKLM, %SmartCardKeyWOW64%,"ATRMask",0x00000001,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff
 HKLM, %SmartCardKeyWOW64%,"Crypto Provider",0x00000000,"Microsoft Base Smart Card Crypto Provider"
 HKLM, %SmartCardKeyWOW64%,"Smart Card Key Storage Provider",0x00000000,"Microsoft Smart Card Key Storage Provider"
-HKLM, %SmartCardKeyWOW64%,"80000001",0x00000000,%SmartCardModule%
+HKLM, %SmartCardKeyWOW64%,"80000001",0x00000000,%SmartCardModuleX86%
 
 [Strings]
 ManufacturerName="CanoKey"
@@ -89,6 +148,7 @@ CanoKeyFilter="SCFILTER\CID_43616e6f6b6579"
 CanoKeyMiniDriverDisk="CanoKey Minidriver Installation Disk"
 SmartCardKey="SOFTWARE\Microsoft\Cryptography\Calais\SmartCards\CanoKey"
 SmartCardKeyWOW64="SOFTWARE\Wow6432Node\Microsoft\Cryptography\Calais\SmartCards\CanoKey"
-SmartCardModule="@CMD_LIB_NAME@.dll"
-SmartCardModuleAMD64="@CMD_LIB_NAME@-amd64.dll"
+SmartCardModuleX86="@CMD_LIB_NAME@-x86.dll"
+SmartCardModuleX64="@CMD_LIB_NAME@-x64.dll"
 SmartCardModuleARM64="@CMD_LIB_NAME@-arm64.dll"
+SmartCardModuleARM64X="@CMD_LIB_NAME@-arm64x.dll"

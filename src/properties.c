@@ -15,9 +15,7 @@ static DWORD getCardFreeSpace(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, 
   }
   PCARD_FREE_SPACE_INFO p = (PCARD_FREE_SPACE_INFO)pbData;
   p->dwVersion = CARD_FREE_SPACE_INFO_CURRENT_VERSION;
-  p->dwBytesAvailable = 0;
-  p->dwKeyContainersAvailable = 0;
-  p->dwMaxKeyContainers = MAX_SLOT_ID;
+  FillCardFreeSpaceInfo(p);
   CMD_RET_OK;
 }
 
@@ -30,8 +28,13 @@ static DWORD getCardCapabilities(PCARD_DATA pCardData, PBYTE pbData, DWORD cbDat
   }
   PCARD_CAPABILITIES p = (PCARD_CAPABILITIES)pbData;
   p->dwVersion = CARD_CAPABILITIES_CURRENT_VERSION;
-  p->fCertificateCompression = FALSE;
-  p->fKeyGen = FALSE;
+  // CanoKey exposes certificate files as final DER bytes and owns their
+  // physical PIV representation. Reporting TRUE prevents Base CSP/KSP from
+  // applying its card-file compression layer to those bytes. Windows still
+  // reads and returns from CardReadFile when this is FALSE, but then rejects
+  // the certificates before provider association and propagation.
+  p->fCertificateCompression = TRUE;
+  p->fKeyGen = TRUE;
   CMD_RET_OK;
 }
 
@@ -57,7 +60,7 @@ static DWORD getCardReadOnly(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, P
   if (cbData < sizeof(BOOL)) {
     CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
   }
-  *(BOOL *)pbData = TRUE;
+  *(BOOL *)pbData = FALSE;
   CMD_RET_OK;
 }
 
@@ -68,6 +71,10 @@ static DWORD getCardCacheMode(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, 
   if (cbData < sizeof(DWORD)) {
     CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
   }
+  // PIN changes have no durable freshness counter in PIV. Disable Base CSP
+  // caching so Windows cannot reuse a stale authorization decision after an
+  // external PKCS#11/PIV mutation. Live map/certificate reads are still
+  // bounded; the virtual cardcf read itself does not need a metadata refresh.
   *(DWORD *)pbData = CP_CACHE_MODE_NO_CACHE;
   CMD_RET_OK;
 }
@@ -79,7 +86,7 @@ static DWORD getCardSupportsWinX509Enrollment(PCARD_DATA pCardData, PBYTE pbData
   if (cbData < sizeof(BOOL)) {
     CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
   }
-  *(BOOL *)pbData = FALSE;
+  *(BOOL *)pbData = TRUE;
   CMD_RET_OK;
 }
 
@@ -97,8 +104,8 @@ static DWORD getCardGuid(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWOR
 static DWORD getCardPinInfo(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen, DWORD dwFlags) {
   (void)pCardData;
 
-  if ((dwFlags & ROLE_USER) == 0) {
-    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "only ROLE_USER is supported");
+  if (dwFlags != ROLE_USER && dwFlags != ROLE_ADMIN && dwFlags != CMD_ROLE_PUK) {
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "only ROLE_USER, ROLE_ADMIN, and CMD_ROLE_PUK are supported");
   }
   *pdwDataLen = sizeof(PIN_INFO);
   if (cbData < sizeof(PIN_INFO)) {
@@ -108,19 +115,56 @@ static DWORD getCardPinInfo(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PD
   if (p->dwVersion != PIN_INFO_CURRENT_VERSION) {
     CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
   }
+  p->dwFlags = 0;
   p->PinType = AlphaNumericPinType;
-  p->PinPurpose = PrimaryCardPin;
-  p->dwChangePermission = ROLE_ADMIN;  // TODO: check
-  p->dwUnblockPermission = ROLE_ADMIN; // TODO: check
   p->PinCachePolicy.dwVersion = PIN_CACHE_POLICY_CURRENT_VERSION;
-  const CMD_CONFIG *config = cmd_get_config();
-  if (config->has_pin_cache_timeout) {
-    p->PinCachePolicy.PinCachePolicyType = PinCacheTimed;
-    p->PinCachePolicy.dwPinCachePolicyInfo = config->pin_cache_timeout;
-  } else {
-    p->PinCachePolicy.PinCachePolicyType = PinCacheNormal;
+  if (dwFlags == ROLE_ADMIN) {
+    p->PinPurpose = AdministratorPin;
+    p->dwChangePermission = PIN_SET_NONE;
+    p->dwUnblockPermission = PIN_SET_NONE;
+    p->PinCachePolicy.PinCachePolicyType = PinCacheNone;
     p->PinCachePolicy.dwPinCachePolicyInfo = 0;
+  } else if (dwFlags == CMD_ROLE_PUK) {
+    p->PinPurpose = UnblockOnlyPin;
+    p->dwChangePermission = PIN_SET_NONE;
+    p->dwUnblockPermission = PIN_SET_NONE;
+    p->PinCachePolicy.PinCachePolicyType = PinCacheNone;
+    p->PinCachePolicy.dwPinCachePolicyInfo = 0;
+  } else {
+    p->PinPurpose = PrimaryCardPin;
+    p->dwChangePermission = CREATE_PIN_SET(ROLE_USER);
+    p->dwUnblockPermission = CREATE_PIN_SET(CMD_ROLE_PUK);
+    const CMD_CONFIG *config = cmd_get_config();
+    if (config->has_pin_cache_timeout) {
+      p->PinCachePolicy.PinCachePolicyType = PinCacheTimed;
+      p->PinCachePolicy.dwPinCachePolicyInfo = config->pin_cache_timeout;
+    } else {
+      p->PinCachePolicy.PinCachePolicyType = PinCacheTimed;
+      p->PinCachePolicy.dwPinCachePolicyInfo = 60;
+    }
   }
+  CMD_RET_OK;
+}
+
+static DWORD getCardListPins(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen) {
+  (void)pCardData;
+
+  *pdwDataLen = sizeof(PIN_SET);
+  if (cbData < sizeof(PIN_SET)) {
+    CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
+  }
+  *(PIN_SET *)pbData = CREATE_PIN_SET(ROLE_USER) | CREATE_PIN_SET(ROLE_ADMIN) | CREATE_PIN_SET(CMD_ROLE_PUK);
+  CMD_RET_OK;
+}
+
+static DWORD getCardAuthenticatedState(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PDWORD pdwDataLen) {
+  CMD_GET_CTX(pCardData, pContext);
+
+  *pdwDataLen = sizeof(PIN_SET);
+  if (cbData < sizeof(PIN_SET)) {
+    CMD_RETURN(ERROR_INSUFFICIENT_BUFFER, "cbData is too small");
+  }
+  *(PIN_SET *)pbData = pContext->authenticatedPins;
   CMD_RET_OK;
 }
 
@@ -170,9 +214,17 @@ DWORD WINAPI CardGetProperty(__in PCARD_DATA pCardData, __in LPCWSTR wszProperty
   if (wcscmp(wszProperty, CP_CARD_PIN_INFO) == 0) {
     return getCardPinInfo(pCardData, pbData, cbData, pdwDataLen, dwFlags);
   }
+  if (wcscmp(wszProperty, CP_CARD_LIST_PINS) == 0) {
+    CMD_CHECK_DW_FLAGS;
+    return getCardListPins(pCardData, pbData, cbData, pdwDataLen);
+  }
+  if (wcscmp(wszProperty, CP_CARD_AUTHENTICATED_STATE) == 0) {
+    CMD_CHECK_DW_FLAGS;
+    return getCardAuthenticatedState(pCardData, pbData, cbData, pdwDataLen);
+  }
   if (wcscmp(wszProperty, CP_CARD_PIN_STRENGTH_VERIFY) == 0) {
-    if ((dwFlags & ROLE_USER) == 0) {
-      CMD_RETURN(SCARD_E_INVALID_PARAMETER, "only ROLE_USER is supported");
+    if (dwFlags != ROLE_USER && dwFlags != ROLE_ADMIN && dwFlags != CMD_ROLE_PUK) {
+      CMD_RETURN(SCARD_E_INVALID_PARAMETER, "only ROLE_USER, ROLE_ADMIN, and CMD_ROLE_PUK are supported");
     }
     *pdwDataLen = sizeof(DWORD);
     if (cbData < sizeof(DWORD)) {
@@ -213,9 +265,17 @@ DWORD WINAPI CardGetContainerProperty(__in PCARD_DATA pCardData, __in BYTE bCont
   if (cbData != 0) {
     CMD_NONNULL_PARAM(pbData);
   }
-  (void)bContainerIndex;
-
   INJECT_HANDLES();
+  CMD_GET_CTX(pCardData, pContext);
+  if (bContainerIndex >= WINDOWS_CONTAINER_COUNT || bContainerIndex >= pContext->canokey.slotCount) {
+    CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
+  }
+
+  // cmapfile may contain empty entries. Do not advertise a PIN identifier for
+  // an empty container: Windows treats the property as proof that a key exists.
+  if (!canokey_slot_has_key(&pContext->canokey.slots[bContainerIndex])) {
+    CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Container has no key");
+  }
 
   CMD_CHECK_DW_FLAGS;
   if (wcscmp(wszProperty, CCP_PIN_IDENTIFIER) == 0) {

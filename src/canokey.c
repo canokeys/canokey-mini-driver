@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <string.h>
 
+volatile LONG g_cmd_metadata_generation = 1;
+
 void reverse_bytes(CK_BYTE *data, CK_ULONG len) {
   for (CK_ULONG i = 0; i < len / 2; i++) {
     const CK_BYTE tmp = data[i];
@@ -29,16 +31,58 @@ static CK_BYTE capabilities_for_piv_slot(CK_BYTE pivId) {
   }
 }
 
+static const CNK_PIV_METADATA_DIRECTORY_ENTRY *
+find_metadata_directory_entry(const CNK_PIV_METADATA_DIRECTORY_ENTRY *entries, CK_ULONG entryCount, CK_BYTE pivSlot) {
+  for (CK_ULONG i = 0; i < entryCount; i++) {
+    if (entries[i].pivSlot == pivSlot)
+      return &entries[i];
+  }
+  return NULL;
+}
+
 CK_BBOOL canokey_slot_can_sign(const SLOT *slot) {
-  return slot != NULL && (slot->capabilities & CANOKEY_SLOT_CAP_SIGN) != 0;
+  return canokey_slot_has_key(slot) && (slot->capabilities & CANOKEY_SLOT_CAP_SIGN) != 0;
 }
 
 CK_BBOOL canokey_slot_can_decrypt(const SLOT *slot) {
-  return slot != NULL && (slot->capabilities & CANOKEY_SLOT_CAP_DECRYPT) != 0;
+  return canokey_slot_has_key(slot) && (slot->capabilities & CANOKEY_SLOT_CAP_DECRYPT) != 0;
 }
 
 CK_BBOOL canokey_slot_can_derive(const SLOT *slot) {
-  return slot != NULL && (slot->capabilities & CANOKEY_SLOT_CAP_DERIVE) != 0 && slot->keyType == CKK_EC;
+  return canokey_slot_has_key(slot) && (slot->capabilities & CANOKEY_SLOT_CAP_DERIVE) != 0 && slot->keyType == CKK_EC;
+}
+
+CK_BBOOL canokey_slot_has_key(const SLOT *slot) { return slot != NULL && slot->present; }
+
+CK_ULONG canokey_ec_curve_bits(const SLOT *slot) {
+  if (slot == NULL)
+    return 0;
+  switch (slot->ecCurve) {
+  case CANOKEY_EC_CURVE_P256:
+    return 256;
+  case CANOKEY_EC_CURVE_P384:
+    return 384;
+  case CANOKEY_EC_CURVE_P521:
+    return 521;
+  default:
+    return 0;
+  }
+}
+
+CK_BYTE canokey_container_object_id(CK_BYTE containerIndex) { return (CK_BYTE)(containerIndex + 1); }
+
+static CANOKEY_EC_CURVE ec_curve_from_params(const CK_BYTE *params, CK_ULONG paramsLen) {
+  static const CK_BYTE p256[] = {0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07};
+  static const CK_BYTE p384[] = {0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x22};
+  static const CK_BYTE p521[] = {0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x23};
+
+  if (paramsLen == sizeof(p256) && memcmp(params, p256, sizeof(p256)) == 0)
+    return CANOKEY_EC_CURVE_P256;
+  if (paramsLen == sizeof(p384) && memcmp(params, p384, sizeof(p384)) == 0)
+    return CANOKEY_EC_CURVE_P384;
+  if (paramsLen == sizeof(p521) && memcmp(params, p521, sizeof(p521)) == 0)
+    return CANOKEY_EC_CURVE_P521;
+  return CANOKEY_EC_CURVE_NONE;
 }
 
 static CK_BBOOL is_supported_ec_coordinate_len(CK_ULONG coordinate_len) {
@@ -144,80 +188,138 @@ static CK_RV unpack_ec_point(SLOT *slot, CK_ULONG value_len) {
 CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
   CMD_ENSURE_NONNULL(pCanokey, CKR_ARGUMENTS_BAD);
 
-  // Initialize the CANOKEY structure
-  memset(pCanokey, 0, sizeof(CANOKEY));
-  pCanokey->slotCount = 0;
+  // Build into a private snapshot. A refresh failure must leave the last
+  // complete inventory available to concurrent Windows callers.
+  CANOKEY snapshot = {0};
+  snapshot.slotCount = WINDOWS_CONTAINER_COUNT;
 
-  for (CK_BYTE i = 1; i <= MAX_SLOT_ID; i++) {
+  // The directory APDU is a single read-only snapshot of all PIV slots. Keep
+  // the old FindObjects path as a compatibility fallback for older firmware.
+  CNK_PIV_METADATA_DIRECTORY_ENTRY directory[CNK_PIV_METADATA_DIRECTORY_MAX_ENTRIES];
+  CK_ULONG directoryCount = CNK_PIV_METADATA_DIRECTORY_MAX_ENTRIES;
+  CK_RV directoryRv = C_CNK_GetPivMetadataDirectory(session, directory, &directoryCount);
+  CK_BBOOL haveDirectory = directoryRv == CKR_OK ? CK_TRUE : CK_FALSE;
+  if (directoryRv != CKR_OK && directoryRv != CKR_FUNCTION_NOT_SUPPORTED)
+    CMD_RETURN(directoryRv, "C_CNK_GetPivMetadataDirectory failed");
+
+  for (CK_BYTE i = 1; i <= WINDOWS_CONTAINER_COUNT; i++) {
     CMD_DEBUG("Reading slot %d", i);
 
-    CK_OBJECT_CLASS objectClass = CKO_PUBLIC_KEY;
-    CK_ATTRIBUTE templates[] = {
-        {CKA_ID, &i, sizeof(i)},
-        {CKA_CLASS, &objectClass, sizeof(objectClass)},
-    };
-    CK_RV rv = C_FindObjectsInit(session, templates, 2);
-    if (rv != CKR_OK)
-      CMD_RETURN(rv, "C_FindObjectsInit failed");
+    SLOT *slot = &snapshot.slots[i - 1];
+    slot->id = i;
+    C_CNK_ObjIdToPivTag(i, &slot->pivId);
+    slot->capabilities = capabilities_for_piv_slot(slot->pivId);
 
-    CK_OBJECT_HANDLE hObject;
+    CK_OBJECT_CLASS objectClass = CKO_PUBLIC_KEY;
+    CK_OBJECT_HANDLE hObject = CANOKEY_MAKE_OBJECT_HANDLE(CKO_PUBLIC_KEY, i);
     CK_ULONG ulObjectCount = 0;
-    rv = C_FindObjects(session, &hObject, 1, &ulObjectCount);
-    if (rv != CKR_OK)
-      CMD_RETURN(rv, "C_FindObjects failed");
-    C_FindObjectsFinal(session);
+    CK_RV rv = CKR_OK;
+    if (haveDirectory) {
+      const CNK_PIV_METADATA_DIRECTORY_ENTRY *entry =
+          find_metadata_directory_entry(directory, directoryCount, slot->pivId);
+      ulObjectCount = entry != NULL && (entry->flags & CNK_PIV_METADATA_DIRECTORY_FLAG_KEY) != 0;
+    } else {
+      CK_ATTRIBUTE templates[] = {
+          {CKA_ID, &i, sizeof(i)},
+          {CKA_CLASS, &objectClass, sizeof(objectClass)},
+      };
+      rv = C_FindObjectsInit(session, templates, 2);
+      if (rv != CKR_OK)
+        CMD_RETURN(rv, "C_FindObjectsInit failed");
+      rv = C_FindObjects(session, &hObject, 1, &ulObjectCount);
+      if (rv != CKR_OK) {
+        C_FindObjectsFinal(session);
+        CMD_RETURN(rv, "C_FindObjects failed");
+      }
+      rv = C_FindObjectsFinal(session);
+      if (rv != CKR_OK)
+        CMD_RETURN(rv, "C_FindObjectsFinal failed");
+    }
+    if ((slot->capabilities & (CANOKEY_SLOT_CAP_SIGN | CANOKEY_SLOT_CAP_DECRYPT | CANOKEY_SLOT_CAP_DERIVE)) == 0) {
+      CMD_DEBUG("Slot %d: PIV 0x%02x has no minidriver capability, skipping", i, slot->pivId);
+      continue;
+    }
     if (ulObjectCount == 0) {
       CMD_DEBUG("No public key found for slot %d", i);
       continue;
     }
-
-    SLOT *slot = &pCanokey->slots[pCanokey->slotCount];
-    slot->id = i;
-    C_CNK_ObjIdToPivTag(i, &slot->pivId);
-    slot->capabilities = capabilities_for_piv_slot(slot->pivId);
-    if (!canokey_slot_can_sign(slot) && !canokey_slot_can_decrypt(slot) && !canokey_slot_can_derive(slot)) {
-      CMD_DEBUG("Slot %d: PIV 0x%02x has no minidriver capability, skipping", i, slot->pivId);
-      continue;
-    }
-
     CK_ATTRIBUTE attr[] = {
         {CKA_KEY_TYPE, &slot->keyType, sizeof(slot->keyType)},
         {CKA_MODULUS, slot->rsa.modulus, sizeof(slot->rsa.modulus)},
         {CKA_MODULUS_BITS, &slot->rsa.modulusBits, sizeof(slot->rsa.modulusBits)},
         {CKA_EC_POINT, &slot->ecc, sizeof(slot->ecc)},
+        {CKA_EC_PARAMS, NULL, 0},
     };
-    rv = C_GetAttributeValue(session, hObject, attr, 4);
+    CK_BYTE ecParams[16];
+    attr[4].pValue = ecParams;
+    attr[4].ulValueLen = sizeof(ecParams);
+    rv = C_GetAttributeValue(session, hObject, attr, 5);
     if (rv != CKR_OK && rv != CKR_ATTRIBUTE_TYPE_INVALID)
       CMD_RETURN(rv, "C_GetAttributeValue failed");
 
     if (slot->keyType == CKK_RSA) {
+      if ((slot->rsa.modulusBits != 2048 && slot->rsa.modulusBits != 3072 && slot->rsa.modulusBits != 4096) ||
+          attr[1].ulValueLen != slot->rsa.modulusBits / 8 || slot->rsa.modulusBits / 8 > sizeof(slot->rsa.modulus)) {
+        CMD_DEBUG("Slot %d: unsupported or invalid RSA modulus size %lu, skipping", i, slot->rsa.modulusBits);
+        continue;
+      }
       // RSA modulus is stored in big-endian, need to reverse
       reverse_bytes(slot->rsa.modulus, slot->rsa.modulusBits / 8);
       CMD_DEBUG("Slot %d: keyType = CKK_RSA, modulusBits = %d", i, slot->rsa.modulusBits);
     } else if (slot->keyType == CKK_EC) {
+      slot->ecCurve = ec_curve_from_params(ecParams, attr[4].ulValueLen);
+      if (slot->ecCurve == CANOKEY_EC_CURVE_NONE) {
+        // Windows cardmod/CNG has no compatible identifier for secp256k1 or
+        // SM2. Coordinate length alone must never be used as curve identity.
+        CMD_DEBUG("Slot %d: unsupported Windows EC parameters, skipping", i);
+        continue;
+      }
       rv = unpack_ec_point(slot, attr[3].ulValueLen);
       if (rv != CKR_OK)
         CMD_RETURN(rv, "Invalid EC point");
+      if (slot->ecc.cbPrivate != (canokey_ec_curve_bits(slot) + 7) / 8) {
+        CMD_DEBUG("Slot %d: EC point size does not match named curve, skipping", i);
+        continue;
+      }
       CMD_DEBUG("Point:");
       CMD_PRINT_HEX(slot->ecc.x, slot->ecc.cbPrivate);
       CMD_PRINT_HEX(slot->ecc.y, slot->ecc.cbPrivate);
-      CMD_DEBUG("Slot %d: keyType = CKK_EC, cbPrivate = %d", i, slot->ecc.cbPrivate);
+      CMD_DEBUG("Slot %d: keyType = CKK_EC, curve = %d, cbPrivate = %d", i, slot->ecCurve, slot->ecc.cbPrivate);
+    } else {
+      // PKCS#11 exposes PQ and future algorithms, but current cardmod headers
+      // cannot represent them. Keep the fixed Windows slot empty rather than
+      // failing all classic container discovery.
+      CMD_DEBUG("Slot %d: unsupported Windows key type 0x%lx, skipping", i, slot->keyType);
+      continue;
     }
+    slot->present = CK_TRUE;
 
     objectClass = CKO_CERTIFICATE;
-    rv = C_FindObjectsInit(session, templates, 2);
-    if (rv != CKR_OK)
-      CMD_RETURN(rv, "C_FindObjectsInit failed");
-
-    rv = C_FindObjects(session, &hObject, 1, &ulObjectCount);
-    if (rv != CKR_OK)
-      CMD_RETURN(rv, "C_FindObjects failed");
-    C_FindObjectsFinal(session);
+    hObject = CANOKEY_MAKE_OBJECT_HANDLE(CKO_CERTIFICATE, i);
+    ulObjectCount = 0;
+    if (haveDirectory) {
+      const CNK_PIV_METADATA_DIRECTORY_ENTRY *entry =
+          find_metadata_directory_entry(directory, directoryCount, slot->pivId);
+      ulObjectCount = entry != NULL && (entry->flags & CNK_PIV_METADATA_DIRECTORY_FLAG_CERT) != 0;
+    } else {
+      CK_ATTRIBUTE templates[] = {
+          {CKA_ID, &i, sizeof(i)},
+          {CKA_CLASS, &objectClass, sizeof(objectClass)},
+      };
+      rv = C_FindObjectsInit(session, templates, 2);
+      if (rv != CKR_OK)
+        CMD_RETURN(rv, "C_FindObjectsInit failed");
+      rv = C_FindObjects(session, &hObject, 1, &ulObjectCount);
+      if (rv != CKR_OK) {
+        C_FindObjectsFinal(session);
+        CMD_RETURN(rv, "C_FindObjects failed");
+      }
+      rv = C_FindObjectsFinal(session);
+      if (rv != CKR_OK)
+        CMD_RETURN(rv, "C_FindObjectsFinal failed");
+    }
     if (ulObjectCount == 0) {
       CMD_DEBUG("No certificate found for slot %d", i);
-      if (!canokey_slot_can_decrypt(slot)) {
-        continue;
-      }
     } else {
       attr[0].type = CKA_VALUE;
       attr[0].pValue = slot->cert;
@@ -230,9 +332,8 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
 
     CMD_DEBUG("Slot %d: PIV 0x%02x, keyType = %d, certLen = %d, capabilities = 0x%02x", i, slot->pivId, slot->keyType,
               slot->certLen, slot->capabilities);
-
-    pCanokey->slotCount++;
   }
 
+  *pCanokey = snapshot;
   return CKR_OK;
 }
