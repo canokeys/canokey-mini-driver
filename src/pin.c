@@ -164,7 +164,6 @@ static DWORD change_user_pin(CMD_CONTEXT_PTR pContext, PBYTE pbOldPin, DWORD cbO
   maybe_set_attempts_remaining(pcAttemptsRemaining, pinTries);
   cmd_store_user_pin(pContext, pbNewPin, cbNewPin);
   SET_PIN(pContext->authenticatedPins, ROLE_USER);
-  cmd_store_user_pin(pContext, pbNewPin, cbNewPin);
   CMD_RET_OK;
 }
 
