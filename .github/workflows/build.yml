@@ -19,7 +19,7 @@ jobs:
           - os: windows-2022
             name: Windows Server 2022 / Visual Studio 2022
             suffix: vs2022
-          - os: windows-2025-vs2026
+          - os: windows-2025
             name: Windows Server 2025 / Visual Studio 2026
             suffix: vs2026
 
