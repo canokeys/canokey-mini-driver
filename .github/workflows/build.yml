@@ -18,8 +18,10 @@ jobs:
         include:
           - os: windows-2022
             name: Windows Server 2022 / Visual Studio 2022
+            suffix: vs2022
           - os: windows-2025-vs2026
             name: Windows Server 2025 / Visual Studio 2026
+            suffix: vs2026
 
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
@@ -85,11 +87,58 @@ jobs:
           .\build.ps1 -Arch arm64 -Config Release -Python3Executable $python
           if ($LASTEXITCODE -ne 0) { throw "Build failed for ARM64 Release" }
 
-      - name: Upload artifacts
+      - name: Build ARM64X Debug forwarder
+        shell: pwsh
+        run: |
+          $python = python -c "import sys; print(sys.executable)"
+          .\build.ps1 -Arch arm64x -Config Debug -Python3Executable $python
+          if ($LASTEXITCODE -ne 0) { throw "Build failed for ARM64X Debug" }
+
+      - name: Build ARM64X Release forwarder
+        shell: pwsh
+        run: |
+          $python = python -c "import sys; print(sys.executable)"
+          .\build.ps1 -Arch arm64x -Config Release -Python3Executable $python
+          if ($LASTEXITCODE -ne 0) { throw "Build failed for ARM64X Release" }
+
+      - name: Stage Debug artifact
+        shell: pwsh
+        run: |
+          $stage = Join-Path $env:GITHUB_WORKSPACE "artifact-staging\debug"
+          Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+          foreach ($arch in @("x86", "x64", "arm64", "arm64x")) {
+            $source = Join-Path $env:GITHUB_WORKSPACE "out\build\$arch-Clang-Debug"
+            $stem = "canokey-minidriver-$arch"
+            New-Item -ItemType Directory -Force -Path $stage | Out-Null
+            Copy-Item -LiteralPath (Join-Path $source "canokey-minidriver.dll") -Destination (Join-Path $stage "$stem.dll")
+            Copy-Item -LiteralPath (Join-Path $source "canokey-minidriver.lib") -Destination (Join-Path $stage "$stem.lib")
+            Copy-Item -LiteralPath (Join-Path $source "canokey-minidriver.inf") -Destination (Join-Path $stage "$stem.inf")
+          }
+
+      - name: Stage Release artifact
+        shell: pwsh
+        run: |
+          $stage = Join-Path $env:GITHUB_WORKSPACE "artifact-staging\release"
+          Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+          foreach ($arch in @("x86", "x64", "arm64", "arm64x")) {
+            $source = Join-Path $env:GITHUB_WORKSPACE "out\build\$arch-Clang-Release"
+            $stem = "canokey-minidriver-$arch"
+            New-Item -ItemType Directory -Force -Path $stage | Out-Null
+            Copy-Item -LiteralPath (Join-Path $source "canokey-minidriver.dll") -Destination (Join-Path $stage "$stem.dll")
+            Copy-Item -LiteralPath (Join-Path $source "canokey-minidriver.lib") -Destination (Join-Path $stage "$stem.lib")
+            Copy-Item -LiteralPath (Join-Path $source "canokey-minidriver.inf") -Destination (Join-Path $stage "$stem.inf")
+          }
+
+      - name: Upload Debug staging artifact
         uses: actions/upload-artifact@v7
         with:
-          name: canokey-mini-driver-${{ matrix.os }}
+          name: canokey-mini-driver-debug-${{ matrix.suffix }}
           if-no-files-found: error
-          path: |
-            out/build/**/canokey-minidriver.dll
-            out/build/**/canokey-minidriver.inf
+          path: artifact-staging/debug
+
+      - name: Upload Release staging artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: canokey-mini-driver-release-${{ matrix.suffix }}
+          if-no-files-found: error
+          path: artifact-staging/release

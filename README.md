@@ -119,6 +119,28 @@ cmake --build out\build\arm64-Clang-Debug --target canokey-minidriver-debug-inst
 .\scripts\crypto-test.ps1 -Arch arm64
 ```
 
+On Windows ARM64, an Arm64X pure forwarder can route one Calais DLL name to
+separate x64 and native ARM64 implementations. Build both implementation
+architectures with the same configuration first, then build the forwarder:
+
+```powershell
+.\build.ps1 -Arch x64 -Config Release
+.\build.ps1 -Arch arm64 -Config Release
+.\build.ps1 -Arch arm64x -Config Release
+```
+
+The Arm64X output directory contains `canokey-minidriver.dll` (the forwarder),
+`canokey-minidriver-x64.dll`, and `canokey-minidriver-arm64.dll`. The forwarder
+has no application code or CRT dependency; the implementation DLLs retain the
+normal CMake CRT choice for their configuration. CI publishes these files with
+architecture suffixes. Each Visual Studio runner publishes one Debug and one
+Release artifact (`canokey-mini-driver-debug-vs2022`,
+`canokey-mini-driver-release-vs2022`, and the corresponding `vs2026` artifacts);
+each package contains `canokey-minidriver-x86.*`,
+`canokey-minidriver-x64.*`, `canokey-minidriver-arm64.*`, and
+`canokey-minidriver-arm64x.*` files. The Arm64X forwarder uses the x64 and
+ARM64 DLLs from the same package at runtime.
+
 The DLL mapped for the native `SCardSvr`/`CertPropSvc` process must be the
 ARM64 build. Use an explicit `-DllPath` for scripts that do not expose an
 architecture parameter; x64 processes under emulation are not an ARM64 host

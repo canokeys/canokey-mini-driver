@@ -55,6 +55,27 @@ The same build script supports the x86 target with
 only loadable by a 32-bit Windows smart-card host; it does not validate the
 native 64-bit or ARM64 `SCardSvr` path.
 
+### Arm64X pure forwarder
+
+When the same Calais DLL path must work in both native ARM64 and x64 processes,
+build an Arm64X pure forwarder after building the x64 and ARM64 implementations
+with the same configuration:
+
+```powershell
+.\build.ps1 -Arch x64 -Config Release
+.\build.ps1 -Arch arm64 -Config Release
+.\build.ps1 -Arch arm64x -Config Release
+```
+
+The `arm64x-Clang-Release` directory contains the forwarder
+`canokey-minidriver.dll`, its import library, and private implementation copies
+named `canokey-minidriver-x64.dll` and `canokey-minidriver-arm64.dll`. The
+forwarder itself is linked with `/nodefaultlib` and only consumes the Windows
+SDK `arm64rt.lib` support symbols; the implementation DLLs keep the normal
+CMake CRT setting (`/MD` for Release and `/MDd` for Debug). Do not combine
+Debug and Release inputs, or replace either implementation without rebuilding
+the forwarder.
+
 Copy the DLL and create the default debug log directory:
 
 ```powershell

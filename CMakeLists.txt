@@ -7,6 +7,12 @@ endif()
 
 project("canokey-mini-driver" VERSION 1.0.0.0 LANGUAGES C)
 
+option(CMD_BUILD_ARM64X_FORWARDER "Build an Arm64X pure forwarder" OFF)
+if(CMD_BUILD_ARM64X_FORWARDER)
+  include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/arm64x.cmake")
+  return()
+endif()
+
 option(BUILD_SHARED_LIBS "Build using shared libraries" OFF)
 if(BUILD_SHARED_LIBS)
   message(FATAL_ERROR "all dependencies must be built statically")
