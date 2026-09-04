@@ -134,8 +134,8 @@ static DWORD getCardPinInfo(PCARD_DATA pCardData, PBYTE pbData, DWORD cbData, PD
       p->PinCachePolicy.PinCachePolicyType = PinCacheTimed;
       p->PinCachePolicy.dwPinCachePolicyInfo = config->pin_cache_timeout;
     } else {
-      p->PinCachePolicy.PinCachePolicyType = PinCacheNormal;
-      p->PinCachePolicy.dwPinCachePolicyInfo = 0;
+      p->PinCachePolicy.PinCachePolicyType = PinCacheTimed;
+      p->PinCachePolicy.dwPinCachePolicyInfo = 60;
     }
   }
   CMD_RET_OK;

@@ -169,6 +169,22 @@ The minidriver accepts Base CSP/KSP writes to `cardcf` and `cmapfile` for
 compatibility, but does not use those writes as authoritative state; every
 generated view comes from live PKCS#11 metadata.
 
+## Logging And Test Transport
+
+`C_CNK_ConfigLogging` is a process-level configuration API and may be called
+before or after `C_Initialize`. Settings supplied before initialization are
+remembered under the logging mutex and overlaid on automatic environment or
+configuration-file settings when initialization starts. A caller-provided
+`FILE *` is borrowed: the library flushes and detaches it on reconfiguration
+or finalization but never closes it. Generated per-process files use exclusive
+creation and restrictive permissions so a symlink cannot redirect diagnostics.
+
+The production PKCS#11 target always uses the real PC/SC backend. Fake
+transport hooks are compiled into a separate `canokey-pkcs11-fuzz` target only
+when `BUILD_FUZZING=ON`; fuzz executables link that target explicitly. This
+keeps failure injection available without shipping test transport symbols in
+standalone or statically linked production consumers.
+
 External PKCS#11/PIV tools may mutate keys or certificates while Windows holds
 a `CARD_DATA` context. When `RefreshDeviceKeys` is enabled, reads of the live
 virtual files refresh metadata at most once per `RefreshWindow` seconds,

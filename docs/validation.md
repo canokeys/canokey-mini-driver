@@ -133,3 +133,9 @@ do not run the minidriver inside native ARM64 `SCardSvr`.
    pointer, and resolve every actionable finding.
 5. Repeat the review after each non-trivial fix; document any remaining
    process-wide or Windows API limitations.
+
+Logging lifecycle tests must cover `C_CNK_ConfigLogging` before and after
+initialization, reconfiguration, borrowed stream ownership, generated-file
+creation failure, and managed-mode logging. Fuzz builds must verify that the
+production library is linked without `CNK_TEST_TRANSPORT`; only the dedicated
+fuzz target may provide fake PC/SC callbacks.

@@ -323,8 +323,8 @@ DWORD WINAPI CardCreateFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirecto
   if (pszDirectoryName == NULL || strcmp(pszDirectoryName, szBASE_CSP_DIR) != 0) {
     CMD_RETURN(SCARD_E_DIR_NOT_FOUND, "Directory not found");
   }
-  if (AccessCondition != EveryoneReadAdminWriteAc)
-    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Certificate files require admin-write access condition");
+  if (AccessCondition != EveryoneReadUserWriteAc && AccessCondition != EveryoneReadAdminWriteAc)
+    CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported certificate file access condition");
   if (cbInitialCreationSize == 0) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid initial file size");
   }

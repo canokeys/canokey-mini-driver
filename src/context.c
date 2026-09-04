@@ -67,6 +67,7 @@ void cmd_clear_all_user_pins(void) {
       ++cleared;
     cmd_clear_user_pin(context);
     context->authenticatedPins = PIN_SET_NONE;
+    context->pinManagedAdmin = FALSE;
   }
   if (cleared != 0)
     CMD_DEBUG("Cleared cached USER PINs from %lu managed context(s)", (unsigned long)cleared);
@@ -385,9 +386,13 @@ DWORD CardDeleteContext(__inout PCARD_DATA pCardData) {
     // a later cleanup stage reports an error and the context is retained.
     cmd_clear_user_pin(context);
     CK_RV rv = C_CloseSession(context->session);
+    DWORD cleanupError = SCARD_S_SUCCESS;
     if (rv != CKR_OK && rv != CKR_SESSION_HANDLE_INVALID && rv != CKR_CRYPTOKI_NOT_INITIALIZED) {
       CMD_WARN("C_CloseSession failed: 0x%lx", rv);
-      CMD_RETURN(SCARD_F_INTERNAL_ERROR, "C_CloseSession failed");
+      // Continue into C_Finalize. Session-manager cleanup is the last owner
+      // capable of releasing a session when a card or transport disappeared;
+      // returning here would strand the process-wide managed binding.
+      cleanupError = SCARD_F_INTERNAL_ERROR;
     }
     // Managed C_Initialize/C_Finalize is reference-counted. Release this
     // CARD_DATA's reference even when other contexts remain; the backend is
@@ -437,6 +442,8 @@ DWORD CardDeleteContext(__inout PCARD_DATA pCardData) {
       g_managed_card_context = g_managed_contexts->card_context;
       g_managed_card_handle = g_managed_contexts->card_handle;
     }
+    if (cleanupError != SCARD_S_SUCCESS)
+      CMD_RETURN(cleanupError, "C_CloseSession failed after managed cleanup");
   }
   CMD_RET_OK;
 }

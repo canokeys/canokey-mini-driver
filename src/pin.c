@@ -64,6 +64,7 @@ static void try_login_pin_protected_management_key(CMD_CONTEXT_PTR pContext, PBY
 
   if (rv == CKR_OK || rv == CKR_USER_ALREADY_LOGGED_IN) {
     SET_PIN(pContext->authenticatedPins, ROLE_ADMIN);
+    pContext->pinManagedAdmin = TRUE;
     CMD_DEBUG("PIN-protected PIV management key is available for this session");
   } else if (rv != CKR_DATA_INVALID && rv != CKR_OBJECT_HANDLE_INVALID) {
     CMD_WARN("PIN-protected PIV management key is unavailable: PKCS#11 error 0x%lx", rv);
@@ -148,15 +149,16 @@ static DWORD change_user_pin(CMD_CONTEXT_PTR pContext, PBYTE pbOldPin, DWORD cbO
   CMD_ENSURE_NONNULL(pbNewPin, SCARD_E_INVALID_PARAMETER);
   set_attempts_unknown(pcAttemptsRemaining);
 
-  CK_RV rv = C_SetPIN(pContext->session, pbOldPin, cbOldPin, pbNewPin, cbNewPin);
+  BYTE pinTries = 0;
+  CK_RV rv = C_CNK_SetPIN(pContext->session, CNK_PIV_PIN_TYPE_PIN, pbOldPin, cbOldPin, pbNewPin, cbNewPin, &pinTries);
+  maybe_set_attempts_remaining(pcAttemptsRemaining, pinTries);
   if (rv != CKR_OK) {
-    CMD_RETURN(map_pkcs11_pin_error(rv), "C_SetPIN failed");
+    CMD_RETURN(map_pkcs11_pin_error(rv), "C_CNK_SetPIN failed");
   }
 
   // The old PIN is no longer valid on the card. Clear every context copy
   // before re-authenticating, then retain the new PIN only after success.
   cmd_clear_all_user_pins();
-  BYTE pinTries = 0;
   rv = login_with_role(pContext, CKU_USER, pbNewPin, cbNewPin, &pinTries);
   if (rv != CKR_OK) {
     CMD_RETURN(map_pkcs11_login_error(rv, pinTries), "C_CNK_Login after C_SetPIN failed");
@@ -371,6 +373,7 @@ DWORD WINAPI CardAuthenticateEx(__in PCARD_DATA pCardData, __in PIN_ID PinId, __
       // SO authentication changes the token-wide login state and invalidates
       // any USER PIN retained by another CARD_DATA context.
       cmd_clear_all_user_pins();
+      pContext->pinManagedAdmin = FALSE;
       SET_PIN(pContext->authenticatedPins, PinId);
     }
     if (PinId == ROLE_USER) {
@@ -404,7 +407,8 @@ DWORD WINAPI CardDeauthenticateEx(__in PCARD_DATA pCardData, __in PIN_SET PinId,
   // PKCS#11 logout is token-wide. Reject a subset request when another role
   // is also authenticated instead of claiming that only one role was cleared.
   if ((IS_PIN_SET(pContext->authenticatedPins, ROLE_USER) && !IS_PIN_SET(PinId, ROLE_USER)) ||
-      (IS_PIN_SET(pContext->authenticatedPins, ROLE_ADMIN) && !IS_PIN_SET(PinId, ROLE_ADMIN))) {
+      (IS_PIN_SET(pContext->authenticatedPins, ROLE_ADMIN) && !pContext->pinManagedAdmin &&
+       !IS_PIN_SET(PinId, ROLE_ADMIN))) {
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Token-wide logout cannot honor a role subset");
   }
 
@@ -412,6 +416,7 @@ DWORD WINAPI CardDeauthenticateEx(__in PCARD_DATA pCardData, __in PIN_SET PinId,
   cmd_clear_all_user_pins();
   if (rv == CKR_USER_NOT_LOGGED_IN) {
     pContext->authenticatedPins = PIN_SET_NONE;
+    pContext->pinManagedAdmin = FALSE;
     CMD_RET_OK;
   }
   if (rv != CKR_OK) {
@@ -420,6 +425,7 @@ DWORD WINAPI CardDeauthenticateEx(__in PCARD_DATA pCardData, __in PIN_SET PinId,
     CMD_RETURN(map_pkcs11_pin_error(rv), "C_Logout failed");
   } else {
     pContext->authenticatedPins = PIN_SET_NONE;
+    pContext->pinManagedAdmin = FALSE;
     CMD_RET_OK;
   }
 }

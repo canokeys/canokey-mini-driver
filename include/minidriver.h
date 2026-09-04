@@ -96,6 +96,7 @@ struct CMD_CONTEXT {
   ULONGLONG last_metadata_refresh_ms;
   BOOL metadata_refresh_valid;
   PIN_SET authenticatedPins;
+  BOOL pinManagedAdmin;
   // A USER PIN is retained only to satisfy one pending PIN-always operation
   // in this CARD_DATA context. It is never shared through the Windows
   // session-PIN mechanism and is cleared on operation/context teardown.

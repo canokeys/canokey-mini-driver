@@ -220,6 +220,7 @@ namespace CanokeyMinidriver {
             CARD_DATA data = new CARD_DATA();
             bool acquired = false;
             bool pinMayBeTemporary = false;
+            bool pinStateKnownTemporary = false;
 
             try {
                 CheckScard(SCardEstablishContext(SCARD_SCOPE_SYSTEM, IntPtr.Zero, IntPtr.Zero, out context),
@@ -279,8 +280,10 @@ namespace CanokeyMinidriver {
                 pinMayBeTemporary = true;
                 CheckCard(change(ref data, "user", pin, (uint)pin.Length, temporaryPin, (uint)temporaryPin.Length,
                     0, CARD_AUTHENTICATE_PIN_PIN, out changeAttempts), "CardChangeAuthenticator(user)");
+                pinStateKnownTemporary = true;
 
                 uint changeBackAttempts;
+                pinStateKnownTemporary = false;
                 CheckCard(change(ref data, "user", temporaryPin, (uint)temporaryPin.Length, pin, (uint)pin.Length,
                     0, CARD_AUTHENTICATE_PIN_PIN, out changeBackAttempts), "CardChangeAuthenticator(user restore)");
                 pinMayBeTemporary = false;
@@ -301,6 +304,7 @@ namespace CanokeyMinidriver {
                         CheckCard(unblockStatus, "CardChangeAuthenticatorEx(PUK reset to temporary PIN)");
                         pukTested = true;
 
+                        pinStateKnownTemporary = false;
                         CheckCard(change(ref data, "user", temporaryPin, (uint)temporaryPin.Length, pin, (uint)pin.Length,
                             0, CARD_AUTHENTICATE_PIN_PIN, out changeBackAttempts),
                             "CardChangeAuthenticator(user restore after PUK reset)");
@@ -319,7 +323,7 @@ namespace CanokeyMinidriver {
                     PukResetBlockedByPolicy = pukResetBlockedByPolicy
                 };
             } finally {
-                if (pinMayBeTemporary && acquired) {
+                if (pinMayBeTemporary && pinStateKnownTemporary && acquired) {
                     try {
                         CardChangeAuthenticator change =
                             Marshal.GetDelegateForFunctionPointer<CardChangeAuthenticator>(data.pfnCardChangeAuthenticator);
@@ -327,8 +331,10 @@ namespace CanokeyMinidriver {
                         change(ref data, "user", temporaryPin, (uint)temporaryPin.Length, pin, (uint)pin.Length,
                             0, CARD_AUTHENTICATE_PIN_PIN, out ignored);
                     } catch {
-                        // The caller will see the original failure. This is a best-effort restore.
+                        Console.Error.WriteLine("PIN restoration retry failed; card state may be temporary.");
                     }
+                } else if (pinMayBeTemporary && acquired) {
+                    Console.Error.WriteLine("PIN restoration skipped because the last PIN mutation outcome is ambiguous.");
                 }
                 bool contextDeleted = data.pvVendorSpecific == IntPtr.Zero;
                 if (!contextDeleted && data.pfnCardDeleteContext != IntPtr.Zero) {

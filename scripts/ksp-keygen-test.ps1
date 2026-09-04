@@ -5,7 +5,7 @@ param(
     [string]$Algorithm = "ECDSA_P256",
     [ValidateSet(256, 2048, 3072, 4096)]
     [int]$KeySize = 256,
-    [ValidateSet("Signature", "KeyExchange")]
+    [ValidateSet("Signature")]
     [string]$KeyRole = "Signature",
     [string]$ContainerName = ([Guid]::NewGuid().ToString())
 )
@@ -19,18 +19,8 @@ if ($Algorithm -eq "ECDSA_P256" -and $KeySize -ne 256) {
 if ($Algorithm -eq "RSA" -and $KeySize -lt 2048) {
     throw "RSA requires KeySize 2048, 3072, or 4096."
 }
-if ($Algorithm -ne "RSA" -and $KeyRole -ne "Signature") {
-    throw "KeyExchange role is supported only for RSA."
-}
-
 Write-Host "Creating $Algorithm/$KeyRole key '$ContainerName' through Microsoft Smart Card KSP..."
-$requestedLegacyKeySpec = if ($Algorithm -eq "RSA" -and $KeyRole -eq "KeyExchange") {
-    1
-} elseif ($Algorithm -eq "RSA") {
-    2
-} else {
-    0
-}
+$requestedLegacyKeySpec = if ($Algorithm -eq "RSA") { 2 } else { 0 }
 $key = [CanokeyMinidriver.SignTestNative]::CreateCngKey(
     $ReaderName,
     $Pin,
