@@ -113,6 +113,7 @@ jobs:
             Copy-Item -LiteralPath (Join-Path $source "canokey-minidriver.dll") -Destination (Join-Path $stage "$stem.dll")
             Copy-Item -LiteralPath (Join-Path $source "canokey-minidriver.lib") -Destination (Join-Path $stage "$stem.lib")
           }
+          Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE "out\build\arm64x-Clang-Debug\canokey-minidriver.inf") -Destination (Join-Path $stage "canokey-minidriver.inf")
 
       - name: Stage Release artifact
         shell: pwsh
@@ -126,6 +127,7 @@ jobs:
             Copy-Item -LiteralPath (Join-Path $source "canokey-minidriver.dll") -Destination (Join-Path $stage "$stem.dll")
             Copy-Item -LiteralPath (Join-Path $source "canokey-minidriver.lib") -Destination (Join-Path $stage "$stem.lib")
           }
+          Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE "out\build\arm64x-Clang-Release\canokey-minidriver.inf") -Destination (Join-Path $stage "canokey-minidriver.inf")
 
       - name: Upload Debug staging artifact
         uses: actions/upload-artifact@v7

@@ -1,9 +1,21 @@
 # Architecture Distribution
 
 This document describes the Windows architecture layout for the CanoKey
-minidriver. It covers CI artifacts and the registry-only development flow. It
-does not claim that the current INF is ready for release installation; the
-current INF still needs architecture-specific DDInstall sections.
+minidriver. It covers the single-INF release package and the separate
+registry-only development flow.
+
+Choose exactly one deployment mode for a machine:
+
+1. **INF mode:** give Windows the complete package. SetupAPI selects the
+   architecture-specific install section, chooses the system directories, and
+   writes the Calais registry entries.
+2. **Registry-only mode:** do not install the INF or a driver package. Place
+   the required DLLs in a directory you control and write the Calais mapping
+   yourself.
+
+Do not combine these modes. An INF installation can overwrite a registry-only
+mapping, and a later registry-only mapping can bypass the files installed by
+the INF.
 
 ## Artifact Layout
 
@@ -21,6 +33,7 @@ Each artifact contains one file set for every supported output architecture:
 ```text
 canokey-minidriver-x86.dll
 canokey-minidriver-x86.lib
+canokey-minidriver.inf
 canokey-minidriver-x64.dll
 canokey-minidriver-x64.lib
 canokey-minidriver-arm64.dll
@@ -121,32 +134,26 @@ The Calais value is a string path. The registry does not select between the
 x64 and ARM64 implementation DLLs; the Arm64X loader does that after the
 forwarder is loaded.
 
-## Current INF Status
+## Single INF Behavior
 
-The generated `canokey-minidriver.inf` remains in each build directory for
-development and future packaging, but it is intentionally excluded from CI
-artifacts. It is not a complete multi-architecture release installer. These
-issues must be fixed before using it for package installation:
+The generated `canokey-minidriver.inf` is one multi-architecture installer
+description. It expects the four architecture-suffixed DLLs from the same
+artifact beside the INF source:
 
-1. `CanoKey.NTamd64.6.1`, `CanoKey.NTx86.6.1`, and `CanoKey.NTarm64.10` all
-   reference `CanoKeyMiniDriver_amd64_Install`.
-2. That install section enables only `CopyFiles_amd64` and `AddReg_default`.
-   `CopyFiles_arm64`, `CopyFiles_x86`, `CopyFiles_wow64`, and `AddReg_wow64`
-   are not connected to active install sections.
-3. The ARM64X package needs to copy the forwarder plus both implementation DLLs
-   to the same runtime directory. The current copy sections only describe one
-   minidriver DLL.
-4. The template still uses the old `SmartCardModuleAMD64` name
-   (`canokey-minidriver-amd64.dll`), while the CI artifact uses the explicit
-   `canokey-minidriver-x64.dll` name.
-5. The CI artifact deliberately contains no INF until the source-disk and
-   copy-file entries can describe each package layout accurately.
+- `NTamd64.6.1`: copies x64 to the native system directory and x86 to the
+  WOW64 system directory; writes both 64-bit and 32-bit Calais views.
+- `NTx86.6.1`: copies and registers only x86.
+- `NTarm64.10`: copies Arm64X, x64, and ARM64 to the native system directory,
+  copies x86 to the WOW64 system directory, and registers Arm64X in the native
+  Calais view.
 
-The formal INF should use separate architecture-specific install sections and
-register the filename that is actually copied for that OS. For an ARM64X
-package, its ARM64 section must copy all three runtime DLLs and register the
-forwarder as `80000001`. The x64 and x86 sections must register their own
-implementation DLLs in the appropriate registry/filesystem view.
+The INF uses `FLG_ADDREG_64BITKEY` for native 64-bit writes. Its WOW64 Calais
+section uses the explicit `Wow6432Node` path because INF verification rejects
+two different `80000001` values in one logical key when they are expressed only
+with `FLG_ADDREG_32BITKEY`. This path is installer data; runtime applications
+must use normal registry view APIs instead of hardcoding it. The INF declares a
+catalog and enables `PnpLockdown`; formal release validation still requires a
+signed catalog, SetupAPI installation, and post-installation propagation tests.
 
 ## ARM32 Status
 
