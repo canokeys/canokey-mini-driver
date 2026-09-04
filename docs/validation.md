@@ -55,9 +55,10 @@ Visual Studio generator with `-T ClangCL` as unsupported on this development
 machine; use the documented Ninja flow.
 
 For the Windows cache matrix, verify that `CP_CARD_CACHE_MODE` reports
-`CP_CACHE_MODE_NO_CACHE` and that `cardcf` returns the current version with
-zero freshness fields. PIV has no durable PIN freshness value, so this is
-required to prevent stale Base CSP authorization after an external PIN change.
+`CP_CACHE_MODE_NO_CACHE`, `cardcf.bPinsFreshness` is zero, and container/file
+freshness are stable non-zero hashes of the complete live snapshot. PIV has no
+durable PIN freshness value, while deterministic public freshness is required
+to trigger certificate propagation after key/certificate mutations.
 Repeated reads must expose stable public-key-derived container GUIDs across
 contexts and card reinsertion. Compatibility writes from Base CSP/KSP must be
 accepted without replacing the live PKCS#11-derived inventory.
@@ -68,10 +69,10 @@ context, read `cardcf`, `cmapfile`, and the affected zero-padded `kscNN`/`kxcNN`
 files again. The virtual `cardcf` read must remain fast and must not trigger a
 metadata scan; with the default `RefreshWindow=60`, the minidriver must refresh
 live metadata within that bounded interval, preserve container GUIDs, and expose the new
-certificate/key material. Because the cache mode is `CP_CACHE_MODE_NO_CACHE`,
-the test must verify reread content rather than expecting freshness counters to
-change. A PIN-only mutation is an authentication-state test and must not be
-confused with key or file freshness.
+certificate/key material. Verify that key changes update container freshness,
+certificate-only changes update file freshness, and unchanged snapshots stay
+identical across contexts. A PIN-only mutation is an authentication-state test
+and must not be confused with key or file freshness.
 
 ## Windows Propagation Gate
 
@@ -101,6 +102,15 @@ unfiltered system-wide probe):
    Read `cardid`, `cardcf`, `cmapfile`, and certificate files again; `cardid`
    and `CP_CARD_GUID` must remain identical and the six container associations
    must not change.
+6. Delete the six development certificates from the current-user certificate
+   store, reset/reinsert the named card, and verify that CertPropSvc reads every
+   provisioned `kscNN` plus RSA 9D `kxcNN` and recreates the certificates with
+   matching private-key associations. EC containers must keep both Windows
+   key-exchange fields empty throughout this test.
+7. Verify both `CardQueryCapabilities` and `CP_CARD_CAPABILITIES` report
+   `fCertificateCompression = TRUE`. A trace that shows successful `kscNN`
+   reads is not sufficient: all six certificates must still appear in
+   `certutil -scinfo` and the current-user Personal store.
 
 If any gate step fails, do not merge or release the minidriver change. Do not
 classify a failure as a cache issue merely because deleting Calais state or

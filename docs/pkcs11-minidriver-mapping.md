@@ -406,11 +406,12 @@ Windows uses the pair for cache identity.
 ### 7.2 `cardcf`
 
 The root `cardcf` file is a versioned `CARD_CACHE_FILE_FORMAT`. The minidriver
-reports `CP_CACHE_MODE_NO_CACHE`; `cardcf` remains a versioned
-zero-freshness compatibility file because PIV has no durable PIN freshness
-value. Live key and certificate views are regenerated from the current
-metadata; Base CSP writes remain compatibility synchronization and are not
-authoritative.
+reports `CP_CACHE_MODE_NO_CACHE`. PIN freshness remains zero because PIV has no
+durable PIN generation. Container and file freshness are non-zero,
+deterministic hashes of the complete key/certificate snapshot, so unchanged
+cards remain stable while external mutations trigger Windows to reread
+`cmapfile` and certificate files. Base CSP writes remain compatibility
+synchronization and are not authoritative.
 
 ### 7.3 `mscp/cmapfile`
 
@@ -433,13 +434,20 @@ Certificate filenames follow the standard container convention:
 
 ```text
 mscp/ksc00, mscp/ksc01, ...  signature certificates
-mscp/kxc00, mscp/kxc01, ...  key-exchange certificates (not advertised during
-Windows certificate propagation)
+mscp/kxc02                       RSA 9D key-exchange certificate when provisioned
 ```
 
 Reads return the DER certificate bytes from the matching PIV object. File info
 uses Windows-friendly read permissions so CSP/KSP enumeration succeeds. Writes
 still require admin authentication because they mutate a PIV data object.
+`msroots` remains part of the standard file view and is a successful
+zero-length compatibility file when enterprise roots are not provisioned.
+
+`CardQueryCapabilities` and `CP_CARD_CAPABILITIES` both report
+`fCertificateCompression = TRUE`. This tells Base CSP/KSP that the minidriver
+owns the physical-to-logical certificate representation and that `CardReadFile`
+already returns final DER bytes. Reporting `FALSE` causes Windows to discard
+otherwise valid certificate data after reading it.
 
 ## 8. Properties
 

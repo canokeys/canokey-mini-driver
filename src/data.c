@@ -14,6 +14,8 @@
 #include "logging.h"
 #include "minidriver.h"
 
+#define CNK_CACHE_FRESHNESS_EPOCH 0x27u
+
 static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, PDWORD pcbData);
 
 static DWORD map_pkcs11_write_error(CK_RV rv) {
@@ -63,13 +65,43 @@ static DWORD AllocCopy(const void *data, DWORD cbData, PBYTE *ppbData, PDWORD pc
   CMD_RET_OK;
 }
 
+static WORD ComputeFreshness(const CMD_CONTEXT *pContext, BOOL includeCertificates) {
+  // Derive stable cache generations from the authoritative live snapshot.
+  // The epoch invalidates older driver-generated views exactly once, while
+  // key/certificate mutations change only their corresponding generations.
+  uint32_t hash = 2166136261u ^ CNK_CACHE_FRESHNESS_EPOCH;
+  for (CK_ULONG i = 0; i < pContext->canokey.slotCount; i++) {
+    const SLOT *slot = &pContext->canokey.slots[i];
+    hash = (hash ^ (slot->present ? 1u : 0u)) * 16777619u;
+    hash = (hash ^ (uint32_t)slot->keyType) * 16777619u;
+    hash = (hash ^ (uint32_t)slot->ecCurve) * 16777619u;
+    if (slot->keyType == CKK_RSA && slot->rsa.modulusBits > 0) {
+      for (DWORD j = 0; j < slot->rsa.modulusBits / 8; j++)
+        hash = (hash ^ slot->rsa.modulus[j]) * 16777619u;
+    } else if (slot->keyType == CKK_EC && slot->ecc.cbPrivate > 0) {
+      for (DWORD j = 0; j < slot->ecc.cbPrivate; j++)
+        hash = (hash ^ slot->ecc.x[j]) * 16777619u;
+      for (DWORD j = 0; j < slot->ecc.cbPrivate; j++)
+        hash = (hash ^ slot->ecc.y[j]) * 16777619u;
+    }
+    if (includeCertificates) {
+      for (DWORD j = 0; j < slot->certLen; j++)
+        hash = (hash ^ slot->cert[j]) * 16777619u;
+    }
+  }
+  WORD freshness = (WORD)(hash ^ (hash >> 16));
+  return freshness == 0 ? 1 : freshness;
+}
+
 static DWORD AllocCacheFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, PDWORD pcbData) {
-  (void)pContext;
-  // There is no durable card-backed PIN freshness value. Advertising a global
-  // cache would let Base CSP reuse a PIN decision after an external PIN
-  // change, so this virtual cardcf deliberately disables caching.
-  CARD_CACHE_FILE_FORMAT cache = {0};
-  cache.bVersion = CARD_CACHE_FILE_CURRENT_VERSION;
+  // PIV has no durable PIN generation, so keep PIN freshness at zero. Public
+  // key and certificate generations are deterministic and safe to advertise.
+  CARD_CACHE_FILE_FORMAT cache = {.bVersion = CARD_CACHE_FILE_CURRENT_VERSION,
+                                  .bPinsFreshness = 0,
+                                  .wContainersFreshness = ComputeFreshness(pContext, FALSE),
+                                  .wFilesFreshness = ComputeFreshness(pContext, TRUE)};
+  CMD_DEBUG("cardcf freshness: pins=%u containers=%u files=%u", cache.bPinsFreshness, cache.wContainersFreshness,
+            cache.wFilesFreshness);
   return AllocCopy(&cache, sizeof(cache), ppbData, pcbData);
 }
 
@@ -205,9 +237,9 @@ DWORD RefreshCardMetadata(CMD_CONTEXT_PTR pContext) {
 }
 
 static BOOL IsMetadataFile(LPSTR pszDirectoryName, LPSTR pszFileName) {
-  // cardcf is a virtual, zero-freshness compatibility file. It contains no
-  // live inventory, so reading it must not trigger a full card scan. The
-  // container map and certificate views do depend on the current snapshot.
+  // cardcf derives freshness from the snapshot captured at context creation,
+  // so reading it must not trigger a full card scan. The container map and
+  // certificate views do depend on the current snapshot.
   return (pszDirectoryName != NULL && strcmp(pszDirectoryName, szBASE_CSP_DIR) == 0 &&
           (strcmp(pszFileName, szCONTAINER_MAP_FILE) == 0 ||
            strncmp(pszFileName, szUSER_KEYEXCHANGE_CERT_PREFIX, 3) == 0 ||
@@ -265,11 +297,11 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
   }
 
   if (strcmp(pszDirectoryName, szBASE_CSP_DIR) == 0) {
-    // Enterprise roots are optional. Returning an empty msroots file is not
-    // equivalent to an absent store: CertPropSvc treats the successful empty
-    // read as the end of propagation and never asks for kscNN certificates.
+    // Windows treats msroots as part of the standard mscp file view. CanoKey
+    // does not provision enterprise roots, but the empty compatibility file
+    // keeps Base CSP/KSP and CertPropSvc on the documented filesystem path.
     if (strcmp(pszFileName, szROOT_STORE_FILE) == 0)
-      CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Enterprise root store is not provisioned");
+      return AllocCopy(NULL, 0, ppbData, pcbData);
 
     if (strcmp(pszFileName, szCONTAINER_MAP_FILE) == 0) {
       DWORD res = GenerateContainerMapFile(pContext, ppbData, pcbData);
@@ -467,8 +499,10 @@ DWORD WINAPI CardGetFileInfo(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryN
     // Windows enrollment expects user-write visibility for mscp files. Actual
     // PIV certificate mutation remains guarded by ROLE_ADMIN in CardWriteFile.
     pCardFileInfo->AccessCondition = EveryoneReadUserWriteAc;
-    if (strcmp(pszFileName, szROOT_STORE_FILE) == 0)
-      CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Enterprise root store is not provisioned");
+    if (strcmp(pszFileName, szROOT_STORE_FILE) == 0) {
+      pCardFileInfo->cbFileSize = 0;
+      CMD_RET_OK;
+    }
     if (strcmp(pszFileName, szCONTAINER_MAP_FILE) == 0) {
       pCardFileInfo->cbFileSize = (DWORD)(pContext->canokey.slotCount * sizeof(CONTAINER_MAP_RECORD));
       CMD_RET_OK;
@@ -538,9 +572,9 @@ DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
     CMD_RETURN(SCARD_E_DIR_NOT_FOUND, "Directory not found");
   }
 
-  // The enterprise root store is optional. Do not advertise a fabricated empty
-  // PKCS#7 file; CertPropSvc must continue to the user certificate files.
-  DWORD total = sizeof(szCONTAINER_MAP_FILE);
+  // Keep the standard mscp namespace complete even when no enterprise root
+  // certificates are provisioned.
+  DWORD total = sizeof(szROOT_STORE_FILE) + sizeof(szCONTAINER_MAP_FILE);
   for (CK_ULONG i = 0; i < pContext->canokey.slotCount; i++) {
     SLOT *slot = &pContext->canokey.slots[i];
     if (!canokey_slot_has_key(slot)) {
@@ -569,7 +603,14 @@ DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
   LPSTR cursor = files;
   DWORD remaining = total;
 
-  int written = snprintf(cursor, remaining, "%s", szCONTAINER_MAP_FILE);
+  int written = snprintf(cursor, remaining, "%s", szROOT_STORE_FILE);
+  if (written < 0 || written >= (int)remaining) {
+    CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to format root store file name");
+  }
+  cursor += written + 1;
+  remaining -= (DWORD)written + 1;
+
+  written = snprintf(cursor, remaining, "%s", szCONTAINER_MAP_FILE);
   if (written < 0 || written >= (int)remaining) {
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to format container map file name");
   }

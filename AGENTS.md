@@ -370,8 +370,11 @@ EC keys in those slots       -> PKCS#11 ECDH-capable (not Windows-mapped)
 - Treat root `cardcf` as a Base CSP/KSP cache-coherency file. Return a valid
   `CARD_CACHE_FILE_FORMAT` and accept same-version writes; report
   `CP_CACHE_MODE_NO_CACHE` because PIV has no durable PIN freshness counter.
-  The authoritative token state still comes from CanoKey metadata and
-  `mscp/cmapfile`.
+  Keep `bPinsFreshness` zero, but derive non-zero container/file freshness
+  deterministically from the complete live key/certificate snapshot. The same
+  card must produce identical values in every `CARD_DATA` context; mutations
+  must change the corresponding value. The authoritative token state still
+  comes from CanoKey metadata and `mscp/cmapfile`.
 - Treat `mscp/cmapfile` similarly: generate it from live key metadata, and
   accept well-formed writes from KSP as cache synchronization rather than
   persisting a separate copy.
@@ -394,6 +397,19 @@ EC keys in those slots       -> PKCS#11 ECDH-capable (not Windows-mapped)
   enumeration: report `EveryoneReadUserWriteAc` for file info. The actual PIV
   certificate write is still a management operation, so require `ROLE_ADMIN`
   before `CardWriteFile` writes certificates through PKCS#11.
+- Keep `mscp/msroots` in the standard `mscp` file view. When no enterprise
+  roots are provisioned, report a successful zero-length compatibility file.
+- Certificate propagation requires one complete snapshot. Retry transient
+  metadata/chained-response failures or fail acquisition; never publish a map
+  with a temporarily missing provisioned slot. EC containers must keep
+  `wKeyExchangeKeySizeBits == 0` and `pbKeyExPublicKey == NULL`; only RSA 9D
+  exposes Windows key exchange. Publishing EC DH makes Windows drop the
+  associated certificates or fail key opening.
+- Both `CardQueryCapabilities` and `CP_CARD_CAPABILITIES` must report
+  `fCertificateCompression = TRUE`. The minidriver returns final DER bytes and
+  owns their PIV representation; changing this bit to `FALSE` makes Windows
+  read `kscNN` successfully and then discard the certificate before provider
+  association and propagation.
 - On `ERROR_INSUFFICIENT_BUFFER`, set the returned length before failing so
   Windows callers can retry with the right buffer size.
 - Logging must be best-effort. Failure to open the log file, or calling shutdown

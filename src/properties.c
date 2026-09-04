@@ -28,7 +28,12 @@ static DWORD getCardCapabilities(PCARD_DATA pCardData, PBYTE pbData, DWORD cbDat
   }
   PCARD_CAPABILITIES p = (PCARD_CAPABILITIES)pbData;
   p->dwVersion = CARD_CAPABILITIES_CURRENT_VERSION;
-  p->fCertificateCompression = FALSE;
+  // CanoKey exposes certificate files as final DER bytes and owns their
+  // physical PIV representation. Reporting TRUE prevents Base CSP/KSP from
+  // applying its card-file compression layer to those bytes. Windows still
+  // reads and returns from CardReadFile when this is FALSE, but then rejects
+  // the certificates before provider association and propagation.
+  p->fCertificateCompression = TRUE;
   p->fKeyGen = TRUE;
   CMD_RET_OK;
 }

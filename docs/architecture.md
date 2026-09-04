@@ -136,21 +136,22 @@ operations.
 authoritative. Certificate files are readable for enumeration but writes still
 require ADMIN authentication.
 
-The cache policy is `CP_CACHE_MODE_NO_CACHE`. `cardcf` is a versioned
-zero-freshness compatibility file because PIV has no durable PIN freshness
-value. Container and certificate views are regenerated from the live snapshot;
-the metadata generation counter advances only when that snapshot changes.
+The cache policy is `CP_CACHE_MODE_NO_CACHE`. `cardcf` keeps PIN freshness at
+zero because PIV has no durable PIN generation. Its container and file
+freshness values are deterministic hashes of the complete live key and
+certificate snapshot, so they remain stable across contexts and change after
+the corresponding card mutation.
 
 The minidriver reports `CP_CACHE_MODE_NO_CACHE`. PIV exposes no durable PIN
 freshness counter, so a global Base CSP cache could retain an authorization
-decision after an external PIN change. `cardcf` remains a versioned,
-zero-freshness compatibility file; Windows must reread `cmapfile` and
-certificate files from the live metadata snapshot. Reads of the live container
+decision after an external PIN change. The deterministic public freshness
+values tell Windows when to reread `cmapfile` and certificate files from the
+live metadata snapshot. Reads of the live container
 map and certificate views are rate-limited to one metadata scan per context per
 `RefreshWindow` seconds (60 seconds by default), and the generation counter
 advances only when the snapshot actually changes. Reading the virtual `cardcf`
-does not scan the card because its zero-freshness payload contains no live
-inventory. `RefreshDeviceKeys=0` disables periodic live re-enumeration while
+does not scan the card because it hashes the already complete context snapshot.
+`RefreshDeviceKeys=0` disables periodic live re-enumeration while
 retaining initial discovery and refreshes after minidriver-owned writes.
 
 The Base CSP cache mode remains `CP_CACHE_MODE_NO_CACHE` by default. The
@@ -159,6 +160,22 @@ after an external PKCS#11/PIV mutation until reinsertion, while global cache
 requires a durable `cardcf` freshness counter that this virtual card does not
 have. Use `RefreshDeviceKeys` and `RefreshWindow` for an explicit performance
 trade-off instead of advertising a cache mode that can hide live changes.
+
+Certificate propagation is fail-closed on inventory consistency. Every
+context must derive the same six-container map from one complete snapshot;
+transient metadata failures are retried instead of turning a provisioned slot
+into a temporary empty record. EC containers expose only their signature blob
+and leave the Windows key-exchange fields empty. Only RSA 9D exposes
+`AT_KEYEXCHANGE`. An unprovisioned `mscp/msroots` remains visible as a
+zero-length compatibility file.
+
+The minidriver owns conversion from the physical PIV certificate object to the
+final DER bytes returned by `CardReadFile`. Both capability entry points report
+`fCertificateCompression = TRUE` so Base CSP/KSP does not apply a second card-
+file compression layer. This value is required even though the returned DER is
+not itself compressed: setting it to `FALSE` makes Windows read certificate
+files successfully and then reject them before key association and
+propagation.
 
 Windows propagation exposes signature views for all six containers and
 populates `wKeyExchangeKeySizeBits`/`pbKeyExPublicKey` only for an RSA 9D
