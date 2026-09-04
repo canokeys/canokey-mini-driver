@@ -28,7 +28,7 @@ static DWORD getCardCapabilities(PCARD_DATA pCardData, PBYTE pbData, DWORD cbDat
   }
   PCARD_CAPABILITIES p = (PCARD_CAPABILITIES)pbData;
   p->dwVersion = CARD_CAPABILITIES_CURRENT_VERSION;
-  p->fCertificateCompression = TRUE;
+  p->fCertificateCompression = FALSE;
   p->fKeyGen = TRUE;
   CMD_RET_OK;
 }

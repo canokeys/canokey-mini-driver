@@ -78,23 +78,24 @@ static DWORD validate_create_container_request(BYTE bContainerIndex, DWORD dwFla
     }
     CMD_RET_OK;
   case AT_ECDSA_P256:
-  case AT_ECDHE_P256:
     if (dwKeySize != 0 && dwKeySize != 256) {
       CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported P-256 key size");
     }
     CMD_RET_OK;
   case AT_ECDSA_P384:
-  case AT_ECDHE_P384:
     if (dwKeySize != 0 && dwKeySize != 384) {
       CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported P-384 key size");
     }
     CMD_RET_OK;
   case AT_ECDSA_P521:
-  case AT_ECDHE_P521:
     if (dwKeySize != 0 && dwKeySize != 521) {
       CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Unsupported P-521 key size");
     }
     CMD_RET_OK;
+  case AT_ECDHE_P256:
+  case AT_ECDHE_P384:
+  case AT_ECDHE_P521:
+    CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "ECDH key-exchange containers are not exposed through Windows");
   default:
     CMD_RETURN(SCARD_E_UNSUPPORTED_FEATURE, "Unsupported key spec");
   }

@@ -66,6 +66,7 @@ void cmd_clear_all_user_pins(void) {
     if (context->userPinValid)
       ++cleared;
     cmd_clear_user_pin(context);
+    context->authenticatedPins = PIN_SET_NONE;
   }
   if (cleared != 0)
     CMD_DEBUG("Cleared cached USER PINs from %lu managed context(s)", (unsigned long)cleared);
@@ -411,15 +412,18 @@ DWORD CardDeleteContext(__inout PCARD_DATA pCardData) {
         CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Managed binding cleanup is still pending");
       }
     }
+    BOOL removedFromManagedList = FALSE;
     CMD_CONTEXT_PTR *link = &g_managed_contexts;
     while (*link != NULL && *link != context)
       link = &(*link)->managed_next;
-    if (*link == context)
+    if (*link == context) {
       *link = context->managed_next;
+      removedFromManagedList = TRUE;
+    }
     SecureZeroMemory(context->dhAgreements, sizeof(context->dhAgreements));
     pCardData->pfnCspFree(context);
     pCardData->pvVendorSpecific = NULL;
-    if (g_managed_context_count > 0)
+    if (removedFromManagedList && g_managed_context_count > 0)
       g_managed_context_count--;
     if (g_managed_context_count == 0) {
       SecureZeroMemory(g_managed_card_id, sizeof(g_managed_card_id));

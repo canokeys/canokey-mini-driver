@@ -331,7 +331,7 @@ The crypto tests use Windows CryptoAPI/CNG APIs directly instead of parsing
 - PKCS#11 ECDH P-256/P-384/P-521 raw-secret derivation through the managed
   backend, checked against software-generated peer keys
 - RSA PKCS#1/OAEP decrypt through PKCS#11 for supported PIV RSA slots; Windows
-  key-exchange containers are intentionally not advertised during propagation
+  advertises key exchange only when slot 9D contains RSA
 
 Like the smoke wrapper, it defaults to building x64 Debug, running the debug
 install target, discovering and resetting the DevKit control port, and passing
