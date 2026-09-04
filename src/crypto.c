@@ -385,6 +385,7 @@ DWORD WINAPI CardConstructDHAgreement(__in PCARD_DATA pCardData, __inout PCARD_D
 
   CK_OBJECT_HANDLE hBaseKey = CMD_MAKE_OBJECT_HANDLE(0, CKO_PRIVATE_KEY, slot->id);
   CK_OBJECT_HANDLE hSecret = 0;
+  CMD_CONTEXT_PTR userPinGuard CMD_USER_PIN_GUARD = pContext;
   CK_RV rv =
       C_DeriveKey(pContext->session, &mech, hBaseKey, template, sizeof(template) / sizeof(template[0]), &hSecret);
   SecureZeroMemory(peerPoint, sizeof(peerPoint));
@@ -497,8 +498,6 @@ DWORD WINAPI CardDeriveKey(__in PCARD_DATA pCardData, __inout PCARD_DERIVE_KEY p
     pAgreementInfo->cbDerivedKey = outputLen;
     CMD_RET_OK;
   }
-
-  CMD_CONTEXT_PTR userPinGuard CMD_USER_PIN_GUARD = pContext;
 
   if (pAgreementInfo->pbDerivedKey == NULL) {
     pAgreementInfo->pbDerivedKey = (PBYTE)g_pfnCspAlloc(outputLen);

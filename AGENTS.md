@@ -211,11 +211,12 @@ Start-Sleep -Seconds 6
   PKCS#1 and OAEP-SHA256 decrypt. When an ECDH KSP key is discovered, it tests
   `BCRYPT_KDF_RAW_SECRET` against a software-generated peer key. Use
   `-SkipBuild -SkipInstall -SkipReset` for fast reruns.
-- The Windows-facing map intentionally has no RSA key-exchange or ECDH
-  containers during certificate propagation. Run `sign-test.ps1` for the
-  Windows surface and use the PKCS#11/API-level decrypt and derive tests for
-  those capabilities; do not overwrite 9D merely to satisfy a KSP test unless
-  that destructive provisioning is explicitly intended.
+- The Windows-facing map intentionally has no ECDH containers during
+  certificate propagation. RSA key exchange is exposed only when slot 9D
+  contains an RSA key. Run `sign-test.ps1` for the Windows surface and use the
+  PKCS#11/API-level decrypt and derive tests for capabilities that are not
+  Windows-mapped; do not overwrite 9D merely to satisfy a KSP test unless that
+  destructive provisioning is explicitly intended.
 - For focused reruns, use `.\scripts\sign-test.ps1`,
   `.\scripts\decrypt-test.ps1`, or `.\scripts\derive-test.ps1`. They share
   `scripts\minidriver-test-common.ps1`, so `crypto-test.ps1` can build,

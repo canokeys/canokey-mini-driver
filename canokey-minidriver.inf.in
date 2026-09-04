@@ -3,7 +3,6 @@ Signature="$Windows NT$"
 Class=SmartCard
 ClassGuid={990A2BD7-E738-46c7-B26F-1CF8FB9F1391}
 Provider=%ManufacturerName%
-CatalogFile=@CMD_LIB_NAME@.cat
 PnpLockdown=1
 DriverVer=@CMD_DRIVERDATE@,@CMD_DRIVERVER@
 
@@ -97,7 +96,7 @@ Needs=UmPass.Interfaces
 [DestinationDirs]
 CopyFiles_amd64=10,system32
 CopyFiles_arm64x=10,system32
-CopyFiles_x86_native=10
+CopyFiles_x86_native=10,system32
 CopyFiles_x86_wow64=10,syswow64
 
 [CopyFiles_amd64]
@@ -116,28 +115,28 @@ CopyFiles_x86_wow64=10,syswow64
 
 [AddReg_amd64]
 HKLM, %SmartCardKey%,"ATR",0x00001001,3b,f7,11,00,00,81,31,fe,65,43,61,6e,6f,6b,65,79,99
-HKLM, %SmartCardKey%,"ATRMask",0x00001001,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff
+HKLM, %SmartCardKey%,"ATRMask",0x00001001,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff
 HKLM, %SmartCardKey%,"Crypto Provider",0x00001000,"Microsoft Base Smart Card Crypto Provider"
 HKLM, %SmartCardKey%,"Smart Card Key Storage Provider",0x00001000,"Microsoft Smart Card Key Storage Provider"
 HKLM, %SmartCardKey%,"80000001",0x00001000,%SmartCardModuleX64%
 
 [AddReg_arm64x]
 HKLM, %SmartCardKey%,"ATR",0x00001001,3b,f7,11,00,00,81,31,fe,65,43,61,6e,6f,6b,65,79,99
-HKLM, %SmartCardKey%,"ATRMask",0x00001001,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff
+HKLM, %SmartCardKey%,"ATRMask",0x00001001,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff
 HKLM, %SmartCardKey%,"Crypto Provider",0x00001000,"Microsoft Base Smart Card Crypto Provider"
 HKLM, %SmartCardKey%,"Smart Card Key Storage Provider",0x00001000,"Microsoft Smart Card Key Storage Provider"
 HKLM, %SmartCardKey%,"80000001",0x00001000,%SmartCardModuleARM64X%
 
 [AddReg_x86_native]
 HKLM, %SmartCardKey%,"ATR",0x00000001,3b,f7,11,00,00,81,31,fe,65,43,61,6e,6f,6b,65,79,99
-HKLM, %SmartCardKey%,"ATRMask",0x00000001,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff
+HKLM, %SmartCardKey%,"ATRMask",0x00000001,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff
 HKLM, %SmartCardKey%,"Crypto Provider",0x00000000,"Microsoft Base Smart Card Crypto Provider"
 HKLM, %SmartCardKey%,"Smart Card Key Storage Provider",0x00000000,"Microsoft Smart Card Key Storage Provider"
 HKLM, %SmartCardKey%,"80000001",0x00000000,%SmartCardModuleX86%
 
 [AddReg_x86_wow64]
 HKLM, %SmartCardKeyWOW64%,"ATR",0x00000001,3b,f7,11,00,00,81,31,fe,65,43,61,6e,6f,6b,65,79,99
-HKLM, %SmartCardKeyWOW64%,"ATRMask",0x00000001,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff
+HKLM, %SmartCardKeyWOW64%,"ATRMask",0x00000001,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff,ff
 HKLM, %SmartCardKeyWOW64%,"Crypto Provider",0x00000000,"Microsoft Base Smart Card Crypto Provider"
 HKLM, %SmartCardKeyWOW64%,"Smart Card Key Storage Provider",0x00000000,"Microsoft Smart Card Key Storage Provider"
 HKLM, %SmartCardKeyWOW64%,"80000001",0x00000000,%SmartCardModuleX86%
