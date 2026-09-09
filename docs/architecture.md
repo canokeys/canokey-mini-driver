@@ -1,7 +1,7 @@
 # CanoKey Windows Minidriver Architecture
 
-F5 per-key name ownership, enrollment commit boundaries and legacy-firmware
-fallback are described in [container-names.md](container-names.md).
+This document describes the driver implementation. For enrollment guidance and
+firmware compatibility, see [container names](container-names.md).
 
 ## Request Flow
 
@@ -230,6 +230,29 @@ Windows view. The cache freshness epoch changes with this file-view correction.
 During enrollment, certificate enumeration converts physical slots back to
 their logical aliases, so each emitted filename resolves to the same key.
 `CardGetFileInfo` reports the retained map length while the overlay is active.
+
+## Persistent Container Names
+
+`read_canokey` reads F5 per-key names as part of an all-or-error metadata
+snapshot. `data.c` publishes those names in `cmapfile` and includes them in
+`cardcf` freshness. Unnamed keys use public-key-derived names. The PKCS#11
+backend gates F5 on PIV applet version 6.0.0, corresponding to CanoKey firmware
+release 3.1.0; these are different version schemes. Older or unavailable PIV
+versions permit legacy context-local fallback. Transport, storage, and malformed
+name errors on supported firmware do not permit fallback.
+
+Enrollment stages logical indexes in `CARD_DATA` until a key exists. After
+successful generation, the staged name is persisted at the resolved physical
+slot. Later `cmapfile` name changes also persist; default/size-only writes are
+cache synchronization and need no management login. This path does not
+provision PINs, PUKs, or ADMIN DATA.
+
+Key/name creation and multi-record name writes are not atomic. A failure may
+follow a committed key or earlier names. Return the error, clear the provisional
+overlay, and invalidate other contexts. Do not regenerate keys or rewrite names
+as automatic rollback; recovery starts with a fresh card read. Legacy firmware
+keeps context-local enrollment names and therefore cannot preserve provisional
+names across separate `certreq` processes.
 
 ## Logging And Test Transport
 

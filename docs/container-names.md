@@ -1,59 +1,55 @@
-# Persistent names and firmware compatibility
+# Container names and firmware compatibility
 
-Firmware 3.1.0 and later saves Windows key container names on the card when
-used with an up-to-date driver. For older firmware, follow
-[certreq without a firmware upgrade](windows-certreq-legacy.md).
-`read_canokey` includes names in an all-or-error snapshot. `data.c` publishes
-them in cmapfile and includes them in cardcf freshness. Unnamed keys and old
-firmware retain public-key-derived names. PKCS#11 uses the shared RNG version
-gate: PIV applet 6.0.0 and later support F5; older/unavailable PIV versions permit
-fallback. Storage, transport or malformed-name errors never permit fallback.
-For driver developers: 3.1.0 is the firmware release version. The code checks
-the PIV applet version, which uses a different version number.
+Windows identifies a smart-card key by its container name. That name must
+remain the same when Windows reopens the card, including between creating a
+certificate signing request (CSR) and installing the issued certificate.
 
-Enrollment stages logical indexes in CARD_DATA until a key exists. Successful
-generation then persists its staged name at the resolved physical slot. Later
-cmapfile name changes also persist; default/size-only writes need no management
-login. No PIN, PUK or ADMIN DATA provisioning is added to this path.
+## Firmware 3.1.0 and later
 
-Composite key/name creation and multi-record cmap writes are not atomic. A
-failure can follow a committed key or earlier names. Report the failure, clear
-the provisional overlay, invalidate other contexts and never regenerate or
-rewrite names as an automatic rollback. Read the card before recovery.
+With an up-to-date minidriver, CanoKey saves Windows container names on the
+card. A name assigned during key creation remains available to a later
+`certreq -accept` process and after card reinsertion. No pending-request name
+repair is needed for this workflow.
 
-On legacy firmware the previous context-local enrollment behavior remains,
-including the cross-process certreq limitation. Use a CSR for an existing key
-under its public-key-derived name, or repair the precise Request-store entry
-before accept. See [certreq without a firmware upgrade](windows-certreq-legacy.md)
-for INF examples, exact Request-store repair commands and validation limits.
-Existing keys and certificates continue to work on older firmware.
+Existing keys without a saved name use a name derived from their public key.
+Updating the driver does not require replacing those keys or certificates.
 
-PKCS#11 covers every protocol reference, but Windows retains its six-slot
-policy; retired-slot expansion and F9 publication are separate changes.
+## Older firmware
 
-Acceptance: create a fresh key/CSR, exit certreq, reinsert, accept its matching
-certificate without repairstore, then verify propagation and signing on native
-ARM64 and x64. Repeat existing-key discovery/signing on firmware without F5.
+Existing keys and certificates remain usable. However, a temporary name chosen
+by Windows during enrollment cannot be saved on the card. A later
+`certreq -accept` process may therefore fail to find the key, even though key
+creation and the CSR succeeded.
 
-## Validation checkpoint (2026-09-09)
+Use either of the procedures in
+[certreq without a firmware upgrade](windows-certreq-legacy.md):
 
-The reviewed source builds with Windows ClangCL for x64 and ARM64. Both
-architectures pass enrollment-regression and container-name-contract; PKCS#11
-API contract coverage is 118/118. The standalone x64 PKCS#11 DLL also builds.
+- Request a certificate for an existing key using its live container name.
+- If a CSR already exists, repair its exact pending Request-store association
+  before accepting the matching certificate.
 
-The installed, pre-cleanup driver passed seven targeted ARM64 RSA/ECDSA
-signing and RSA decryption checks. Select the signature container explicitly
-with `-BaseCspContainer`: the generic script otherwise tests RSA 9D using
-AT_SIGNATURE even though that container exposes AT_KEYEXCHANGE only.
-These checks do not validate deployment of the newly rebuilt minidriver.
+Do not generate another key just to repair a container name.
 
-Earlier F5 acceptance covered RSA certreq new/accept, existing-key ECDSA
-enrollment, certificate propagation after reinsertion, and Word signatures.
-Word certificate-trust warnings remain separate from signature verification.
-At this checkpoint, unsupported-SM2 slot occupancy was not protected. The
-subsequent occupancy guard is described in architecture.md; its new validation
-must be distinguished from these earlier installed-driver results.
+## If enrollment fails
 
-The cleanup has not repeated the complete Windows propagation gate, legacy
-firmware hardware tests, Linux unit/sanitizer tests, or Copilot/CodeRabbit
-reviews. This is a local development checkpoint, not release acceptance.
+Key creation and saving its name are separate card writes. An error can occur
+after the key has already been created. Likewise, renaming several containers
+can succeed for some names before another write fails.
+
+Re-enumerate the card before retrying. Keep any existing CSR and compare its
+public key with the card key and the issued certificate. The driver does not
+automatically delete or regenerate keys to undo a naming failure.
+
+On firmware that supports saved names, communication errors or invalid name
+responses are reported as errors. The driver does not silently switch to a
+different naming scheme.
+
+## Slot selection
+
+Windows exposes only PIV slots 9A, 9C, 9D, 9E, 82, and 83. Persistent names do
+not expose additional slots or allow `certreq` to choose an arbitrary PIV slot.
+A slot containing an unsupported key, such as SM2, remains occupied even when
+Windows does not list it. Key creation can fail if Windows selects that slot.
+
+For implementation details, see the
+[enrollment and name-storage boundaries](architecture.md#persistent-container-names).

@@ -1,9 +1,20 @@
-# PIN-Only Management Key Research
+# PIN-protected management keys
 
-This note records the current understanding of YubiKey-style PIN-only PIV
-management-key handling and the shape that would fit this minidriver.
+A correctly provisioned CanoKey can authorize key creation and certificate
+writes after the normal Windows PIN prompt, without keeping a management key
+in the registry. The minidriver supports YubiKey-compatible PIN-protected
+management keys through its PKCS#11 backend.
 
-## Summary
+This mode permanently blocks the PUK, so PUK-based PIN recovery is unavailable.
+Enabling the driver's `ProtectManagement` setting does not provision the card.
+The setting defaults to `1`; set it to `0` if an external solution owns
+management-key provisioning. See
+[runtime configuration](development.md#runtime-configuration).
+
+The sections below describe the integration and provisioning requirements for
+developers and card administrators.
+
+## How it works
 
 YubiKey PIN-only mode does not remove the PIV management key. It changes how
 software obtains that key. After the normal PIV user PIN has been verified, the
@@ -12,15 +23,14 @@ management key, and performs management-key authentication in the same logical
 workflow. This lets enrollment, key generation, certificate import, and similar
 management operations proceed after a normal Windows PIN prompt.
 
-For CanoKey, the preferred boundary remains:
+The implementation divides responsibility as follows:
 
-- The minidriver should not issue raw PC/SC/APDU operations.
-- `canokey-pkcs11` should own PIV GET DATA / PUT DATA / GENERAL AUTHENTICATE.
-- The minidriver should use PKCS#11 object APIs or CanoKey PKCS#11 extension
-  APIs to recover the PIN-protected management key after `ROLE_USER`
-  authentication.
+- The minidriver does not issue raw PC/SC/APDU operations in this flow.
+- `canokey-pkcs11` owns PIV GET DATA / PUT DATA / GENERAL AUTHENTICATE.
+- The minidriver calls `C_CNK_LoginPinManaged()` after `ROLE_USER`
+  authentication; the raw management key stays inside the backend.
 
-## Source Findings
+## YubiKey compatibility
 
 Yubico documents two PIN-only modes: PIN-protected and PIN-derived.
 PIN-protected is the recommended mode. In that mode the SDK stores the
@@ -78,7 +88,7 @@ attribute, `CKA_VALUE`. If `canokey-pkcs11` exposes PIV data objects as
 PKCS#11 data objects, the minidriver can stay out of PC/SC and use
 `C_FindObjects` plus `C_GetAttributeValue` to read the protected data.
 
-## Current Implementation
+## Backend authentication
 
 `canokey-pkcs11` exposes selected PIV data objects as `CKO_DATA` and also
 provides `C_CNK_LoginPinManaged()` for the complete runtime authentication
@@ -157,8 +167,8 @@ management key and authenticate it. Provisioning needs more:
 - Write consistent ADMIN DATA with PUK-blocked and PIN-protected bits only
   after the PUK is actually blocked.
 
-`canokey-pkcs11/scripts/finalize-pin-managed.ps1` is a narrow repair tool for
-development cards whose PRINTED and ADMIN DATA are already configured but whose
+[`finalize-pin-managed.ps1`](../external/canokey-pkcs11/scripts/finalize-pin-managed.ps1)
+is a narrow repair tool for development cards whose PRINTED and ADMIN DATA are already configured but whose
 PUK was not actually blocked. It calls `C_CNK_FinalizePinManaged()` and requires
 an explicit permanent-block acknowledgement. A future full provisioning tool
 should own the complete ordered workflow above.

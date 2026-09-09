@@ -163,6 +163,30 @@ That job verifies the ARM64 artifact and linker inputs only; it cannot replace
 the native ARM64 propagation gate because hosted runners have no CanoKey and
 do not run the minidriver inside native ARM64 `SCardSvr`.
 
+## Persistent-name enrollment checks
+
+On firmware with F5 name storage, create a fresh key and CSR, exit `certreq`,
+reinsert the card, and accept its matching certificate without `repairstore`.
+Verify certificate propagation and signing using the deployed binary on native
+ARM64 and x64. Include RSA 9D with `AT_KEYEXCHANGE`, existing-key enrollment,
+and application signing. Distinguish certificate-trust errors from signature
+verification failures.
+
+On firmware without F5, repeat existing-key discovery and signing, then exercise
+the [legacy Request-store repair](windows-certreq-legacy.md). Verify that
+unsupported algorithms still occupy their physical slots and cannot be
+replaced by Windows enrollment.
+
+Inject failures after key creation and after an earlier record in a multi-name
+write has committed. Confirm that errors clear the provisional overlay and
+invalidate other contexts without regenerating keys or rolling back committed
+names. Re-enumeration must reveal the actual card state.
+
+Keep dated test results, binary revisions, commands, and coverage gaps with the
+change's review or release evidence. User guides describe supported behavior
+and recovery steps; a previous binary's test result is not evidence for a new
+build.
+
 ## Review Procedure
 
 1. Inspect the complete minidriver diff and the exact submodule commit.

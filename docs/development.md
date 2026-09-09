@@ -1,10 +1,15 @@
-# Development Notes
+# Development setup and testing
+
+This guide is for building, debugging, and testing the driver. For supported
+features and normal card use, start with the [README](../README.md). Hardware
+test scripts use a development PIN and may deploy DLLs or reset the card;
+review their parameters before running them on your setup.
 
 ## Registry-only Minidriver Loading
 
 For local debugging, Windows can load the minidriver through the Calais smart
-card registry mapping without installing the INF. This is much faster than the
-driver package flow and is the recommended development loop for now.
+card registry mapping without installing the INF. This avoids repackaging the
+driver during local development.
 
 Build the minidriver:
 
@@ -102,8 +107,19 @@ and creates a convenience log directory:
 C:\canokey-minidriver\logs\
 ```
 
-Then import this registry snippet as Administrator, adjusting the DLL path if
-you configured a different debug install directory:
+### Calais registration
+
+Import this registry snippet as Administrator after choosing the DLL path:
+
+- x64 Debug build: `C:\canokey-minidriver\canokey-minidriver.dll`.
+- Native-only ARM64 Debug build: the same path, containing the ARM64 DLL.
+- Shared ARM64/x64 deployment: `C:\canokey-minidriver\canokey-minidriver-arm64x.dll`,
+  with both implementation DLLs beside it.
+
+The example below uses Arm64X. Change `80000001` for an x64 or native-only
+ARM64 build, and adjust the directory if you configured a different install
+location. See the [architecture matrix](architecture-distribution.md) for
+32-bit registry views and CI artifact filenames.
 
 ```reg
 Windows Registry Editor Version 5.00
@@ -175,9 +191,9 @@ cmake -S . -B out\build\x64-Clang-Debug -G Ninja `
 for local debugging. The DLL decides whether and where to write logs by reading
 `LogPath` from `HKLM\SOFTWARE\Canokeys\ckmd`.
 
-## Logging
+## Runtime configuration
 
-The minidriver reads logging configuration from:
+The minidriver reads runtime configuration from:
 
 ```text
 HKLM\SOFTWARE\Canokeys\ckmd
@@ -222,6 +238,8 @@ Supported values:
 - `PinCacheTimeout` (`REG_DWORD`): number of seconds reported to Base CSP in
   `CP_CARD_PIN_INFO` as a timed PIN cache recommendation.
 
+## PIN management
+
 Runtime private-key operations honor the stored PIV PIN policy in
 `canokey-pkcs11`: keys with PIN policy never can sign, decrypt, or derive
 without a `CKU_USER` login; keys with PIN policy once or always require a
@@ -265,6 +283,8 @@ test does not intentionally block the PIN. On a PIN-managed card the test
 instead verifies that reset is rejected by policy. Use `-SkipPukReset` to avoid
 exercising either path.
 
+## Logging
+
 Debug builds define `CMD_VERBOSE`. When `LogPath` enables logging, the
 minidriver creates one log file per host process from `DllMain` and passes the
 same `FILE *`, level, and sensitive-data flag to `canokey-pkcs11` through
@@ -290,7 +310,7 @@ New-ItemProperty -Path HKLM:\SOFTWARE\Canokeys\ckmd -Name LogSensitiveData -Valu
 
 ## Automated Smoke Test
 
-For the current development card, target the CanoKey reader directly and pass
+For repeated runs on a dedicated development card, target its reader and pass
 the test PIN on the command line:
 
 ```powershell
@@ -302,7 +322,7 @@ smart-card readers. Passing `-pin` avoids the Windows PIN prompt during repeated
 debug runs. This is only appropriate for the local development key and its test
 PIN.
 
-The repository also has a convenience wrapper for the current debug loop:
+To build, deploy, reset the test card, and run the check:
 
 ```powershell
 .\scripts\smoke-scinfo.ps1
@@ -337,10 +357,12 @@ The crypto tests use Windows CryptoAPI/CNG APIs directly instead of parsing
 - CNG RSA/SHA256 PSS through Microsoft Smart Card Key Storage Provider
 - CNG ECDSA P-256/P-384/P-521 with SHA256 through Microsoft Smart Card Key
   Storage Provider
-- PKCS#11 ECDH P-256/P-384/P-521 raw-secret derivation through the managed
-  backend, checked against software-generated peer keys
-- RSA PKCS#1/OAEP decrypt through PKCS#11 for supported PIV RSA slots; Windows
-  advertises key exchange only when slot 9D contains RSA
+- CNG RSA PKCS#1/OAEP decrypt when an RSA 9D key-exchange container is discovered
+
+The scripts also contain an optional CNG ECDH check, but the driver does not
+publish Windows ECDH containers. That check is therefore skipped with the
+supported container map. Test ECDH separately through the PKCS#11 backend;
+`crypto-test.ps1` and `derive-test.ps1` do not provide that backend coverage.
 
 Like the smoke wrapper, it defaults to building x64 Debug, running the debug
 install target, discovering and resetting the DevKit control port, and passing
@@ -361,12 +383,14 @@ All four scripts share `scripts\minidriver-test-common.ps1`, so
 signing, decrypt, and derive tests without recompiling or reloading between
 groups.
 
-For the current development card, Windows discovery covers signature
-containers with `LegacyKeySpec = AT_SIGNATURE`. EC ECDH remains covered by the
-PKCS#11 API-level tests because its Windows key-spec view is hidden during
-certificate propagation; using `AT_ECDHE_*` is intentionally rejected. RSA
-decrypt is covered by the PKCS#11 API-level tests, and RSA 9D
-`AT_KEYEXCHANGE` is supported when slot 9D contains an RSA key.
+Use `LegacyKeySpec = AT_SIGNATURE` for Windows signing containers other than
+RSA 9D. RSA 9D uses `AT_KEYEXCHANGE`, including for signing. The generic CAPI
+signing helper assumes `AT_SIGNATURE`; select an appropriate signing container
+with `-BaseCspContainer` when RSA 9D is present. Do not interpret a key-spec
+mismatch as a card signing failure.
+
+PKCS#11 tests cover ECDH and RSA decryption outside the Windows-mapped surface.
+Do not replace a key in 9D solely to make an optional Windows decrypt test run.
 
 ECDH currently supports only raw secret derivation (`BCRYPT_KDF_RAW_SECRET`,
 which maps to PKCS#11 `CKD_NULL`). `CardDeriveKey` does not yet implement
@@ -375,14 +399,16 @@ higher-level KDF parameter lists. The `pfnCspGetDHAgreement` member in
 caller-owned callback, and only call it later if supporting KDF buffers such as
 `KDF_SECRET_HANDLE` / `KDF_NCRYPT_SECRET_HANDLE`.
 
+## Key creation and certificate enrollment
+
 When creating keys through Microsoft Smart Card KSP, callers select the smart
 card provider and reader, not a PIV slot directly. The KSP reads `mscp/cmapfile`
 and chooses a container index for the new key; the minidriver maps container
 indexes `0..5` to PIV object IDs `1..6` (`9A`, `9C`, `9D`, `9E`, `82`, and
 `83`).
 Creating a new smart-card key must not use a silent context: Microsoft documents
-that new smart-card containers can require UI, and local testing showed
-`certreq -q`/`Silent = true` and `NCRYPT_SILENT_FLAG` stop before
+that new smart-card containers can require UI.
+`certreq -q`/`Silent = true` and `NCRYPT_SILENT_FLAG` can stop before
 `CardCreateContainer*`. Non-silent `NCryptFinalizeKey` first writes the root
 `cardcf` cache file and an updated `mscp/cmapfile` before continuing toward
 container selection. The minidriver retains that map as a process-local overlay
@@ -406,25 +432,22 @@ and are discarded when that context ends.
 PC/SC handle replacement alone does not end enrollment either: the driver
 revalidates card identity before preserving the map. RSA 9D is published under
 key-exchange only so `NCryptOpenKey` with legacy key spec zero can reopen it.
-An existing-key PKCS#10 request with `UseExistingKeySet=TRUE`, `KeySpec=1`, and
-the public-key-derived container name was verified on ARM64; its request
-self-signature passes OpenSSL verification.
+For an existing RSA 9D key, use `UseExistingKeySet=TRUE`, `KeySpec=1`, and
+the live container name in the PKCS#10 request.
 
 For a new RSA signing-only request, set `KeyUsageProperty=2` in `[NewRequest]`
 alongside `KeySpec=AT_SIGNATURE`. The former restricts CNG usage to signing;
 `KeyUsage=0x80` only sets certificate usage and does not perform this selection.
-On ARM64 this combination creates an RSA signing key in the first empty slot
-and completes the CSR after a same-card handle replacement. Both new-key and
-existing-key request self-signatures were verified with `openssl req -verify`.
+Verify the resulting CSR self-signature with `openssl req -verify` before
+submitting it to the CA.
 RSA 9D callers must use `AT_KEYEXCHANGE` (or CNG spec zero), including when
 signing. Older callers or certificate associations fixed to `AT_SIGNATURE`
 for that slot require migration; the unmodified CAPI test helper assumes
 `AT_SIGNATURE` and therefore reports failures for RSA 9D.
 
-The follow-up enrollment regression fixes preserve aliases across matching map
-rewrites, latch identity failures until context teardown, and align RSA 9D
-certificate files with its key-exchange-only public-key view. Build the optional
-deterministic tests in an initialized VS ClangCL environment:
+### Enrollment regression tests
+
+Build the optional deterministic tests in an initialized VS ClangCL environment:
 
 ```powershell
 cmake -S . -B out\build\arm64-Clang-Debug -DCMD_BUILD_ENROLLMENT_TESTS=ON
@@ -437,10 +460,12 @@ backend and never access a card. They cover repeated maps before/after key
 creation, default-flag changes, invalid input preserving the prior map,
 name/spec/size/public-key changes dropping aliases, same-card rebind, sticky
 identity/read failures on repeated callbacks, and RSA/EC view selection.
-They do not replace real certificate propagation or Word acceptance. The
-earlier ARM64 CSR successes above predate these follow-up fixes; rerun hardware
-acceptance after deploying the new DLLs. In particular, new 9D enrollment and
-certificate propagation are still unverified for this revision.
+After deploying a changed DLL, run the
+[Windows propagation and enrollment checks](validation.md) on that binary.
+Mock tests cannot establish certificate propagation, cross-process enrollment,
+or application signing compatibility.
+
+### Management authorization
 
 The KSP authenticates `ROLE_USER`, chooses the next container from
 `mscp/cmapfile`, and then calls `CardCreateContainer*`; it does not separately

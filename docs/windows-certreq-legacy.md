@@ -14,8 +14,8 @@ If you already have a key, use Option A to request a certificate with its
 current name. If you have already created a CSR and received a certificate,
 use Option B to fix the saved name before installing the certificate.
 
-Install an up-to-date minidriver from the `genkey` branch first; older driver
-versions have additional certificate-request bugs. Run all commands as the
+Use an up-to-date minidriver with the deployment appropriate for your
+[Windows architecture](architecture-distribution.md). Run all commands as the
 same Windows user, with the same card connected. These examples install the
 certificate for that user. Let Windows prompt for the PIN; do not use `-q`
 or `Silent=TRUE`.
@@ -191,12 +191,10 @@ Repairing `My` instead of `Request` does not repair the pending request that
 - An occupied-slot rejection is intentional. Neither reissuing a certificate
   nor repairing a request requires replacing its private key.
 
-## What has been tested
+## Compatibility limits
 
-On Windows ARM64 with driver d064aa7, the Request repair procedure worked for
-a new RSA key: certificate installation, automatic certificate discovery after
-reinsertion, and signing all passed without a firmware upgrade. Creating CSRs
-with existing RSA keys in 9A and 9D also passed.
-
-The ECDSA example was tested on newer firmware only. The complete ECDSA flow
-on older firmware and AD smart-card login have not been verified.
+The legacy request-repair procedure has hardware coverage for RSA enrollment
+and signing on Windows ARM64, including existing RSA keys in 9A and 9D.
+The ECDSA example has only been exercised on newer firmware; its complete
+legacy-firmware flow is not verified. These procedures do not establish
+support for AD smart-card login.
