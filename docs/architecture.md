@@ -5,6 +5,14 @@ fallback are described in [container-names.md](container-names.md).
 
 ## Request Flow
 
+`SLOT.keyPresent` records physical key occupancy before algorithm filtering;
+`SLOT.present` continues to describe a supported Windows key view. Enrollment
+must select empty slots using physical occupancy. Container creation rejects
+known occupied slots, and the managed PKCS#11 write path independently checks
+fresh metadata in the same transaction as generation/import. Unsupported keys
+stay hidden from Windows but cannot be overwritten by Windows creation. KSP
+may still select such a hidden slot and receive a creation error.
+
 Windows loads `canokey-minidriver.dll` through the Calais smart-card mapping
 and calls `CardAcquireContext`. The minidriver enables CanoKey PKCS#11 managed
 mode with Windows-owned allocation functions, `SCARDCONTEXT`, and

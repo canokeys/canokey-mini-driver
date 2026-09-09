@@ -121,6 +121,7 @@ static void stage(CMD_CONTEXT *context, CONTAINER_MAP_RECORD *records) {
 
 static void generated(CMD_CONTEXT *context) {
   SLOT *slot = &context->canokey.slots[2];
+  slot->keyPresent = TRUE;
   slot->present = TRUE;
   slot->pivId = 0x9D;
   slot->keyType = CKK_RSA;
@@ -134,6 +135,15 @@ static void generated(CMD_CONTEXT *context) {
 int main(void) {
   CMD_CONTEXT context;
   CONTAINER_MAP_RECORD records[WINDOWS_CONTAINER_COUNT];
+  // An unsupported key must block both the target and the provisional source
+  // of an enrollment alias, even though neither has a Windows key view.
+  for (unsigned occupied = 0; occupied <= 2; occupied += 2) {
+    init(&context, records);
+    context.canokey.slots[occupied].keyPresent = TRUE;
+    CHECK(!canokey_slot_has_key(&context.canokey.slots[occupied]));
+    stage(&context, records);
+    CHECK(cmd_resolve_container_index(&context, 0) == 0);
+  }
   init(&context, records);
   stage(&context, records);
   CHECK(cmd_resolve_container_index(&context, 0) == 2);

@@ -63,7 +63,7 @@ static void ConfigureEnrollmentContainerAliases(CMD_CONTEXT_PTR pContext, PCONTA
     }
   }
   if (keyExchangeIndex == recordCount || keyExchangeIndex >= pContext->canokey.slotCount ||
-      canokey_slot_has_key(&pContext->canokey.slots[keyExchangeIndex]) ||
+      pContext->canokey.slots[keyExchangeIndex].keyPresent ||
       (records[keyExchangeIndex].bFlags & CONTAINER_MAP_VALID_CONTAINER) != 0) {
     return;
   }
@@ -72,7 +72,7 @@ static void ConfigureEnrollmentContainerAliases(CMD_CONTEXT_PTR pContext, PCONTA
   for (DWORD i = 0; i < recordCount; i++) {
     if (i == keyExchangeIndex || (records[i].bFlags & CONTAINER_MAP_VALID_CONTAINER) == 0 ||
         records[i].wKeyExchangeKeySizeBits == 0 ||
-        (i < pContext->canokey.slotCount && canokey_slot_has_key(&pContext->canokey.slots[i]))) {
+        (i < pContext->canokey.slotCount && pContext->canokey.slots[i].keyPresent)) {
       continue;
     }
     if (provisionalIndex != recordCount) {

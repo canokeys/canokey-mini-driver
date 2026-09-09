@@ -21,6 +21,7 @@ static DWORD map_pkcs11_container_error(CK_RV rv) {
   case CKR_USER_NOT_LOGGED_IN:
     return SCARD_W_SECURITY_VIOLATION;
   case CKR_SESSION_READ_ONLY:
+  case CKR_ACTION_PROHIBITED:
     return SCARD_E_INVALID_PARAMETER;
   case CKR_PIN_INCORRECT:
   case CKR_PIN_INVALID:
@@ -519,7 +520,10 @@ DWORD WINAPI CardCreateContainer(__in PCARD_DATA pCardData, __in BYTE bContainer
     return ret;
   }
 
-  if (dwFlags == CARD_CREATE_CONTAINER_KEY_IMPORT) {
+  if (pContext->canokey.slots[physicalContainerIndex].keyPresent) {
+    ret = SCARD_E_INVALID_PARAMETER;
+    CMD_WARN("Refusing to overwrite occupied container %u", physicalContainerIndex);
+  } else if (dwFlags == CARD_CREATE_CONTAINER_KEY_IMPORT) {
     ret = import_key(pContext, physicalContainerIndex, dwKeySpec, dwKeySize, pbKeyData);
   } else {
     ret = create_keypair(pContext, physicalContainerIndex, dwKeySpec, dwKeySize);

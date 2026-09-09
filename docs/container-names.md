@@ -45,8 +45,9 @@ These checks do not validate deployment of the newly rebuilt minidriver.
 Earlier F5 acceptance covered RSA certreq new/accept, existing-key ECDSA
 enrollment, certificate propagation after reinsertion, and Word signatures.
 Word certificate-trust warnings remain separate from signature verification.
-The pre-existing unsupported-SM2 slot occupancy problem remains unresolved;
-do not use automatic key allocation on a card containing unsupported keys.
+At this checkpoint, unsupported-SM2 slot occupancy was not protected. The
+subsequent occupancy guard is described in architecture.md; its new validation
+must be distinguished from these earlier installed-driver results.
 
 The cleanup has not repeated the complete Windows propagation gate, legacy
 firmware hardware tests, Linux unit/sanitizer tests, or Copilot/CodeRabbit

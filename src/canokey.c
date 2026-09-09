@@ -235,6 +235,7 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
       if (rv != CKR_OK)
         CMD_RETURN(rv, "C_FindObjectsFinal failed");
     }
+    slot->keyPresent = ulObjectCount != 0;
     if ((slot->capabilities & (CANOKEY_SLOT_CAP_SIGN | CANOKEY_SLOT_CAP_DECRYPT | CANOKEY_SLOT_CAP_DERIVE)) == 0) {
       CMD_DEBUG("Slot %d: PIV 0x%02x has no minidriver capability, skipping", i, slot->pivId);
       continue;

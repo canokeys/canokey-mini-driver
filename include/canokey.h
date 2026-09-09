@@ -37,6 +37,7 @@ typedef enum {
 } CANOKEY_EC_CURVE;
 
 typedef struct {
+  CK_BBOOL keyPresent; // Physical occupancy, including Windows-unsupported algorithms.
   CK_BBOOL present;
   CK_BYTE id;
   CK_BYTE pivId;
