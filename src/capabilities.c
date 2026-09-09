@@ -23,8 +23,10 @@ DWORD WINAPI CardQueryCapabilities(__in PCARD_DATA pCardData, __inout PCARD_CAPA
   }
 
   // Set capabilities
-  pCardCapabilities->fCertificateCompression = FALSE;
-  pCardCapabilities->fKeyGen = FALSE;
+  // The minidriver owns the PIV-to-DER certificate representation. Tell Base
+  // CSP/KSP not to apply its card-file compression layer to CardReadFile data.
+  pCardCapabilities->fCertificateCompression = TRUE;
+  pCardCapabilities->fKeyGen = TRUE;
 
   CMD_RET_OK;
 }

@@ -7,18 +7,21 @@
 #include <Windows.h>
 
 #include "logging.h"
+#include "pkcs11_canokey.h"
 
 #define CMD_CONFIG_REGISTRY_KEY "SOFTWARE\\Canokeys\\ckmd"
 #define CMD_CONFIG_MAX_PATH 512
-#define CMD_NEW_KEY_TOUCH_POLICY_NEVER 1
-#define CMD_NEW_KEY_TOUCH_POLICY_ALWAYS 2
-#define CMD_NEW_KEY_TOUCH_POLICY_CACHED 3
 
 typedef struct {
   bool has_log_path;
   char log_path[CMD_CONFIG_MAX_PATH];
   CMD_LOG_CONFIG logging;
+  bool protect_management;
+  bool refresh_device_keys;
+  DWORD refresh_window_seconds;
   DWORD new_key_touch_policy;
+  bool has_new_key_pin_policy;
+  DWORD new_key_pin_policy;
   bool has_pin_cache_timeout;
   DWORD pin_cache_timeout;
 } CMD_CONFIG;
