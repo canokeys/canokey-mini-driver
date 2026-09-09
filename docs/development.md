@@ -385,8 +385,56 @@ that new smart-card containers can require UI, and local testing showed
 `certreq -q`/`Silent = true` and `NCRYPT_SILENT_FLAG` stop before
 `CardCreateContainer*`. Non-silent `NCryptFinalizeKey` first writes the root
 `cardcf` cache file and an updated `mscp/cmapfile` before continuing toward
-container selection, so keep both writes tolerant even though the authoritative
-state comes from CanoKey metadata.
+container selection. The minidriver retains that map as a process-local overlay
+for the current `CARD_DATA` so the KSP can resolve its provisional key name on
+subsequent reads. If KSP assigns an RSA key-exchange request to the first empty
+record, the enrollment context aliases that logical index to the empty fixed
+9D index across container, crypto, property, and certificate-file callbacks.
+The map returned to KSP keeps its provisional name and logical index.
+Persistent authoritative state still comes from CanoKey metadata.
+KSP can log out and reauthenticate after its key-generation self-test before it
+signs the final PKCS#10 request. That authentication transition must not clear
+the process-local map or alias; both remain scoped to the current `CARD_DATA`
+and are discarded when that context ends.
+
+PC/SC handle replacement alone does not end enrollment either: the driver
+revalidates card identity before preserving the map. RSA 9D is published under
+key-exchange only so `NCryptOpenKey` with legacy key spec zero can reopen it.
+An existing-key PKCS#10 request with `UseExistingKeySet=TRUE`, `KeySpec=1`, and
+the public-key-derived container name was verified on ARM64; its request
+self-signature passes OpenSSL verification.
+
+For a new RSA signing-only request, set `KeyUsageProperty=2` in `[NewRequest]`
+alongside `KeySpec=AT_SIGNATURE`. The former restricts CNG usage to signing;
+`KeyUsage=0x80` only sets certificate usage and does not perform this selection.
+On ARM64 this combination creates an RSA signing key in the first empty slot
+and completes the CSR after a same-card handle replacement. Both new-key and
+existing-key request self-signatures were verified with `openssl req -verify`.
+RSA 9D callers must use `AT_KEYEXCHANGE` (or CNG spec zero), including when
+signing. Older callers or certificate associations fixed to `AT_SIGNATURE`
+for that slot require migration; the unmodified CAPI test helper assumes
+`AT_SIGNATURE` and therefore reports failures for RSA 9D.
+
+The follow-up enrollment regression fixes preserve aliases across matching map
+rewrites, latch identity failures until context teardown, and align RSA 9D
+certificate files with its key-exchange-only public-key view. Build the optional
+deterministic tests in an initialized VS ClangCL environment:
+
+```powershell
+cmake -S . -B out\build\arm64-Clang-Debug -DCMD_BUILD_ENROLLMENT_TESTS=ON
+.\build.ps1 -Arch arm64 -Config Debug
+ctest --test-dir out\build\arm64-Clang-Debug -R enrollment-regression --output-on-failure
+```
+
+Use the same Visual Studio bundled CMake as `build.ps1`. These tests use a mock
+backend and never access a card. They cover repeated maps before/after key
+creation, default-flag changes, invalid input preserving the prior map,
+name/spec/size/public-key changes dropping aliases, same-card rebind, sticky
+identity/read failures on repeated callbacks, and RSA/EC view selection.
+They do not replace real certificate propagation or Word acceptance. The
+earlier ARM64 CSR successes above predate these follow-up fixes; rerun hardware
+acceptance after deploying the new DLLs. In particular, new 9D enrollment and
+certificate propagation are still unverified for this revision.
 
 The KSP authenticates `ROLE_USER`, chooses the next container from
 `mscp/cmapfile`, and then calls `CardCreateContainer*`; it does not separately

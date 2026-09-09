@@ -38,6 +38,10 @@ static __attribute__((unused)) void cmd_release_context_state_lock(CMD_CONTEXT_P
 #define INJECT_HANDLES()                                                                                               \
   AcquireSRWLockExclusive(&g_cmd_context_lock);                                                                        \
   PSRWLOCK _cmd_context_lock CMD_CONTEXT_LOCK_GUARD = &g_cmd_context_lock;                                             \
+  if (pCardData->pvVendorSpecific != NULL &&                                                                           \
+      ((CMD_CONTEXT_PTR)pCardData->pvVendorSpecific)->cardIdentityError != SCARD_S_SUCCESS)                            \
+    CMD_RETURN(((CMD_CONTEXT_PTR)pCardData->pvVendorSpecific)->cardIdentityError,                                      \
+               "Card context requires reacquisition");                                                                 \
   CNK_MANAGED_MODE_INIT_ARGS _cmd_managed_args = {.malloc_func = (CNK_MALLOC_FUNC)g_pfnCspAlloc,                       \
                                                   .free_func = (CNK_FREE_FUNC)g_pfnCspFree,                            \
                                                   .hSCardCtx = pCardData->hSCardCtx,                                   \
@@ -56,8 +60,11 @@ static __attribute__((unused)) void cmd_release_context_state_lock(CMD_CONTEXT_P
     AcquireSRWLockExclusive(&_cmd_context->state_lock);                                                                \
     _cmd_state_guard = _cmd_context;                                                                                   \
     if (_cmd_context->card_handle != pCardData->hScard) {                                                              \
-      _cmd_context->card_handle = pCardData->hScard;                                                                   \
       cmd_clear_user_pin(_cmd_context);                                                                                \
+      DWORD _cmd_rebind_ret = cmd_revalidate_enrollment_card(_cmd_context);                                            \
+      if (_cmd_rebind_ret != SCARD_S_SUCCESS)                                                                          \
+        CMD_RETURN(_cmd_rebind_ret, "Enrollment card identity changed or could not be verified");                      \
+      _cmd_context->card_handle = pCardData->hScard;                                                                   \
     }                                                                                                                  \
     LONG _cmd_generation = InterlockedCompareExchange(&g_cmd_metadata_generation, 0, 0);                               \
     if (_cmd_context->metadataGeneration != _cmd_generation) {                                                         \
@@ -97,6 +104,8 @@ struct CMD_CONTEXT {
   LONG metadataGeneration;
   CANOKEY canokey;
   BYTE cardId[16];
+  // Sticky until context teardown; clearing an enrollment map cannot unpoison it.
+  DWORD cardIdentityError;
   ULONGLONG last_metadata_refresh_ms;
   BOOL metadata_refresh_valid;
   PIN_SET authenticatedPins;
@@ -107,6 +116,15 @@ struct CMD_CONTEXT {
   BYTE userPin[CMD_MAX_USER_PIN_LEN];
   DWORD userPinLen;
   BOOL userPinValid;
+  // Windows KSP writes its provisional container name before calling
+  // CardCreateContainer*. Keep that process-local view alive for the rest of
+  // the enrollment context without treating it as persistent card state.
+  CONTAINER_MAP_RECORD enrollmentContainerMap[WINDOWS_CONTAINER_COUNT];
+  BYTE enrollmentContainerAliases[WINDOWS_CONTAINER_COUNT];
+  RSA_PUB_KEY enrollmentAliasKeys[WINDOWS_CONTAINER_COUNT];
+  BOOL enrollmentAliasKeyValid[WINDOWS_CONTAINER_COUNT];
+  DWORD enrollmentContainerMapSize;
+  BOOL enrollmentContainerMapValid;
   CMD_DH_AGREEMENT dhAgreements[CMD_MAX_DH_AGREEMENTS];
 };
 
@@ -118,6 +136,22 @@ static __attribute__((unused)) void cmd_release_context_state_lock(CMD_CONTEXT_P
 DWORD FillCardKeySizes(DWORD dwKeySpec, PCARD_KEY_SIZES pKeySizes);
 void FillCardFreeSpaceInfo(PCARD_FREE_SPACE_INFO pCardFreeSpaceInfo);
 DWORD GenerateCardIdentifier(CMD_CONTEXT_PTR pContext);
+void cmd_clear_enrollment_container_map(CMD_CONTEXT_PTR pContext);
+DWORD cmd_revalidate_enrollment_card(CMD_CONTEXT_PTR pContext);
+BYTE cmd_resolve_container_index(CMD_CONTEXT_PTR pContext, BYTE containerIndex);
+BYTE cmd_certificate_container_index(CMD_CONTEXT_PTR pContext, BYTE physicalIndex);
+DWORD cmd_stage_enrollment_container_map(CMD_CONTEXT_PTR pContext, const BYTE *data, DWORD size);
+void cmd_capture_enrollment_alias_key(CMD_CONTEXT_PTR pContext, BYTE containerIndex);
+
+// Windows publishes a single legacy view for RSA 9D, while the backend can
+// still sign with its AT_KEYEXCHANGE key. EC key exchange remains unpublished.
+static inline BOOL cmd_slot_has_key_exchange_view(const SLOT *slot) {
+  return canokey_slot_can_decrypt(slot) && slot->keyType == CKK_RSA && slot->pivId == 0x9D;
+}
+
+static inline BOOL cmd_slot_has_signature_view(const SLOT *slot) {
+  return canokey_slot_can_sign(slot) && !cmd_slot_has_key_exchange_view(slot);
+}
 void cmd_clear_user_pin(CMD_CONTEXT_PTR pContext);
 void cmd_clear_all_user_pins(void);
 void cmd_store_user_pin(CMD_CONTEXT_PTR pContext, const BYTE *pin, DWORD pinLen);

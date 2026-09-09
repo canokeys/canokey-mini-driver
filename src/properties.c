@@ -267,13 +267,14 @@ DWORD WINAPI CardGetContainerProperty(__in PCARD_DATA pCardData, __in BYTE bCont
   }
   INJECT_HANDLES();
   CMD_GET_CTX(pCardData, pContext);
-  if (bContainerIndex >= WINDOWS_CONTAINER_COUNT || bContainerIndex >= pContext->canokey.slotCount) {
+  BYTE physicalContainerIndex = cmd_resolve_container_index(pContext, bContainerIndex);
+  if (physicalContainerIndex >= WINDOWS_CONTAINER_COUNT || physicalContainerIndex >= pContext->canokey.slotCount) {
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
   }
 
   // cmapfile may contain empty entries. Do not advertise a PIN identifier for
   // an empty container: Windows treats the property as proof that a key exists.
-  if (!canokey_slot_has_key(&pContext->canokey.slots[bContainerIndex])) {
+  if (!canokey_slot_has_key(&pContext->canokey.slots[physicalContainerIndex])) {
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Container has no key");
   }
 

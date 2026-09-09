@@ -417,16 +417,31 @@ synchronization and are not authoritative.
 
 `cmapfile` is serialized from the six stable Windows container records. Each
 `CONTAINER_MAP_RECORD` reports the stable container name, valid/default flags,
-and signature key size. An RSA 9D record also reports its validated
-key-exchange size; EC records leave that field zero because publishing the ECDH
+and signature key size, except RSA 9D, which reports only its validated
+key-exchange size and public-key blob. It still supports signing through
+`AT_KEYEXCHANGE`; a duplicate signature view prevents KSP spec-zero opens.
+EC records leave the key-exchange field zero because publishing the ECDH
 companion currently drops the associated certificate. Container names are
 derived from public-key bytes to preserve the associations created by the
 earlier minidriver implementation.
 
 Windows may write the map during enrollment. The minidriver validates its
-record-aligned length and discards the contents; submitted records are never
-used to choose a PIV slot. Stable slot policy and live token metadata remain
-authoritative.
+record-aligned bounded length and retains it only in the current `CARD_DATA`
+context so later KSP reads can resolve the provisional container name during
+`NCryptFinalizeKey`. When KSP uses the first empty index for a unique
+provisional RSA key-exchange record, the enrollment context aliases that
+logical index to the empty fixed 9D slot. Container creation, public-key lookup,
+private-key operations, container properties, and certificate-file access all
+resolve the same alias while KSP continues to see its original map record. The
+submitted name never changes the persistent fixed index-to-PIV mapping. The
+overlay and alias survive KSP logout and reauthentication within the same
+enrollment context and identity-verified same-card reconnects; they are cleared
+on failed card identity verification, failed creation, an incompatible
+replacement map write, or context teardown. Matching map rewrites preserve
+aliases only when the captured post-creation RSA public key still matches the
+target. Identity failure remains latched independently of map cleanup until the
+context is released. Stable slot policy and live token
+metadata remain authoritative across contexts.
 
 ### 7.4 Certificate Files
 
@@ -436,6 +451,11 @@ Certificate filenames follow the standard container convention:
 mscp/ksc00, mscp/ksc01, ...  signature certificates
 mscp/kxc02                       RSA 9D key-exchange certificate when provisioned
 ```
+
+RSA 9D does not expose `ksc02`; enumeration and file access follow the same
+single-KeySpec policy as its public-key blob and container-map record. EC 9D
+continues to expose `ksc02` only. Private signing remains available on RSA 9D
+through `AT_KEYEXCHANGE`.
 
 Reads return the DER certificate bytes from the matching PIV object. File info
 uses Windows-friendly read permissions so CSP/KSP enumeration succeeds. Writes

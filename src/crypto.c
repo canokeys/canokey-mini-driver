@@ -200,10 +200,11 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
     CMD_RETURN(ERROR_REVISION_MISMATCH, "dwVersion mismatch");
 
   CMD_GET_CTX(pCardData, pContext);
-  if (pCardSigningInfo->bContainerIndex >= pContext->canokey.slotCount)
+  BYTE physicalContainerIndex = cmd_resolve_container_index(pContext, pCardSigningInfo->bContainerIndex);
+  if (physicalContainerIndex >= pContext->canokey.slotCount)
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
 
-  SLOT *slot = &pContext->canokey.slots[pCardSigningInfo->bContainerIndex];
+  SLOT *slot = &pContext->canokey.slots[physicalContainerIndex];
   if (!canokey_slot_can_sign(slot)) {
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Container has no signature key");
   }
@@ -572,10 +573,11 @@ DWORD WINAPI CardRSADecrypt(__in PCARD_DATA pCardData, __inout PCARD_RSA_DECRYPT
 
   CMD_GET_CTX(pCardData, pContext);
   CMD_CONTEXT_PTR userPinGuard CMD_USER_PIN_GUARD = pContext;
-  if (pInfo->bContainerIndex >= pContext->canokey.slotCount)
+  BYTE physicalContainerIndex = cmd_resolve_container_index(pContext, pInfo->bContainerIndex);
+  if (physicalContainerIndex >= pContext->canokey.slotCount)
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
 
-  SLOT *slot = &pContext->canokey.slots[pInfo->bContainerIndex];
+  SLOT *slot = &pContext->canokey.slots[physicalContainerIndex];
   if (!canokey_slot_can_decrypt(slot)) {
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Container has no key exchange key");
   }

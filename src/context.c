@@ -385,6 +385,7 @@ DWORD CardDeleteContext(__inout PCARD_DATA pCardData) {
     // Closing a context must not leave its copied USER PIN behind, even when
     // a later cleanup stage reports an error and the context is retained.
     cmd_clear_user_pin(context);
+    cmd_clear_enrollment_container_map(context);
     CK_RV rv = C_CloseSession(context->session);
     DWORD cleanupError = SCARD_S_SUCCESS;
     if (rv != CKR_OK && rv != CKR_SESSION_HANDLE_INVALID && rv != CKR_CRYPTOKI_NOT_INITIALIZED) {

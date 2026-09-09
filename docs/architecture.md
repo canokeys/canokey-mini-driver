@@ -54,8 +54,10 @@ to `SCARD_*` errors.
 
 Container indexes `0..5` map to PIV object IDs `1..6`, hence slots
 `9A`, `9C`, `9D`, `9E`, `82`, and `83`. These six stable Windows containers are
-signature-capable. An RSA key in 9D additionally publishes the validated
-Windows `AT_KEYEXCHANGE` view. EC ECDH companion views remain hidden because
+signature-capable. An RSA key in 9D publishes only the Windows
+`AT_KEYEXCHANGE` view, which still supports CSR signing. Publishing the same
+RSA key under both legacy key specs makes KSP opens with spec zero fail and
+prevents certreq from reusing the key. EC ECDH companion views remain hidden because
 the current CPDK/Windows path drops the associated EC certificate when those
 fields are populated.
 
@@ -183,8 +185,40 @@ container. EC ECDH remains a PKCS#11 capability and is intentionally not
 mapped to Windows until a compatible companion-property path is validated.
 
 The minidriver accepts Base CSP/KSP writes to `cardcf` and `cmapfile` for
-compatibility, but does not use those writes as authoritative state; every
-generated view comes from live PKCS#11 metadata.
+compatibility. A `cmapfile` write is retained as a process-local enrollment
+overlay in the current `CARD_DATA` context because Microsoft Smart Card KSP
+rereads its provisional container name before and during `NCryptFinalizeKey`.
+The overlay is discarded with the enrollment context. When KSP places a
+provisional RSA key-exchange record in the first free map entry, the context
+aliases that logical index to the empty fixed 9D entry for container, crypto,
+property, and certificate-file callbacks. KSP continues to see the index and
+name it selected, while the card operation preserves the rule that only 9D
+exposes Windows key exchange. Persistent generated views still come from live
+PKCS#11 metadata and keep the fixed physical index mapping. Authentication
+logout and reauthentication do not end the enrollment context, so they do not
+discard its overlay or alias.
+
+KSP may also replace the PC/SC handle within that context. Revalidate the card
+identifier and retain the overlay on same-card reconnects. If verification
+fails or identifies a different card, clear the overlay and latch the error
+until context teardown. Subsequent callbacks reject the context before changing
+the managed binding; `CardDeleteContext` remains available for cleanup.
+
+`src/enrollment.c` owns these context-local transitions under the existing
+global/context locks. A replacement map is staged before publication. For an
+unchanged valid name, key spec and key size, retain an established alias only
+when the target matches the RSA public key captured after successful creation.
+Default-flag changes do not break the alias. Invalid-sized writes preserve the
+previous state; removing or replacing a record drops its old alias. No input
+buffer is retained and no additional PKCS#11 mutation is introduced.
+
+Windows view predicates are shared by public-key publication, map key sizes,
+and certificate-file enumeration/access. RSA 9D exposes only `kxcNN`, while
+remaining sign-capable through `AT_KEYEXCHANGE`. EC retains its signature-only
+Windows view. The cache freshness epoch changes with this file-view correction.
+During enrollment, certificate enumeration converts physical slots back to
+their logical aliases, so each emitted filename resolves to the same key.
+`CardGetFileInfo` reports the retained map length while the overlay is active.
 
 ## Logging And Test Transport
 

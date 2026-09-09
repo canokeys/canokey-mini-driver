@@ -14,7 +14,7 @@
 #include "logging.h"
 #include "minidriver.h"
 
-#define CNK_CACHE_FRESHNESS_EPOCH 0x27u
+#define CNK_CACHE_FRESHNESS_EPOCH 0x28u
 
 static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, PDWORD pcbData);
 
@@ -196,6 +196,7 @@ static DWORD GetCertificateFileSlot(CMD_CONTEXT_PTR pContext, LPCSTR pszFileName
   }
 
   BYTE slotIndex = GetFileContainerIndex(pszFileName);
+  slotIndex = cmd_resolve_container_index(pContext, slotIndex);
   if (slotIndex >= pContext->canokey.slotCount) {
     CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "File not found");
   }
@@ -207,10 +208,10 @@ static DWORD GetCertificateFileSlot(CMD_CONTEXT_PTR pContext, LPCSTR pszFileName
   if (!canokey_slot_has_key(slot)) {
     CMD_RETURN(forWrite ? SCARD_E_NO_KEY_CONTAINER : SCARD_E_FILE_NOT_FOUND, "Container has no key");
   }
-  if (keyExchangeCert && !canokey_slot_can_decrypt(slot) && !canokey_slot_can_derive(slot)) {
+  if (keyExchangeCert && !cmd_slot_has_key_exchange_view(slot)) {
     CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Key exchange certificate not found");
   }
-  if (signatureCert && !canokey_slot_can_sign(slot)) {
+  if (signatureCert && !cmd_slot_has_signature_view(slot)) {
     CMD_RETURN(SCARD_E_FILE_NOT_FOUND, "Signature certificate not found");
   }
 
@@ -304,6 +305,11 @@ DWORD WINAPI CardReadFile(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryName
       return AllocCopy(NULL, 0, ppbData, pcbData);
 
     if (strcmp(pszFileName, szCONTAINER_MAP_FILE) == 0) {
+      if (pContext->enrollmentContainerMapValid) {
+        CMD_DEBUG("Returning process-local enrollment container map, size: %lu",
+                  (unsigned long)pContext->enrollmentContainerMapSize);
+        return AllocCopy(pContext->enrollmentContainerMap, pContext->enrollmentContainerMapSize, ppbData, pcbData);
+      }
       DWORD res = GenerateContainerMapFile(pContext, ppbData, pcbData);
       if (res != SCARD_S_SUCCESS) {
         CMD_RETURN(res, "Generate container map failed");
@@ -410,12 +416,18 @@ DWORD WINAPI CardWriteFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
     CMD_RETURN(SCARD_E_DIR_NOT_FOUND, "Directory not found");
   }
   if (strcmp(pszFileName, szCONTAINER_MAP_FILE) == 0) {
-    if (cbData % sizeof(CONTAINER_MAP_RECORD) != 0) {
+    if (cbData % sizeof(CONTAINER_MAP_RECORD) != 0 || cbData > sizeof(pContext->enrollmentContainerMap)) {
       CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Invalid container map size");
     }
-    // KSP writes cmapfile while enrolling, but this minidriver never consumes
-    // the submitted records. Stable slot policy and live metadata remain the
-    // only inputs to CardCreateContainer and GenerateContainerMapFile.
+    // NCryptFinalizeKey writes its provisional key name here, then reads the
+    // map again to resolve the container before CardCreateContainer*. The map
+    // is an enrollment overlay only. A temporary alias lets callbacks using
+    // the KSP-selected logical index reach the policy-selected physical slot;
+    // a later CARD_DATA context rebuilds the fixed live mapping.
+    DWORD ret = cmd_stage_enrollment_container_map(pContext, pbData, cbData);
+    if (ret != SCARD_S_SUCCESS)
+      return ret;
+    CMD_DEBUG("Staged process-local enrollment container map, size: %lu", (unsigned long)cbData);
     CMD_RET_OK;
   }
 
@@ -433,7 +445,10 @@ DWORD WINAPI CardWriteFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
 
   CK_OBJECT_CLASS objectClass = CKO_CERTIFICATE;
   CK_CERTIFICATE_TYPE certType = CKC_X_509;
-  CK_BYTE objectId = slot->id != 0 ? slot->id : canokey_container_object_id(GetFileContainerIndex(pszFileName));
+  CK_BYTE objectId =
+      slot->id != 0
+          ? slot->id
+          : canokey_container_object_id(cmd_resolve_container_index(pContext, GetFileContainerIndex(pszFileName)));
   CK_BBOOL token = CK_TRUE;
   CK_OBJECT_HANDLE objectHandle = CK_INVALID_HANDLE;
   CK_ATTRIBUTE templ[] = {
@@ -504,7 +519,9 @@ DWORD WINAPI CardGetFileInfo(__in PCARD_DATA pCardData, __in LPSTR pszDirectoryN
       CMD_RET_OK;
     }
     if (strcmp(pszFileName, szCONTAINER_MAP_FILE) == 0) {
-      pCardFileInfo->cbFileSize = (DWORD)(pContext->canokey.slotCount * sizeof(CONTAINER_MAP_RECORD));
+      pCardFileInfo->cbFileSize = pContext->enrollmentContainerMapValid
+                                      ? pContext->enrollmentContainerMapSize
+                                      : (DWORD)(pContext->canokey.slotCount * sizeof(CONTAINER_MAP_RECORD));
       CMD_RET_OK;
     }
     if (strncmp(pszFileName, szUSER_KEYEXCHANGE_CERT_PREFIX, 3) == 0) {
@@ -586,11 +603,15 @@ DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
     // The Windows file-system contract uses two decimal digits (for example,
     // ksc00 and kxc02). CardReadFile also accepts unpadded names for callers
     // that follow the older cardmod.h examples.
-    if (canokey_slot_can_sign(slot)) {
-      total += (DWORD)snprintf(NULL, 0, "%s%02lu", szUSER_SIGNATURE_CERT_PREFIX, (unsigned long)i) + 1;
+    if (cmd_slot_has_signature_view(slot)) {
+      total += (DWORD)snprintf(NULL, 0, "%s%02lu", szUSER_SIGNATURE_CERT_PREFIX,
+                               (unsigned long)cmd_certificate_container_index(pContext, (BYTE)i)) +
+               1;
     }
-    if (canokey_slot_can_decrypt(slot)) {
-      total += (DWORD)snprintf(NULL, 0, "%s%02lu", szUSER_KEYEXCHANGE_CERT_PREFIX, (unsigned long)i) + 1;
+    if (cmd_slot_has_key_exchange_view(slot)) {
+      total += (DWORD)snprintf(NULL, 0, "%s%02lu", szUSER_KEYEXCHANGE_CERT_PREFIX,
+                               (unsigned long)cmd_certificate_container_index(pContext, (BYTE)i)) +
+               1;
     }
   }
   total += 1;
@@ -625,16 +646,18 @@ DWORD WINAPI CardEnumFiles(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
     if (slot->certLen == 0) {
       continue;
     }
-    if (canokey_slot_can_sign(slot)) {
-      written = snprintf(cursor, remaining, "%s%02lu", szUSER_SIGNATURE_CERT_PREFIX, (unsigned long)i);
+    if (cmd_slot_has_signature_view(slot)) {
+      written = snprintf(cursor, remaining, "%s%02lu", szUSER_SIGNATURE_CERT_PREFIX,
+                         (unsigned long)cmd_certificate_container_index(pContext, (BYTE)i));
       if (written < 0 || written >= (int)remaining) {
         CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to format signature cert file name");
       }
       cursor += written + 1;
       remaining -= (DWORD)written + 1;
     }
-    if (canokey_slot_can_decrypt(slot)) {
-      written = snprintf(cursor, remaining, "%s%02lu", szUSER_KEYEXCHANGE_CERT_PREFIX, (unsigned long)i);
+    if (cmd_slot_has_key_exchange_view(slot)) {
+      written = snprintf(cursor, remaining, "%s%02lu", szUSER_KEYEXCHANGE_CERT_PREFIX,
+                         (unsigned long)cmd_certificate_container_index(pContext, (BYTE)i));
       if (written < 0 || written >= (int)remaining) {
         CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to format key exchange cert file name");
       }
@@ -694,13 +717,12 @@ static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, 
   CK_ULONG firstCertificateIndex = pCanokey->slotCount;
   for (CK_ULONG i = 0; i < pCanokey->slotCount; i++) {
     SLOT *slot = &pCanokey->slots[i];
-    if (!canokey_slot_has_key(slot) ||
-        !(canokey_slot_can_sign(slot) || canokey_slot_can_decrypt(slot) || canokey_slot_can_derive(slot))) {
+    if (!(cmd_slot_has_signature_view(slot) || cmd_slot_has_key_exchange_view(slot))) {
       continue;
     }
     if (firstUsableIndex == pCanokey->slotCount)
       firstUsableIndex = i;
-    if (firstCertificateIndex == pCanokey->slotCount && canokey_slot_can_sign(slot) && slot->certLen > 0)
+    if (firstCertificateIndex == pCanokey->slotCount && slot->certLen > 0)
       firstCertificateIndex = i;
   }
   CK_ULONG defaultIndex = firstCertificateIndex != pCanokey->slotCount ? firstCertificateIndex : firstUsableIndex;
@@ -772,10 +794,10 @@ static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, 
       rec->bFlags |= CONTAINER_MAP_DEFAULT_CONTAINER;
     }
     // Set signature key size bits
-    if (canokey_slot_can_sign(slot)) {
+    if (cmd_slot_has_signature_view(slot)) {
       rec->wSigKeySizeBits = (WORD)(slot->keyType == CKK_RSA ? slot->rsa.modulusBits : canokey_ec_curve_bits(slot));
     }
-    if (canokey_slot_can_decrypt(slot) && slot->keyType == CKK_RSA) {
+    if (cmd_slot_has_key_exchange_view(slot)) {
       rec->wKeyExchangeKeySizeBits = (WORD)slot->rsa.modulusBits;
     }
     CMD_DEBUG("Container %d: %ls, flags: %d, wSigKeySizeBits: %d, wKeyExchangeKeySizeBits: %d", i, rec->wszGuid,

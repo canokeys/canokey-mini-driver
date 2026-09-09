@@ -504,21 +504,34 @@ DWORD WINAPI CardCreateContainer(__in PCARD_DATA pCardData, __in BYTE bContainer
 
   INJECT_HANDLES();
   CMD_GET_CTX(pCardData, pContext);
+  BYTE physicalContainerIndex = cmd_resolve_container_index(pContext, bContainerIndex);
+  if (physicalContainerIndex != bContainerIndex) {
+    CMD_DEBUG("Resolved enrollment container index %u to physical index %u", bContainerIndex, physicalContainerIndex);
+  }
 
   if (!IS_PIN_SET(pContext->authenticatedPins, ROLE_USER)) {
     CMD_RETURN(SCARD_W_SECURITY_VIOLATION, "Container creation requires user authentication");
   }
 
-  DWORD ret = validate_create_container_request(bContainerIndex, dwFlags, dwKeySpec, dwKeySize, pbKeyData);
+  DWORD ret = validate_create_container_request(physicalContainerIndex, dwFlags, dwKeySpec, dwKeySize, pbKeyData);
   if (ret != SCARD_S_SUCCESS) {
+    cmd_clear_enrollment_container_map(pContext);
     return ret;
   }
 
   if (dwFlags == CARD_CREATE_CONTAINER_KEY_IMPORT) {
-    return import_key(pContext, bContainerIndex, dwKeySpec, dwKeySize, pbKeyData);
+    ret = import_key(pContext, physicalContainerIndex, dwKeySpec, dwKeySize, pbKeyData);
+  } else {
+    ret = create_keypair(pContext, physicalContainerIndex, dwKeySpec, dwKeySize);
   }
-
-  return create_keypair(pContext, bContainerIndex, dwKeySpec, dwKeySize);
+  // Keep the successful overlay until this CARD_DATA is released because KSP
+  // may reread cmapfile while completing NCryptFinalizeKey. A failed write has
+  // no live container to back the provisional name.
+  if (ret != SCARD_S_SUCCESS)
+    cmd_clear_enrollment_container_map(pContext);
+  else
+    cmd_capture_enrollment_alias_key(pContext, bContainerIndex);
+  return ret;
 }
 
 DWORD WINAPI CardCreateContainerEx(__in PCARD_DATA pCardData, __in BYTE bContainerIndex, __in DWORD dwFlags,
@@ -558,9 +571,10 @@ DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContaine
   pContainerInfo->dwVersion = CONTAINER_INFO_CURRENT_VERSION;
   pContainerInfo->dwReserved = 0;
   CMD_GET_CTX(pCardData, pContext);
+  BYTE physicalContainerIndex = cmd_resolve_container_index(pContext, bContainerIndex);
 
-  if (bContainerIndex >= WINDOWS_CONTAINER_COUNT || bContainerIndex >= pContext->canokey.slotCount ||
-      !canokey_slot_has_key(&pContext->canokey.slots[bContainerIndex])) {
+  if (physicalContainerIndex >= WINDOWS_CONTAINER_COUNT || physicalContainerIndex >= pContext->canokey.slotCount ||
+      !canokey_slot_has_key(&pContext->canokey.slots[physicalContainerIndex])) {
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Invalid container index");
   }
 
@@ -569,20 +583,20 @@ DWORD WINAPI CardGetContainerInfo(__in PCARD_DATA pCardData, __in BYTE bContaine
   pContainerInfo->cbKeyExPublicKey = 0;
   pContainerInfo->pbKeyExPublicKey = NULL;
 
-  SLOT *slot = &pContext->canokey.slots[bContainerIndex];
+  SLOT *slot = &pContext->canokey.slots[physicalContainerIndex];
   if (!canokey_slot_can_sign(slot) && !canokey_slot_can_decrypt(slot) && !canokey_slot_can_derive(slot)) {
     CMD_RETURN(SCARD_E_NO_KEY_CONTAINER, "Container has no usable key");
   }
 
   if (slot->keyType == CKK_RSA) {
-    if (canokey_slot_can_sign(slot)) {
+    if (cmd_slot_has_signature_view(slot)) {
       DWORD ret =
           AllocRsaPublicKeyBlob(slot, CALG_RSA_SIGN, &pContainerInfo->pbSigPublicKey, &pContainerInfo->cbSigPublicKey);
       if (ret != SCARD_S_SUCCESS) {
         CMD_RETURN(ret, "Failed to allocate signature RSA public key blob");
       }
     }
-    if (canokey_slot_can_decrypt(slot) && container_index_is_piv_9d(bContainerIndex)) {
+    if (cmd_slot_has_key_exchange_view(slot)) {
       DWORD ret = AllocRsaPublicKeyBlob(slot, CALG_RSA_KEYX, &pContainerInfo->pbKeyExPublicKey,
                                         &pContainerInfo->cbKeyExPublicKey);
       if (ret != SCARD_S_SUCCESS) {

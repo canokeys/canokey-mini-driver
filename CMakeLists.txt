@@ -46,6 +46,14 @@ string(REGEX REPLACE "/$" "" CMD_DEBUG_LOG_DIR "${CMD_DEBUG_LOG_DIR}")
 
 add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 add_library(${CMD_LIB_NAME} SHARED ${SOURCES} ${HEADERS})
+
+option(CMD_BUILD_ENROLLMENT_TESTS "Build deterministic enrollment regression tests (no card I/O)" OFF)
+if(CMD_BUILD_ENROLLMENT_TESTS)
+  enable_testing()
+  add_executable(enrollment-test tests/enrollment-test.c src/enrollment.c)
+  target_include_directories(enrollment-test PRIVATE include external/canokey-pkcs11/include)
+  add_test(NAME enrollment-regression COMMAND enrollment-test)
+endif()
 target_include_directories(${CMD_LIB_NAME} PRIVATE include external/canokey-pkcs11/include)
 target_link_libraries(${CMD_LIB_NAME} PRIVATE "Advapi32.lib" "Bcrypt.lib" "winscard.lib" canokey_pkcs11)
 
