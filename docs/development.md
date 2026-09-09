@@ -394,7 +394,10 @@ The map returned to KSP keeps its provisional name and logical index.
 Persistent authoritative state still comes from CanoKey metadata. On F5-capable
 firmware the name is persisted after generation and read by new contexts. See
 [container-names.md](container-names.md) for partial-failure and legacy-firmware
-behavior; old firmware still requires existing-key enrollment or Request repair.
+behavior. Firmware before 3.1.0 still requires existing-key enrollment or
+Request repair; [the legacy certreq guide](windows-certreq-legacy.md) provides
+complete examples for both workflows. The backend checks the PIV applet
+version, which is numbered separately from the firmware release.
 KSP can log out and reauthenticate after its key-generation self-test before it
 signs the final PKCS#10 request. That authentication transition must not clear
 the process-local map or alias; both remain scoped to the current `CARD_DATA`

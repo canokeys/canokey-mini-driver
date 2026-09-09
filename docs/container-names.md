@@ -1,11 +1,15 @@
 # Persistent names and firmware compatibility
 
-F5-capable firmware persists each Windows container name with its PIV key.
+Firmware 3.1.0 and later saves Windows key container names on the card when
+used with an up-to-date driver. For older firmware, follow
+[certreq without a firmware upgrade](windows-certreq-legacy.md).
 `read_canokey` includes names in an all-or-error snapshot. `data.c` publishes
 them in cmapfile and includes them in cardcf freshness. Unnamed keys and old
 firmware retain public-key-derived names. PKCS#11 uses the shared RNG version
-gate: PIV 6.0.0 and later support F5; older/unavailable PIV versions permit
+gate: PIV applet 6.0.0 and later support F5; older/unavailable PIV versions permit
 fallback. Storage, transport or malformed-name errors never permit fallback.
+For driver developers: 3.1.0 is the firmware release version. The code checks
+the PIV applet version, which uses a different version number.
 
 Enrollment stages logical indexes in CARD_DATA until a key exists. Successful
 generation then persists its staged name at the resolved physical slot. Later
@@ -20,8 +24,9 @@ rewrite names as an automatic rollback. Read the card before recovery.
 On legacy firmware the previous context-local enrollment behavior remains,
 including the cross-process certreq limitation. Use a CSR for an existing key
 under its public-key-derived name, or repair the precise Request-store entry
-before accept. This change does not pretend those workarounds are unnecessary
-on firmware without F5, and does not invalidate existing legacy keys/certificates.
+before accept. See [certreq without a firmware upgrade](windows-certreq-legacy.md)
+for INF examples, exact Request-store repair commands and validation limits.
+Existing keys and certificates continue to work on older firmware.
 
 PKCS#11 covers every protocol reference, but Windows retains its six-slot
 policy; retired-slot expansion and F9 publication are separate changes.
