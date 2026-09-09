@@ -118,7 +118,7 @@ struct CMD_CONTEXT {
   BOOL userPinValid;
   // Windows KSP writes its provisional container name before calling
   // CardCreateContainer*. Keep that process-local view alive for the rest of
-  // the enrollment context without treating it as persistent card state.
+  // the enrollment context. F5 names are committed separately once a key exists.
   CONTAINER_MAP_RECORD enrollmentContainerMap[WINDOWS_CONTAINER_COUNT];
   BYTE enrollmentContainerAliases[WINDOWS_CONTAINER_COUNT];
   RSA_PUB_KEY enrollmentAliasKeys[WINDOWS_CONTAINER_COUNT];
@@ -142,6 +142,7 @@ BYTE cmd_resolve_container_index(CMD_CONTEXT_PTR pContext, BYTE containerIndex);
 BYTE cmd_certificate_container_index(CMD_CONTEXT_PTR pContext, BYTE physicalIndex);
 DWORD cmd_stage_enrollment_container_map(CMD_CONTEXT_PTR pContext, const BYTE *data, DWORD size);
 void cmd_capture_enrollment_alias_key(CMD_CONTEXT_PTR pContext, BYTE containerIndex);
+DWORD cmd_persist_enrollment_name(CMD_CONTEXT_PTR pContext, BYTE containerIndex, const WCHAR *liveName);
 
 // Windows publishes a single legacy view for RSA 9D, while the backend can
 // still sign with its AT_KEYEXCHANGE key. EC key exchange remains unpublished.

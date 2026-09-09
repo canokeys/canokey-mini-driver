@@ -375,9 +375,10 @@ EC keys in those slots       -> PKCS#11 ECDH-capable (not Windows-mapped)
   card must produce identical values in every `CARD_DATA` context; mutations
   must change the corresponding value. The authoritative token state still
   comes from CanoKey metadata and `mscp/cmapfile`.
-- Treat `mscp/cmapfile` similarly: generate it from live key metadata, and
-  accept well-formed writes from KSP as cache synchronization rather than
-  persisting a separate copy.
+- Generate `mscp/cmapfile` from live key metadata, including F5 per-key names.
+  Persist changed names through the PKCS#11 extension once a key exists;
+  default/size-only writes remain cache synchronization. Explicitly unsupported
+  firmware retains the historical context-local fallback (see docs/container-names.md).
 - Do not use silent CNG/certreq contexts when debugging Windows smart-card key
   creation. `NCRYPT_SILENT_FLAG`, `certreq -q`, and `Silent = true` can stop
   before `CardCreateContainer*`; use non-silent calls and pass PIN/reader

@@ -529,8 +529,12 @@ DWORD WINAPI CardCreateContainer(__in PCARD_DATA pCardData, __in BYTE bContainer
   // no live container to back the provisional name.
   if (ret != SCARD_S_SUCCESS)
     cmd_clear_enrollment_container_map(pContext);
-  else
+  else {
     cmd_capture_enrollment_alias_key(pContext, bContainerIndex);
+    ret = cmd_persist_enrollment_name(pContext, bContainerIndex, NULL);
+    if (ret != SCARD_S_SUCCESS)
+      cmd_clear_enrollment_container_map(pContext);
+  }
   return ret;
 }
 

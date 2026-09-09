@@ -334,6 +334,21 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
               slot->certLen, slot->capabilities);
   }
 
+  for (CK_ULONG i = 0; i < snapshot.slotCount; i++) {
+    SLOT *slot = &snapshot.slots[i];
+    if (!canokey_slot_has_key(slot))
+      continue;
+    CK_ULONG nameLen = sizeof(slot->containerName) - sizeof(uint16_t);
+    CK_RV rv = C_CNK_GetContainerName(session, slot->pivId, (CK_BYTE_PTR)slot->containerName, &nameLen);
+    if (rv == CKR_FUNCTION_NOT_SUPPORTED)
+      break; // No negative cache survives this snapshot or a card replacement.
+    if (rv != CKR_OK)
+      CMD_RETURN(rv, "Cannot read persistent container name");
+    for (CK_ULONG j = 0; j < nameLen / 2; j++) {
+      if (slot->containerName[j] == L'\\')
+        CMD_RETURN(CKR_DATA_INVALID, "Invalid Windows container name");
+    }
+  }
   *pCanokey = snapshot;
   return CKR_OK;
 }

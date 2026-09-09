@@ -114,6 +114,27 @@ DWORD cmd_stage_enrollment_container_map(CMD_CONTEXT_PTR pContext, const BYTE *d
   if (size != 0)
     memcpy(records, data, size);
   DWORD count = size / sizeof(CONTAINER_MAP_RECORD);
+  // Validate the complete input before any card mutation or overlay replacement.
+  for (DWORD i = 0; i < count; i++) {
+    if (!(records[i].bFlags & CONTAINER_MAP_VALID_CONTAINER))
+      continue;
+    size_t len = wcsnlen(records[i].wszGuid, ARRAYSIZE(records[i].wszGuid));
+    if (len == 0 || len * sizeof(WCHAR) > CNK_PIV_CONTAINER_NAME_MAX_BYTES)
+      return SCARD_E_INVALID_PARAMETER;
+    for (size_t j = 0; j < len; j++) {
+      WCHAR unit = records[i].wszGuid[j];
+      if (unit == L'\\' || (unit >= 0xDC00 && unit <= 0xDFFF))
+        return SCARD_E_INVALID_PARAMETER;
+      if (unit >= 0xD800 && unit <= 0xDBFF) {
+        if (++j >= len || records[i].wszGuid[j] < 0xDC00 || records[i].wszGuid[j] > 0xDFFF)
+          return SCARD_E_INVALID_PARAMETER;
+      }
+    }
+    for (DWORD j = 0; j < i; j++) {
+      if ((records[j].bFlags & CONTAINER_MAP_VALID_CONTAINER) && wcscmp(records[i].wszGuid, records[j].wszGuid) == 0)
+        return SCARD_E_INVALID_PARAMETER;
+    }
+  }
   ConfigureEnrollmentContainerAliases(pContext, records, count, aliases);
 
   // Default flags may change during enrollment. Preserve only the same valid
@@ -149,5 +170,47 @@ DWORD cmd_stage_enrollment_container_map(CMD_CONTEXT_PTR pContext, const BYTE *d
   }
   pContext->enrollmentContainerMapSize = size;
   pContext->enrollmentContainerMapValid = TRUE;
+  return SCARD_S_SUCCESS;
+}
+
+DWORD cmd_persist_enrollment_name(CMD_CONTEXT_PTR context, BYTE index, const WCHAR *liveName) {
+  if (!context->enrollmentContainerMapValid ||
+      index >= context->enrollmentContainerMapSize / sizeof(CONTAINER_MAP_RECORD))
+    return SCARD_S_SUCCESS;
+  const CONTAINER_MAP_RECORD *record = &context->enrollmentContainerMap[index];
+  BYTE physical = cmd_resolve_container_index(context, index);
+  if (!(record->bFlags & CONTAINER_MAP_VALID_CONTAINER) || physical >= context->canokey.slotCount ||
+      !canokey_slot_has_key(&context->canokey.slots[physical]))
+    return SCARD_S_SUCCESS; // Before generation, only stage the provisional name.
+  if (liveName && wcscmp(liveName, record->wszGuid) == 0)
+    return SCARD_S_SUCCESS; // Default/size-only map writes need no management login.
+  SLOT *slot = &context->canokey.slots[physical];
+  WCHAR current[40] = {0};
+  CK_ULONG currentLen = CNK_PIV_CONTAINER_NAME_MAX_BYTES;
+  CK_RV rv = C_CNK_GetContainerName(context->session, slot->pivId, (CK_BYTE_PTR)current, &currentLen);
+  if (rv == CKR_FUNCTION_NOT_SUPPORTED) {
+    CMD_WARN("Firmware has no F5 container names; enrollment name remains context-local");
+    return SCARD_S_SUCCESS;
+  }
+  if (rv == CKR_OK && wcscmp(current, record->wszGuid) != 0) {
+    // The key can already be committed. Any later failure is reported without
+    // regenerating it; invalidate other contexts even if the response is lost.
+    InterlockedIncrement(&g_cmd_metadata_generation);
+    context->metadata_refresh_valid = FALSE;
+    rv = C_CNK_SetContainerName(context->session, slot->pivId, (CK_BYTE_PTR)record->wszGuid,
+                                (CK_ULONG)(wcslen(record->wszGuid) * sizeof(WCHAR)));
+  }
+  if (rv != CKR_OK) {
+    CMD_ERROR("Persistent container name failed after possible key/name commit: 0x%lx", rv);
+    if (rv == CKR_USER_NOT_LOGGED_IN)
+      return SCARD_W_SECURITY_VIOLATION;
+    if (rv == CKR_DATA_INVALID || rv == CKR_ARGUMENTS_BAD)
+      return SCARD_E_INVALID_PARAMETER;
+    if (rv == CKR_FUNCTION_NOT_SUPPORTED)
+      return SCARD_E_UNSUPPORTED_FEATURE;
+    return SCARD_F_COMM_ERROR;
+  }
+  memset(slot->containerName, 0, sizeof(slot->containerName));
+  memcpy(slot->containerName, record->wszGuid, wcslen(record->wszGuid) * sizeof(WCHAR));
   return SCARD_S_SUCCESS;
 }

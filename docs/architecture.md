@@ -1,5 +1,8 @@
 # CanoKey Windows Minidriver Architecture
 
+F5 per-key name ownership, enrollment commit boundaries and legacy-firmware
+fallback are described in [container-names.md](container-names.md).
+
 ## Request Flow
 
 Windows loads `canokey-minidriver.dll` through the Calais smart-card mapping

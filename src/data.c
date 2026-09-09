@@ -84,6 +84,8 @@ static WORD ComputeFreshness(const CMD_CONTEXT *pContext, BOOL includeCertificat
       for (DWORD j = 0; j < slot->ecc.cbPrivate; j++)
         hash = (hash ^ slot->ecc.y[j]) * 16777619u;
     }
+    for (DWORD j = 0; j < sizeof(slot->containerName); j++)
+      hash = (hash ^ ((const BYTE *)slot->containerName)[j]) * 16777619u;
     if (includeCertificates) {
       for (DWORD j = 0; j < slot->certLen; j++)
         hash = (hash ^ slot->cert[j]) * 16777619u;
@@ -421,10 +423,30 @@ DWORD WINAPI CardWriteFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
     }
     // NCryptFinalizeKey writes its provisional key name here, then reads the
     // map again to resolve the container before CardCreateContainer*. The map
-    // is an enrollment overlay only. A temporary alias lets callbacks using
+    // is staged until a key exists. A temporary alias lets callbacks using
     // the KSP-selected logical index reach the policy-selected physical slot;
-    // a later CARD_DATA context rebuilds the fixed live mapping.
-    DWORD ret = cmd_stage_enrollment_container_map(pContext, pbData, cbData);
+    // a later CARD_DATA context reads persisted F5 names at fixed physical indexes.
+    PBYTE liveMap = NULL;
+    DWORD liveSize = 0;
+    DWORD ret = GenerateContainerMapFile(pContext, &liveMap, &liveSize);
+    if (ret != SCARD_S_SUCCESS)
+      return ret;
+    ret = cmd_stage_enrollment_container_map(pContext, pbData, cbData);
+    if (ret == SCARD_S_SUCCESS) {
+      for (DWORD i = 0; i < cbData / sizeof(CONTAINER_MAP_RECORD); i++) {
+        BYTE physical = cmd_resolve_container_index(pContext, (BYTE)i);
+        if (physical >= liveSize / sizeof(CONTAINER_MAP_RECORD))
+          continue;
+        ret = cmd_persist_enrollment_name(pContext, (BYTE)i, ((PCONTAINER_MAP_RECORD)liveMap)[physical].wszGuid);
+        if (ret != SCARD_S_SUCCESS) {
+          // Earlier records may already be committed. Do not publish a false
+          // overlay or roll back by rewriting keys/names after a card error.
+          cmd_clear_enrollment_container_map(pContext);
+          break;
+        }
+      }
+    }
+    g_pfnCspFree(liveMap);
     if (ret != SCARD_S_SUCCESS)
       return ret;
     CMD_DEBUG("Staged process-local enrollment container map, size: %lu", (unsigned long)cbData);
@@ -738,55 +760,69 @@ static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, 
     if (!canokey_slot_has_key(slot)) {
       continue;
     }
-    // Base CSP derives its historical container identity from the public key
-    // bytes. Preserve that compatibility identity so certificates already
-    // associated with the card remain discoverable after a minidriver update.
-    CK_BYTE digest[20];
-    CK_ULONG digLen = sizeof(digest);
-    CK_BYTE containerIdentity[512];
-    CK_ULONG containerIdentityLen = 0;
-    if (slot->keyType == CKK_RSA) {
-      containerIdentityLen = slot->rsa.modulusBits / 8;
-      if (containerIdentityLen > sizeof(containerIdentity)) {
-        g_pfnCspFree(*ppbData);
-        *ppbData = NULL;
-        *pcbData = 0;
-        CMD_RETURN(SCARD_E_INVALID_PARAMETER, "RSA modulus is too large for container identity");
-      }
-      memcpy(containerIdentity, slot->rsa.modulus, containerIdentityLen);
-    } else if (slot->keyType == CKK_EC) {
-      containerIdentityLen = slot->ecc.cbPrivate * 2;
-      if (containerIdentityLen > sizeof(containerIdentity)) {
-        g_pfnCspFree(*ppbData);
-        *ppbData = NULL;
-        *pcbData = 0;
-        CMD_RETURN(SCARD_E_INVALID_PARAMETER, "EC public key is too large for container identity");
-      }
-      memcpy(containerIdentity, slot->ecc.x, slot->ecc.cbPrivate);
-      memcpy(containerIdentity + slot->ecc.cbPrivate, slot->ecc.y, slot->ecc.cbPrivate);
+    if (slot->containerName[0]) {
+      memcpy(rec->wszGuid, slot->containerName, sizeof(slot->containerName));
     } else {
-      continue;
-    }
-    CK_RV rv = C_DigestInit(pContext->session, &mech);
-    if (rv != CKR_OK) {
-      g_pfnCspFree(*ppbData);
-      *ppbData = NULL;
-      *pcbData = 0;
-      return map_pkcs11_write_error(rv);
-    }
-    rv = C_Digest(pContext->session, containerIdentity, containerIdentityLen, digest, &digLen);
-    if (rv != CKR_OK) {
-      C_SessionCancel(pContext->session, CKF_DIGEST);
-      g_pfnCspFree(*ppbData);
-      *ppbData = NULL;
-      *pcbData = 0;
-      return map_pkcs11_write_error(rv);
-    }
+      // Base CSP derives its historical container identity from the public key
+      // bytes. Preserve that compatibility identity so certificates already
+      // associated with the card remain discoverable after a minidriver update.
+      CK_BYTE digest[20];
+      CK_ULONG digLen = sizeof(digest);
+      CK_BYTE containerIdentity[512];
+      CK_ULONG containerIdentityLen = 0;
+      if (slot->keyType == CKK_RSA) {
+        containerIdentityLen = slot->rsa.modulusBits / 8;
+        if (containerIdentityLen > sizeof(containerIdentity)) {
+          g_pfnCspFree(*ppbData);
+          *ppbData = NULL;
+          *pcbData = 0;
+          CMD_RETURN(SCARD_E_INVALID_PARAMETER, "RSA modulus is too large for container identity");
+        }
+        memcpy(containerIdentity, slot->rsa.modulus, containerIdentityLen);
+      } else if (slot->keyType == CKK_EC) {
+        containerIdentityLen = slot->ecc.cbPrivate * 2;
+        if (containerIdentityLen > sizeof(containerIdentity)) {
+          g_pfnCspFree(*ppbData);
+          *ppbData = NULL;
+          *pcbData = 0;
+          CMD_RETURN(SCARD_E_INVALID_PARAMETER, "EC public key is too large for container identity");
+        }
+        memcpy(containerIdentity, slot->ecc.x, slot->ecc.cbPrivate);
+        memcpy(containerIdentity + slot->ecc.cbPrivate, slot->ecc.y, slot->ecc.cbPrivate);
+      } else {
+        continue;
+      }
+      CK_RV rv = C_DigestInit(pContext->session, &mech);
+      if (rv != CKR_OK) {
+        g_pfnCspFree(*ppbData);
+        *ppbData = NULL;
+        *pcbData = 0;
+        return map_pkcs11_write_error(rv);
+      }
+      rv = C_Digest(pContext->session, containerIdentity, containerIdentityLen, digest, &digLen);
+      if (rv != CKR_OK) {
+        C_SessionCancel(pContext->session, CKF_DIGEST);
+        g_pfnCspFree(*ppbData);
+        *ppbData = NULL;
+        *pcbData = 0;
+        return map_pkcs11_write_error(rv);
+      }
 
-    // Format first 16 bytes of digest as GUID XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
-    unsigned char *b = digest;
-    swprintf_s(rec->wszGuid, 37, L"%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x", b[0], b[1],
-               b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]);
+      // Format first 16 bytes of digest as GUID XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+      unsigned char *b = digest;
+      swprintf_s(rec->wszGuid, 37, L"%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x", b[0], b[1],
+                 b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]);
+    }
+    // Firmware checks stored names only. Also reject a stored name colliding
+    // with another key's derived fallback before publishing an ambiguous map.
+    for (CK_ULONG j = 0; j < i; j++) {
+      if ((recs[j].bFlags & CONTAINER_MAP_VALID_CONTAINER) && wcscmp(recs[j].wszGuid, rec->wszGuid) == 0) {
+        g_pfnCspFree(*ppbData);
+        *ppbData = NULL;
+        *pcbData = 0;
+        return SCARD_E_INVALID_PARAMETER;
+      }
+    }
 
     // Set flags
     rec->bFlags = CONTAINER_MAP_VALID_CONTAINER;

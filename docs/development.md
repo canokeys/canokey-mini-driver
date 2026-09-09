@@ -391,7 +391,10 @@ subsequent reads. If KSP assigns an RSA key-exchange request to the first empty
 record, the enrollment context aliases that logical index to the empty fixed
 9D index across container, crypto, property, and certificate-file callbacks.
 The map returned to KSP keeps its provisional name and logical index.
-Persistent authoritative state still comes from CanoKey metadata.
+Persistent authoritative state still comes from CanoKey metadata. On F5-capable
+firmware the name is persisted after generation and read by new contexts. See
+[container-names.md](container-names.md) for partial-failure and legacy-firmware
+behavior; old firmware still requires existing-key enrollment or Request repair.
 KSP can log out and reauthenticate after its key-generation self-test before it
 signs the final PKCS#10 request. That authentication transition must not clear
 the process-local map or alias; both remain scoped to the current `CARD_DATA`

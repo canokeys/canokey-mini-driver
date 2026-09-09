@@ -22,6 +22,29 @@ volatile LONG g_cmd_metadata_generation = 1;
 static DWORD identityResult;
 static BOOL differentCard;
 static unsigned identityCalls, callbackCalls;
+static CK_RV nameReadResult, nameWriteResult;
+static unsigned nameReads, nameWrites;
+static WCHAR cardName[40];
+CK_RV C_CNK_GetContainerName(CK_SESSION_HANDLE session, CK_BYTE slot, CK_BYTE_PTR name, CK_ULONG_PTR len) {
+  (void)session;
+  CHECK(slot == 0x9D);
+  nameReads++;
+  if (nameReadResult != CKR_OK)
+    return nameReadResult;
+  *len = (CK_ULONG)(wcslen(cardName) * 2);
+  memcpy(name, cardName, *len);
+  return CKR_OK;
+}
+CK_RV C_CNK_SetContainerName(CK_SESSION_HANDLE session, CK_BYTE slot, CK_BYTE_PTR name, CK_ULONG len) {
+  (void)session;
+  CHECK(slot == 0x9D);
+  nameWrites++;
+  if (nameWriteResult == CKR_OK) {
+    memset(cardName, 0, sizeof(cardName));
+    memcpy(cardName, name, len);
+  }
+  return nameWriteResult;
+}
 
 bool cmd_should_log(const int level) {
   (void)level;
@@ -148,6 +171,7 @@ int main(void) {
       break;
     case 3:
       records[2].bFlags = CONTAINER_MAP_VALID_CONTAINER;
+      records[2].wszGuid[0] = L'C';
       break;
     case 4:
       records[0].wSigKeySizeBits = 2048;
@@ -205,6 +229,33 @@ int main(void) {
   CHECK(!cmd_slot_has_key_exchange_view(slot) && cmd_slot_has_signature_view(slot));
   slot->present = FALSE;
   CHECK(!cmd_slot_has_key_exchange_view(slot) && !cmd_slot_has_signature_view(slot));
+  init(&context, records);
+  stage(&context, records);
+  nameReads = nameWrites = 0;
+  CHECK(cmd_persist_enrollment_name(&context, 0, NULL) == SCARD_S_SUCCESS);
+  CHECK(nameReads == 0 && nameWrites == 0); // empty slot: stage only
+  generated(&context);
+  CHECK(cmd_persist_enrollment_name(&context, 0, NULL) == SCARD_S_SUCCESS);
+  CHECK(nameWrites == 1 && wcscmp(cardName, L"A") == 0);
+  CHECK(context.canokey.slots[2].containerName[0] == L'A');
+  CHECK(cmd_persist_enrollment_name(&context, 0, NULL) == SCARD_S_SUCCESS);
+  CHECK(nameWrites == 1); // exact repeat requires no write
+  nameReadResult = CKR_DEVICE_ERROR;
+  CHECK(cmd_persist_enrollment_name(&context, 0, L"A") == SCARD_S_SUCCESS);
+  CHECK(cmd_persist_enrollment_name(&context, 0, NULL) != SCARD_S_SUCCESS);
+  nameReadResult = CKR_FUNCTION_NOT_SUPPORTED;
+  CHECK(cmd_persist_enrollment_name(&context, 0, NULL) == SCARD_S_SUCCESS);
+  CHECK(nameWrites == 1); // old firmware, no attempted persistent mutation
+  nameReadResult = CKR_OK;
+  cardName[0] = 0;
+  nameWriteResult = CKR_USER_NOT_LOGGED_IN;
+  CHECK(cmd_persist_enrollment_name(&context, 0, NULL) == SCARD_W_SECURITY_VIOLATION);
+  nameWriteResult = CKR_DEVICE_ERROR;
+  CHECK(cmd_persist_enrollment_name(&context, 0, NULL) != SCARD_S_SUCCESS);
+  CHECK(cardName[0] == 0);
+  memset(records[0].wszGuid, 'X', sizeof(records[0].wszGuid));
+  CHECK(cmd_stage_enrollment_container_map(&context, (BYTE *)records, sizeof(records)) == SCARD_E_INVALID_PARAMETER);
+  CHECK(context.enrollmentContainerMap[0].wszGuid[0] == L'A');
   puts("Enrollment regression tests passed (no hardware I/O).");
   return 0;
 }

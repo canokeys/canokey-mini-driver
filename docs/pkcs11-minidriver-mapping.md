@@ -421,12 +421,12 @@ and signature key size, except RSA 9D, which reports only its validated
 key-exchange size and public-key blob. It still supports signing through
 `AT_KEYEXCHANGE`; a duplicate signature view prevents KSP spec-zero opens.
 EC records leave the key-exchange field zero because publishing the ECDH
-companion currently drops the associated certificate. Container names are
-derived from public-key bytes to preserve the associations created by the
-earlier minidriver implementation.
+companion currently drops the associated certificate. Container names use F5
+per-key names when present; unnamed keys and firmware explicitly lacking F5
+retain the historical public-key-derived names.
 
 Windows may write the map during enrollment. The minidriver validates its
-record-aligned bounded length and retains it only in the current `CARD_DATA`
+record-aligned bounded length and names, and stages it in the current `CARD_DATA`
 context so later KSP reads can resolve the provisional container name during
 `NCryptFinalizeKey`. When KSP uses the first empty index for a unique
 provisional RSA key-exchange record, the enrollment context aliases that
@@ -441,7 +441,12 @@ replacement map write, or context teardown. Matching map rewrites preserve
 aliases only when the captured post-creation RSA public key still matches the
 target. Identity failure remains latched independently of map cleanup until the
 context is released. Stable slot policy and live token
-metadata remain authoritative across contexts.
+metadata remain authoritative across contexts. On F5 firmware the staged name
+is persisted after generation, and subsequent name changes for live keys are
+also persisted. Default/size-only writes need no name write. Name failures are
+reported without retrying generation; earlier records in a multi-record write
+may already be committed. Unsupported firmware retains context-local behavior
+and its cross-process certreq limitation.
 
 ### 7.4 Certificate Files
 

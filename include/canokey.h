@@ -9,7 +9,7 @@
 // PKCS#11 token-object handles encode class in bits 8..15 and object ID in
 // bits 0..7 for slot zero. The minidriver uses this only after the metadata
 // directory confirms that the object exists.
-#define CANOKEY_MAKE_OBJECT_HANDLE(OBJECT_CLASS, OBJECT_ID) \
+#define CANOKEY_MAKE_OBJECT_HANDLE(OBJECT_CLASS, OBJECT_ID)                                                            \
   ((((CK_OBJECT_HANDLE)(OBJECT_CLASS)) << 8) | (CK_OBJECT_HANDLE)(OBJECT_ID))
 #define CANOKEY_SLOT_CAP_SIGN 0x01
 #define CANOKEY_SLOT_CAP_DECRYPT 0x02
@@ -51,6 +51,9 @@ typedef struct {
   };
   CK_BYTE cert[4096];
   CK_ULONG certLen;
+  // UTF-16LE card name, terminated locally for the Windows map. Empty means
+  // unnamed/legacy firmware, so the historical public-key identity is used.
+  uint16_t containerName[40];
 } SLOT;
 
 typedef struct {

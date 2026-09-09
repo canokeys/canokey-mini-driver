@@ -85,9 +85,13 @@ For the Windows cache matrix, verify that `CP_CARD_CACHE_MODE` reports
 freshness are stable non-zero hashes of the complete live snapshot. PIV has no
 durable PIN freshness value, while deterministic public freshness is required
 to trigger certificate propagation after key/certificate mutations.
-Repeated reads must expose stable public-key-derived container GUIDs across
+Repeated reads must expose stable F5 names (or public-key-derived legacy names) across
 contexts and card reinsertion. Compatibility writes from Base CSP/KSP must be
-accepted without replacing the live PKCS#11-derived inventory.
+accepted without replacing the live PKCS#11-derived inventory. Name changes
+on F5 firmware persist per key, including late cmapfile writes. Test unsupported
+F5 separately from empty names, absent keys and transport/storage errors. Only
+the PKCS#11 PIV-version gate (before 6.0.0/unavailable, shared with RNG) may
+select legacy fallback. F5 errors on 6.0.0+ must not select legacy fallback.
 
 Repeat the cache matrix after mutations made by an external PKCS#11/PIV
 process, not only through minidriver APIs. With an existing `CARD_DATA`
