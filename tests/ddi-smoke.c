@@ -402,7 +402,11 @@ int wmain(int argc, wchar_t **argv) {
   if (!result(SCardEstablishContext(SCARD_SCOPE_USER, NULL, NULL, &context), "SCardEstablishContext"))
     goto cleanup;
   wchar_t selectedReader[512] = L"canokeys.org OpenPGP PIV OATH 0";
-  GetEnvironmentVariableW(L"CNK_PIV_READER", selectedReader, 512);
+  DWORD readerLength = GetEnvironmentVariableW(L"CNK_PIV_READER", selectedReader, 512);
+  if (readerLength >= 512)
+    goto cleanup;
+  if (!readerLength)
+    wcscpy_s(selectedReader, 512, L"canokeys.org OpenPGP PIV OATH 0");
   if (!result(SCardConnectW(context, selectedReader, SCARD_SHARE_SHARED, SCARD_PROTOCOL_T0 | SCARD_PROTOCOL_T1, &card,
                             &protocol),
               "SCardConnect"))
