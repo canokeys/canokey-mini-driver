@@ -81,7 +81,7 @@ it.
 ## Build from source
 
 Use Windows with Visual Studio 2022, Desktop development with C++, ClangCL,
-CMake/Ninja, Python, and the
+CMake/Ninja, Python, Rustup with the stable MSVC toolchain, and the
 [Windows Driver Kit](https://learn.microsoft.com/en-us/windows-hardware/drivers/download-the-wdk).
 
 ```powershell

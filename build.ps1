@@ -157,6 +157,18 @@ function Invoke-CMakeBuild {
 
     $normalizedArch = Convert-ArchName $TargetArch
     Assert-MsvcTargetLibraries $VsInstall $normalizedArch $Config
+    $rustup = Get-Command rustup -ErrorAction SilentlyContinue
+    $rustupPath = if ($rustup) { $rustup.Source } else { Join-Path $env:USERPROFILE '.cargo/bin/rustup.exe' }
+    if (!(Test-Path -LiteralPath $rustupPath)) {
+        throw 'Rustup with the stable MSVC toolchain is required for the PKCS#11 PIV backend.'
+    }
+    $rustTarget = @{
+        x86 = 'i686-pc-windows-msvc'
+        x64 = 'x86_64-pc-windows-msvc'
+        arm64 = 'aarch64-pc-windows-msvc'
+    }[$normalizedArch]
+    & $rustupPath target add --toolchain stable $rustTarget
+    if ($LASTEXITCODE -ne 0) { throw "Could not prepare Rust target $rustTarget." }
 
     $clangTarget = Get-ClangTarget $normalizedArch
     $buildDir = Join-Path $repoRoot "out\build\$normalizedArch-Clang-$Config"
@@ -173,6 +185,7 @@ function Invoke-CMakeBuild {
         "-DCMAKE_CXX_COMPILER=`"$clangCl`"",
         "-DCMAKE_C_COMPILER_TARGET=$clangTarget",
         "-DCMAKE_CXX_COMPILER_TARGET=$clangTarget",
+        "-DCNK_RUST_TARGET=$rustTarget",
         "-DCMAKE_BUILD_TYPE=$Config",
         "-DCMAKE_INSTALL_PREFIX=`"$installDir`""
     )
