@@ -23,7 +23,7 @@ Base CSP / Smart Card KSP
   -> cardmod entry point
   -> CMD_CONTEXT and slot policy
   -> managed canokey-pkcs11
-  -> libcanokey PIV context/operation
+  -> libcanokey PIV operation
   -> PIV APDU on the Windows-owned card handle
 ```
 
