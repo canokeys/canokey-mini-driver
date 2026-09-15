@@ -362,7 +362,7 @@ The crypto tests use Windows CryptoAPI/CNG APIs directly instead of parsing
 The scripts also contain an optional CNG ECDH check, but the driver does not
 publish Windows ECDH containers. That check is therefore skipped with the
 supported container map. Test ECDH separately through the PKCS#11 backend;
-`crypto-test.ps1` and `derive-test.ps1` do not provide that backend coverage.
+`crypto-test.ps1` and `crypto-test.ps1 -Operation Derive` do not provide that backend coverage.
 
 Like the smoke wrapper, it defaults to building x64 Debug, running the debug
 install target, discovering and resetting the DevKit control port, and passing
@@ -373,9 +373,9 @@ loaded DLL, and `-DiscoverOnly` to list containers without signing.
 Focused entry points are also available when iterating on one capability:
 
 ```powershell
-.\scripts\sign-test.ps1
-.\scripts\decrypt-test.ps1
-.\scripts\derive-test.ps1
+.\scripts\crypto-test.ps1 -Operation Sign
+.\scripts\crypto-test.ps1 -Operation Decrypt
+.\scripts\crypto-test.ps1 -Operation Derive
 ```
 
 All four scripts share `scripts\minidriver-test-common.ps1`, so

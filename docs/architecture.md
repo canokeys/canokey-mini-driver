@@ -308,8 +308,8 @@ The primary local loop is:
 ```powershell
 .\build.ps1 -Arch x64
 .\scripts\keygen-test.ps1 -UsePinProtectedManagementKey
-.\scripts\sign-test.ps1 -SkipBuild -SkipInstall -SkipReset
-.\scripts\derive-test.ps1 -SkipBuild -SkipInstall -SkipReset
+.\scripts\crypto-test.ps1 -Operation Sign -SkipBuild -SkipInstall -SkipReset
+.\scripts\crypto-test.ps1 -Operation Derive -SkipBuild -SkipInstall -SkipReset
 ```
 
 Run `crypto-test.ps1` for the Windows signing surface and use the PKCS#11

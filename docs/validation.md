@@ -121,7 +121,7 @@ unfiltered system-wide probe):
    are enumerated, and every provisioned certificate has a matching private
    key container. The output must not regress to `cannot retrieve certificate`
    or `cannot open key` for a provisioned container.
-3. Run `sign-test.ps1`/`crypto-test.ps1` for the Windows signature surface and
+3. Run `crypto-test.ps1 -Operation Sign`/`crypto-test.ps1` for the Windows signature surface and
    verify that authentication reaches `CardAuthenticateEx` and signing reaches
    `CardSignData`. Use PKCS#11 tests separately for capabilities intentionally
    hidden from Windows, such as ECDH or PQC.
@@ -262,3 +262,17 @@ cannot hide the existing RSA keys. CAPI signing selects RSA signature containers
 RSA 9D is tested through its key-exchange path. Key-generation tests support
 `-PassThru` for structured results and fail when the requested public-key view is
 absent or imported bytes differ. Reports include DLL hashes and certificate backups.
+
+## Native write fixtures
+
+Configure `CMD_BUILD_DDI_TESTS=ON` and build `ddi-smoke` beside the selected DLL.
+`pin-test.ps1` and `keygen-test.ps1` dispatch to this same architecture-matched
+host; all cardmod layouts now come from the official `cardmod.h`. Credentials
+are passed in process environment variables and restored by the wrapper.
+The host acquires one CARD_DATA context, owns its allocator callbacks and card
+handle, deletes the context before unloading, and clears exported private blobs.
+PIN tests restore each successful temporary mutation before the next phase;
+an ambiguous transport failure stops without guessing another credential.
+Enrollment checks USER/protected-ADMIN state, ADMIN-role rejection, imported
+public-key equality, and stable card identity before/after writes and reacquire.
+These modes do not install a driver or alter machine configuration.

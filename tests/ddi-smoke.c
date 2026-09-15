@@ -162,13 +162,157 @@ cleanup:
   return passed;
 }
 
+static int pin_contract(CARD_DATA *data, const char *pin, BOOL skipPuk) {
+  const char *temporary = getenv("CNK_PIV_TEST_PIN"), *puk = getenv("CNK_PIV_PUK");
+  if (!pin || !temporary || !strcmp(pin, temporary) || (!skipPuk && !puk))
+    return 0;
+  DWORD length = 0, attempts = 0;
+  PIN_SET pins = 0;
+  if (!result(data->pfnCardGetProperty(data, CP_CARD_LIST_PINS, (PBYTE)&pins, sizeof(pins), &length, 0), "PIN list") ||
+      length != sizeof(pins))
+    return 0;
+  for (PIN_ID role = ROLE_USER; role <= 3; role++) {
+    PIN_INFO info = {.dwVersion = PIN_INFO_CURRENT_VERSION};
+    DWORD strength = 0;
+    if (!result(data->pfnCardGetProperty(data, CP_CARD_PIN_INFO, (PBYTE)&info, sizeof(info), &length, role),
+                "PIN info") ||
+        length != sizeof(info) ||
+        !result(data->pfnCardGetProperty(data, CP_CARD_PIN_STRENGTH_VERIFY, (PBYTE)&strength, sizeof(strength), &length,
+                                         role),
+                "PIN strength"))
+      return 0;
+  }
+  if (!result(data->pfnCardAuthenticateEx(data, ROLE_USER, 0, (PBYTE)pin, (DWORD)strlen(pin), NULL, NULL, &attempts),
+              "USER login"))
+    return 0;
+  BOOL policyBlocked = FALSE;
+  for (unsigned round = 0; round < (skipPuk ? 1u : 2u); round++) {
+    DWORD status =
+        round == 0
+            ? data->pfnCardChangeAuthenticator(data, L"user", (PBYTE)pin, (DWORD)strlen(pin), (PBYTE)temporary,
+                                               (DWORD)strlen(temporary), 0, CARD_AUTHENTICATE_PIN_PIN, &attempts)
+            : data->pfnCardChangeAuthenticatorEx(data, PIN_CHANGE_FLAG_UNBLOCK, 3, (PBYTE)puk, (DWORD)strlen(puk),
+                                                 ROLE_USER, (PBYTE)temporary, (DWORD)strlen(temporary), 0, &attempts);
+    if (round && status == SCARD_W_SECURITY_VIOLATION) {
+      policyBlocked = TRUE;
+      continue;
+    }
+    // Do not guess credentials after a transport failure with ambiguous mutation.
+    if (!result(status, "Set temporary PIN")) {
+      fputs("PIN mutation outcome is uncertain; inspect card state before retrying.\n", stderr);
+      return 0;
+    }
+    if (!result(data->pfnCardChangeAuthenticator(data, L"user", (PBYTE)temporary, (DWORD)strlen(temporary), (PBYTE)pin,
+                                                 (DWORD)strlen(pin), 0, CARD_AUTHENTICATE_PIN_PIN, &attempts),
+                "Restore PIN")) {
+      fputs("PIN restoration failed; do not assume the original PIN.\n", stderr);
+      return 0;
+    }
+  }
+  if (!result(data->pfnCardAuthenticateEx(data, ROLE_USER, 0, (PBYTE)pin, (DWORD)strlen(pin), NULL, NULL, &attempts),
+              "Verify restored PIN"))
+    return 0;
+  printf("{\"PinSet\":%lu,\"PukResetTested\":%s,\"PukResetBlockedByPolicy\":%s}\n", pins,
+         !skipPuk && !policyBlocked ? "true" : "false", policyBlocked ? "true" : "false");
+  return 1;
+}
+
+static int provision_contract(CARD_DATA *data, PFN_CARD_ACQUIRE_CONTEXT acquire, const char *pin, DWORD index,
+                              DWORD spec, DWORD bits, BOOL import) {
+  HCRYPTPROV provider = 0;
+  HCRYPTKEY rsa = 0;
+  BCRYPT_ALG_HANDLE algorithm = NULL;
+  BCRYPT_KEY_HANDLE ec = NULL;
+  BYTE privateBlob[4096] = {0}, publicBlob[1024], before[16], after[16];
+  DWORD privateLength = sizeof(privateBlob), publicLength = sizeof(publicBlob), length = 0, roles = 0, attempts = 0;
+  CONTAINER_INFO info = {.dwVersion = CONTAINER_INFO_CURRENT_VERSION};
+  int passed = 0;
+  if (!pin || index > 5 || spec < AT_KEYEXCHANGE || spec > AT_ECDSA_P521 ||
+      (spec <= AT_SIGNATURE ? (bits != 2048 && bits != 3072 && bits != 4096)
+                            : bits != (spec == AT_ECDSA_P256   ? 256u
+                                       : spec == AT_ECDSA_P384 ? 384u
+                                                               : 521u)))
+    goto cleanup;
+  if (import) {
+    if (spec <= AT_SIGNATURE) {
+      if (!CryptAcquireContextW(&provider, NULL, MS_ENH_RSA_AES_PROV_W, PROV_RSA_AES, CRYPT_VERIFYCONTEXT) ||
+          !CryptGenKey(provider, spec == AT_SIGNATURE ? CALG_RSA_SIGN : CALG_RSA_KEYX, (bits << 16) | CRYPT_EXPORTABLE,
+                       &rsa) ||
+          !CryptExportKey(rsa, 0, PRIVATEKEYBLOB, 0, privateBlob, &privateLength) ||
+          !CryptExportKey(rsa, 0, PUBLICKEYBLOB, 0, publicBlob, &publicLength))
+        goto cleanup;
+    } else {
+      LPCWSTR name = bits == 256   ? BCRYPT_ECDSA_P256_ALGORITHM
+                     : bits == 384 ? BCRYPT_ECDSA_P384_ALGORITHM
+                                   : BCRYPT_ECDSA_P521_ALGORITHM;
+      if (BCryptOpenAlgorithmProvider(&algorithm, name, NULL, 0) < 0 ||
+          BCryptGenerateKeyPair(algorithm, &ec, bits, 0) < 0 || BCryptFinalizeKeyPair(ec, 0) < 0 ||
+          BCryptExportKey(ec, NULL, BCRYPT_ECCPRIVATE_BLOB, privateBlob, sizeof(privateBlob), &privateLength, 0) < 0 ||
+          BCryptExportKey(ec, NULL, BCRYPT_ECCPUBLIC_BLOB, publicBlob, sizeof(publicBlob), &publicLength, 0) < 0)
+        goto cleanup;
+    }
+  }
+  if (!result(data->pfnCardGetProperty(data, CP_CARD_GUID, before, sizeof(before), &length, 0), "Card GUID before") ||
+      length != sizeof(before) ||
+      !result(data->pfnCardAuthenticateEx(data, ROLE_USER, 0, (PBYTE)pin, (DWORD)strlen(pin), NULL, NULL, &attempts),
+              "USER protected-management login") ||
+      !result(data->pfnCardGetProperty(data, CP_CARD_AUTHENTICATED_STATE, (PBYTE)&roles, sizeof(roles), &length, 0),
+              "Authenticated roles") ||
+      (roles & ((1u << ROLE_USER) | (1u << ROLE_ADMIN))) != ((1u << ROLE_USER) | (1u << ROLE_ADMIN)))
+    goto cleanup;
+  DWORD flags = import ? CARD_CREATE_CONTAINER_KEY_IMPORT : CARD_CREATE_CONTAINER_KEY_GEN;
+  DWORD requestBits = !import && spec >= AT_ECDSA_P256 ? 0 : bits;
+  if (data->pfnCardCreateContainerEx(data, index, flags, spec, requestBits, import ? privateBlob : NULL, ROLE_ADMIN) !=
+      SCARD_W_SECURITY_VIOLATION)
+    goto cleanup;
+  if (!result(
+          data->pfnCardCreateContainerEx(data, index, flags, spec, requestBits, import ? privateBlob : NULL, ROLE_USER),
+          "CardCreateContainerEx") ||
+      !result(data->pfnCardGetProperty(data, CP_CARD_GUID, after, sizeof(after), &length, 0), "Card GUID after") ||
+      length != sizeof(after) || memcmp(before, after, sizeof(before)) ||
+      !result(data->pfnCardGetContainerInfo(data, index, 0, &info), "Created public key"))
+    goto cleanup;
+  PBYTE actual = spec == AT_KEYEXCHANGE ? info.pbKeyExPublicKey : info.pbSigPublicKey;
+  DWORD actualLength = spec == AT_KEYEXCHANGE ? info.cbKeyExPublicKey : info.cbSigPublicKey;
+  if (!actual || !actualLength ||
+      (import && (actualLength != publicLength || memcmp(actual, publicBlob, publicLength))))
+    goto cleanup;
+  if (!result(data->pfnCardDeleteContext(data), "Delete before reacquire") || !result(acquire(data, 0), "Reacquire") ||
+      !result(data->pfnCardGetProperty(data, CP_CARD_GUID, after, sizeof(after), &length, 0), "Card GUID reacquired") ||
+      length != sizeof(after) || memcmp(before, after, sizeof(before)))
+    goto cleanup;
+  printf("{\"Operation\":\"%s\",\"ContainerIndex\":%lu,\"KeySpec\":%lu,\"KeySize\":%lu,\"PublicKeyMatches\":true}\n",
+         import ? "Import" : "Generate", index, spec, bits);
+  passed = 1;
+cleanup:
+  SecureZeroMemory(privateBlob, sizeof(privateBlob));
+  release(info.pbSigPublicKey);
+  release(info.pbKeyExPublicKey);
+  if (rsa)
+    CryptDestroyKey(rsa);
+  if (provider)
+    CryptReleaseContext(provider, 0);
+  if (ec)
+    BCryptDestroyKey(ec);
+  if (algorithm)
+    BCryptCloseAlgorithmProvider(algorithm, 0);
+  return passed;
+}
+
 int wmain(int argc, wchar_t **argv) {
-  if (argc < 3 || argc > 4 || (argc == 4 && wcscmp(argv[3], L"raw") != 0 && wcscmp(argv[3], L"write") != 0)) {
-    fputs("Usage: ddi-smoke <dll> <log-directory> [raw|write]\n", stderr);
+  BOOL provision = argc == 7 && (!wcscmp(argv[3], L"generate") || !wcscmp(argv[3], L"import"));
+  BOOL pinMode = argc == 4 && (!wcscmp(argv[3], L"pin") || !wcscmp(argv[3], L"pin-only"));
+  BOOL raw = argc == 4 && !wcscmp(argv[3], L"raw");
+  BOOL write = argc == 4 && !wcscmp(argv[3], L"write");
+  if (argc != 3 && !provision && !pinMode && !raw && !write) {
+    fputs("Usage: ddi-smoke <dll> <log-dir> [raw|write|pin|pin-only|generate|import [index spec bits]]\n", stderr);
     return 2;
   }
-  BOOL raw = argc == 4 && wcscmp(argv[3], L"raw") == 0;
-  BOOL write = argc == 4 && wcscmp(argv[3], L"write") == 0;
+  if (provision) {
+    for (unsigned i = 4; i < 7; i++)
+      if (!argv[i][0] || wcsspn(argv[i], L"0123456789") != wcslen(argv[i]) || wcslen(argv[i]) > 4)
+        return 2;
+  }
   const char *managementKey = write ? getenv("CNK_PIV_MANAGEMENT_KEY") : NULL;
   if (write && !managementKey) {
     puts("CNK_PIV_MANAGEMENT_KEY is required for certificate writes");
@@ -204,8 +348,10 @@ int wmain(int argc, wchar_t **argv) {
   wchar_t reader[512];
   if (!result(SCardEstablishContext(SCARD_SCOPE_USER, NULL, NULL, &context), "SCardEstablishContext"))
     goto cleanup;
-  if (!result(SCardConnectW(context, L"canokeys.org OpenPGP PIV OATH 0", SCARD_SHARE_SHARED,
-                            SCARD_PROTOCOL_T0 | SCARD_PROTOCOL_T1, &card, &protocol),
+  wchar_t selectedReader[512] = L"canokeys.org OpenPGP PIV OATH 0";
+  GetEnvironmentVariableW(L"CNK_PIV_READER", selectedReader, 512);
+  if (!result(SCardConnectW(context, selectedReader, SCARD_SHARE_SHARED, SCARD_PROTOCOL_T0 | SCARD_PROTOCOL_T1, &card,
+                            &protocol),
               "SCardConnect"))
     goto cleanup;
   if (!result(SCardStatusW(card, reader, &readerLen, &state, &protocol, atr, &atrLen), "SCardStatus"))
@@ -230,6 +376,14 @@ int wmain(int argc, wchar_t **argv) {
   data.pfnCspFree = release;
   data.hSCardCtx = context;
   data.hScard = card;
+  if (pinMode || provision) {
+    if (!result(acquire(&data, 0), "CardAcquireContext"))
+      goto cleanup;
+    passed = pinMode ? pin_contract(&data, getenv("CNK_PIV_PIN"), !wcscmp(argv[3], L"pin-only"))
+                     : provision_contract(&data, acquire, getenv("CNK_PIV_PIN"), (DWORD)_wtoi(argv[4]),
+                                          (DWORD)_wtoi(argv[5]), (DWORD)_wtoi(argv[6]), !wcscmp(argv[3], L"import"));
+    goto cleanup;
+  }
   for (unsigned cycle = 0; cycle < 2; cycle++) {
     printf("Context cycle %u\n", cycle + 1);
     if (!result(acquire(&data, 0), "CardAcquireContext"))

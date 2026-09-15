@@ -1169,3 +1169,24 @@ function Complete-MinidriverTestRun {
         exit 1
     }
 }
+
+function Invoke-MinidriverDdiTest {
+    param([string]$DllPath, [string]$ReaderName, [hashtable]$Credentials, [string[]]$Arguments)
+    $dll = (Resolve-Path -LiteralPath $DllPath).ProviderPath
+    $hostPath = Join-Path (Split-Path $dll) 'ddi-smoke.exe'
+    if (!(Test-Path -LiteralPath $hostPath)) { throw "Build the ddi-smoke target beside $dll first." }
+    $saved = @{}
+    try {
+        $Credentials['CNK_PIV_READER'] = $ReaderName
+        foreach ($name in $Credentials.Keys) {
+            $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+            [Environment]::SetEnvironmentVariable($name, $Credentials[$name], 'Process')
+        }
+        $output = & $hostPath $dll (Join-Path (Split-Path $dll) 'ddi-logs') @Arguments
+        $output | Where-Object { $_ -notmatch '^\{' } | ForEach-Object { Write-Host $_ }
+        if ($LASTEXITCODE -ne 0) { throw "Native DDI test failed ($LASTEXITCODE)." }
+        $output | Where-Object { $_ -match '^\{' } | ConvertFrom-Json
+    } finally {
+        foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
+    }
+}
