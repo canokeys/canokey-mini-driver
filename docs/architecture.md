@@ -35,6 +35,14 @@ entry points such as context/session creation and operation initialization do
 not keep a reader transaction open. A second context may request another PIV
 operation concurrently; PC/SC serializes the physical transactions while
 PKCS#11 still protects token-wide authorization and session operation state.
+The dependency now uses one Rust profile for capabilities and message limits,
+and one Rust operation for PIN-managed policy validation, management-key
+verification and explicit PUK finalization. The minidriver continues to own its
+Windows callback/session lifetime. PKCS#11's SM2, attestation and physical key
+provisioning extensions are available to PKCS#11 consumers; Windows retains its
+six-container RSA/NIST view. Shared private-operation admission prevents a
+management mutation from overtaking a queued sign/decrypt call.
+
 
 The PIV standard permits a same-AID reselect to preserve security status, but
 the current CanoKey firmware resets PIN/PUK/management status in `piv_select()`.
