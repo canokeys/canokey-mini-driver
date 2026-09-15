@@ -276,3 +276,8 @@ an ambiguous transport failure stops without guessing another credential.
 Enrollment checks USER/protected-ADMIN state, ADMIN-role rejection, imported
 public-key equality, and stable card identity before/after writes and reacquire.
 These modes do not install a driver or alter machine configuration.
+
+The host fails on logging fixture setup errors. After DLL unload it checks its
+own process logs: each expected context must contain Rust operation completion
+records, ordinary runs must contain no raw APDU/hex dumps, and `raw` must contain
+both command and response diagnostics. Missing logs fail the test.

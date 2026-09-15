@@ -7,6 +7,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include "cardmod.h"
 #include <bcrypt.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -299,6 +300,55 @@ cleanup:
   return passed;
 }
 
+static int check_logs(const wchar_t *directory, BOOL raw, unsigned expectedCycles) {
+  wchar_t pattern[MAX_PATH], path[MAX_PATH];
+  swprintf_s(pattern, MAX_PATH, L"%ls/*_%lu_*.log", directory, GetCurrentProcessId());
+  WIN32_FIND_DATAW found;
+  HANDLE search = FindFirstFileW(pattern, &found);
+  if (search == INVALID_HANDLE_VALUE)
+    return 0;
+  unsigned cycles = 0, starts = 0, commands = 0, responses = 0;
+  BOOL valid = TRUE, active = FALSE;
+  do {
+    swprintf_s(path, MAX_PATH, L"%ls/%ls", directory, found.cFileName);
+    FILE *file = _wfopen(path, L"r");
+    if (!file) {
+      valid = FALSE;
+      break;
+    }
+    char line[8192];
+    while (fgets(line, sizeof(line), file)) {
+      if (strstr(line, "C_Initialize completed: CK_RV=0x0")) {
+        if (active)
+          valid = FALSE;
+        active = TRUE;
+        starts = 0;
+      }
+      if (active && strstr(line, "cnk_operation_start completed: status=0x0"))
+        starts++;
+      if (strstr(line, "C_Finalize completed: CK_RV=0x0")) {
+        if (!active || !starts)
+          valid = FALSE;
+        active = FALSE;
+        cycles++;
+      }
+      commands += strstr(line, "APDU Command:") != NULL;
+      responses += strstr(line, "APDU Response:") != NULL;
+      // cmd_print_hex emits unprefixed pairs; ordinary timestamped lines have a colon.
+      if (!raw && isxdigit((unsigned char)line[0]) && isxdigit((unsigned char)line[1]) && line[2] == ' ')
+        valid = FALSE;
+    }
+    if (ferror(file))
+      valid = FALSE;
+    fclose(file);
+  } while (FindNextFileW(search, &found));
+  FindClose(search);
+  valid = valid && !active && cycles == expectedCycles && (raw ? commands && responses : !commands && !responses);
+  printf("Log assertions: %u complete contexts, %u commands, %u responses: %s\n", cycles, commands, responses,
+         valid ? "PASS" : "FAIL");
+  return valid;
+}
+
 int wmain(int argc, wchar_t **argv) {
   BOOL provision = argc == 7 && (!wcscmp(argv[3], L"generate") || !wcscmp(argv[3], L"import"));
   BOOL pinMode = argc == 4 && (!wcscmp(argv[3], L"pin") || !wcscmp(argv[3], L"pin-only"));
@@ -331,7 +381,8 @@ int wmain(int argc, wchar_t **argv) {
   DWORD pathLength = GetFullPathNameW(argv[2], MAX_PATH, logPath, NULL);
   if (pathLength == 0 || pathLength >= MAX_PATH)
     goto cleanup;
-  CreateDirectoryW(logPath, NULL);
+  if (!CreateDirectoryW(logPath, NULL) && GetLastError() != ERROR_ALREADY_EXISTS)
+    goto cleanup;
   // A private HKCU fixture redirects only this process's DLL-load configuration.
   // The machine's Calais mapping and minidriver settings are never changed.
   if (RegCreateKeyExW(HKEY_CURRENT_USER, testKey, 0, NULL, REG_OPTION_VOLATILE, KEY_ALL_ACCESS, NULL, &testRoot, NULL))
@@ -340,9 +391,11 @@ int wmain(int argc, wchar_t **argv) {
                       &testConfig, NULL))
     goto cleanup;
   DWORD sensitive = raw ? 1 : 0;
-  RegSetValueExW(testConfig, L"LogPath", 0, REG_SZ, (BYTE *)logPath, (DWORD)((wcslen(logPath) + 1) * sizeof(wchar_t)));
-  RegSetValueExW(testConfig, L"LogLevel", 0, REG_SZ, (BYTE *)L"DEBUG", sizeof(L"DEBUG"));
-  RegSetValueExW(testConfig, L"LogSensitiveData", 0, REG_DWORD, (BYTE *)&sensitive, sizeof(sensitive));
+  if (RegSetValueExW(testConfig, L"LogPath", 0, REG_SZ, (BYTE *)logPath,
+                     (DWORD)((wcslen(logPath) + 1) * sizeof(wchar_t))) ||
+      RegSetValueExW(testConfig, L"LogLevel", 0, REG_SZ, (BYTE *)L"DEBUG", sizeof(L"DEBUG")) ||
+      RegSetValueExW(testConfig, L"LogSensitiveData", 0, REG_DWORD, (BYTE *)&sensitive, sizeof(sensitive)))
+    goto cleanup;
   BYTE atr[64];
   DWORD atrLen = sizeof(atr), state = 0, readerLen = 512;
   wchar_t reader[512];
@@ -508,8 +561,12 @@ cleanup:
   if (data.pvVendorSpecific && data.pfnCardDeleteContext)
     if (!result(data.pfnCardDeleteContext(&data), "CardDeleteContext"))
       passed = 0;
-  if (module && !data.pvVendorSpecific)
-    FreeLibrary(module);
+  if (module && !data.pvVendorSpecific) {
+    if (!FreeLibrary(module))
+      passed = 0;
+    if (passed && !check_logs(logPath, raw, pinMode ? 1 : 2))
+      passed = 0;
+  }
   if (card)
     SCardDisconnect(card, SCARD_LEAVE_CARD);
   if (context)
