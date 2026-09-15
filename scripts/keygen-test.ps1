@@ -7,7 +7,8 @@ param(
     [string]$KeySpec = "ECDSA_P256",
     [string]$Pin = "123456",
     [switch]$UsePinProtectedManagementKey,
-    [switch]$Import
+    [switch]$Import,
+    [switch]$PassThru
 )
 
 $ErrorActionPreference = "Stop"
@@ -451,6 +452,8 @@ namespace CanokeyMinidriver {
                 uint publicKeyLength = keySpec == AT_KEYEXCHANGE || keySpec == AT_ECDHE_P256 ||
                     keySpec == AT_ECDHE_P384 || keySpec == AT_ECDHE_P521
                     ? info.cbKeyExPublicKey : info.cbSigPublicKey;
+                if (publicKeyPointer == IntPtr.Zero || publicKeyLength == 0)
+                    throw new InvalidOperationException("Requested Windows public-key view is absent.");
                 bool publicKeyMatches = expectedPublicBlob == null;
                 if (expectedPublicBlob != null && publicKeyPointer != IntPtr.Zero) {
                     byte[] actualPublicBlob = new byte[checked((int)publicKeyLength)];
@@ -587,4 +590,5 @@ $result = [CanokeyMinidriver.KeygenTestNative]::Generate(
     $keyData,
     $expectedPublicBlob)
 
-$result | Format-List
+if (!$result.PublicKeyMatches) { throw 'Imported public key does not match the software key.' }
+if ($PassThru) { $result } else { $result | Format-List }

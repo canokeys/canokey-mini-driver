@@ -203,3 +203,62 @@ initialization, reconfiguration, borrowed stream ownership, generated-file
 creation failure, and managed-mode logging. Fuzz builds must verify that the
 production library is linked without `CNK_TEST_TRANSPORT`; only the dedicated
 fuzz target may provide fake PC/SC callbacks.
+
+The direct DDI regression can be built with `-DCMD_BUILD_DDI_TESTS=ON` and run as
+`ddi-smoke.exe <dll-path> <log-directory>` with `CNK_PIV_PIN` set. The log directory
+parent must exist. Run again with `raw` as the third argument to verify public
+APDU logging without submitting credentials. Use `write` with
+`CNK_PIV_MANAGEMENT_KEY` to check PUBLIC rejection and ADMIN certificate writes.
+The host saves original DER, writes and reads it back, and retains the ADMIN
+context through explicit restoration on failure. It then deauthenticates ADMIN
+and checks USER signing. Both cycles must retain PKCS#11
+records; normal mode must contain no raw APDU records. This does not substitute
+for Base CSP/KSP or CertPropSvc acceptance against the installed Calais mapping.
+
+## Scoped certificate propagation regression
+
+`scripts/propagation-test.ps1` tests explicitly selected development RSA/EC certificates
+against an already deployed DLL. Supply `-Thumbprint`, `-ExpectedDllSha256` and
+`-ReportDirectory`, and provide the PIN through `CNK_PIV_PIN` or `-Pin`. It checks
+the existing Calais DLL hash and running services before making changes; it does
+not deploy a driver or alter registry configuration. It serializes each selected
+certificate and its properties, removes only its user-store copy, proves absence,
+resets the discovered CIU control port, and waits for CertPropSvc to recreate it.
+Provider/container/KeySpec must stay identical. Silent KSP signatures must verify
+against the propagated certificate's public key, not just the KSP key handle.
+
+On a reset, timeout, association or signing failure, the test restores the original
+certificate contexts with their provider properties. Card objects and private keys
+are never deleted. Test this rollback with an invalid explicit `-ComPort`; removal
+must be observed and every original provider/container/KeySpec must be restored.
+The test requires an unlocked interactive session before removing any certificate.
+RSA uses the one legacy key spec reported for its KSP container; RSA 9D signs
+through AT_KEYEXCHANGE. The caller must confirm native DLL architecture.
+
+Do not use an unfiltered `certutil -user -store My` command as a passive inventory:
+it can open unrelated private keys and trigger repeated credential/error dialogs.
+Use X509Store enumeration and CertGetCertificateContextProperty to inspect public
+certificate/provider metadata without opening private keys. Automated KSP signing
+uses NCRYPT_SILENT_FLAG, including the actual sign call, so a failure is reported
+to the test instead of opening a UI.
+
+Current x64 acceptance covers all six Windows containers: 9A/9C P-256, 9D/9E
+RSA, 82 P-384 and 83 P-521. All six certificates propagate after observed removal
+and USB reinsert, retain provider/container/KeySpec and verify signatures against
+their own public keys. Targeted silent scinfo, CAPI SHA1/SHA256, CNG RSA PKCS#1/PSS,
+ECDSA and RSA PKCS#1/OAEP decrypt pass. Service and application logs contain the
+new PKCS#11/Rust completion records. Native ARM64 runtime is outside this task's
+hardware scope; architecture cross-builds remain required.
+
+The DDI host compares P-256/P-384/P-521 ECDH with BCrypt raw-secret output,
+including size queries, short buffers and agreement destruction. This checks
+the DDI byte order without publishing EC key-exchange fields. PIN/PUK
+change/reset/restore and 18 explicit Windows key generation/import cases pass.
+The provisioning fixture is restored to default credentials with PIN protection
+removed. Use only explicitly replaceable slots for these destructive cases.
+
+CAPI enumeration acquires a verification context, so an EC default container
+cannot hide the existing RSA keys. CAPI signing selects RSA signature containers;
+RSA 9D is tested through its key-exchange path. Key-generation tests support
+`-PassThru` for structured results and fail when the requested public-key view is
+absent or imported bytes differ. Reports include DLL hashes and certificate backups.

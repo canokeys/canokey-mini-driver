@@ -43,10 +43,11 @@ static void init_logging_file(const CMD_CONFIG *config) {
 #endif
 }
 
-static void configure_pkcs11_logging(const CMD_CONFIG *config) {
+void cmd_configure_pkcs11_logging(void) {
+  const CMD_CONFIG *config = cmd_get_config();
   FILE *log_file = cmd_get_log_file();
   int level = log_file == NULL ? CMD_LOG_LEVEL_NONE : config->logging.level;
-  C_CNK_ConfigLogging(level, log_file, config->logging.unsafe_log_apdu ? CK_TRUE : CK_FALSE);
+  CMD_PKCS11_CALL(C_CNK_ConfigLogging, level, log_file, config->logging.unsafe_log_apdu ? CK_TRUE : CK_FALSE);
 }
 
 // DllMain function
@@ -58,7 +59,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
     CMD_CONFIG config;
     cmd_load_config(&config);
     init_logging_file(&config);
-    configure_pkcs11_logging(&config);
+    cmd_configure_pkcs11_logging();
     CMD_INFO("CanoKey Smart Card Minidriver compiled at %s %s", __DATE__, __TIME__);
     CMD_INFO("DLL loaded with handle %p", hinstDLL);
     DisableThreadLibraryCalls(hinstDLL);
@@ -73,7 +74,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
       SymCleanup(GetCurrentProcess());
     }
 #endif
-    C_CNK_ConfigLogging(CMD_LOG_LEVEL_NONE, NULL, CK_FALSE);
+    CMD_PKCS11_CALL(C_CNK_ConfigLogging, CMD_LOG_LEVEL_NONE, NULL, CK_FALSE);
     cmd_stop_logging();
     break;
   case DLL_THREAD_ATTACH:

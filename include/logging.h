@@ -30,6 +30,9 @@ extern bool cmd_parse_bool(const char *value, bool *result);
 extern int cmd_init_logging(const char *log_file, CMD_LOG_CONFIG config);
 extern int cmd_stop_logging();
 extern FILE *cmd_get_log_file(void);
+
+// Rebind the borrowed PKCS#11 log stream after its previous lifecycle ended.
+void cmd_configure_pkcs11_logging(void);
 extern bool cmd_should_log(const int level);
 extern bool cmd_unsafe_log_apdu_enabled(void);
 extern void cmd_printlogf(const int level, const char *function, const char *file, const int line, const char *format,
@@ -51,6 +54,15 @@ extern void cmd_print_stack();
 #define CMD_ERROR(format, ...) CMD_PRINTLOGF(CMD_LOG_LEVEL_ERROR, format, ##__VA_ARGS__)
 #define CMD_FATAL(format, ...) CMD_PRINTLOGF(CMD_LOG_LEVEL_FATAL, format, ##__VA_ARGS__)
 #define CMD_PRINT_HEX(data, size) cmd_print_hex(CMD_LOG_LEVEL_DEBUG, (data), (size));
+
+// Keep the PKCS#11 boundary observable in Release without logging credentials
+// or buffers. The call is evaluated once and retains its exact CK_RV.
+#define CMD_PKCS11_CALL(FUNCTION, ...)                                                                                 \
+  ({                                                                                                                   \
+    CK_RV _cmd_pkcs11_status = FUNCTION(__VA_ARGS__);                                                                  \
+    CMD_DEBUG("%s completed: CK_RV=0x%lx", #FUNCTION, (unsigned long)_cmd_pkcs11_status);                              \
+    _cmd_pkcs11_status;                                                                                                \
+  })
 
 #ifdef CMD_VERBOSE
 #define FUNC_TRACE(CALL) dbg(CALL)

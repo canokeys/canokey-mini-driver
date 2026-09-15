@@ -50,7 +50,7 @@ CK_RV cmd_login_context_specific(CMD_CONTEXT_PTR pContext) {
   // returns, regardless of whether context-specific verification succeeds.
   cmd_clear_user_pin(pContext);
   CMD_DEBUG("Attempting context-specific USER authentication with PIN length %lu", (unsigned long)pinLen);
-  CK_RV rv = C_CNK_Login(pContext->session, CKU_CONTEXT_SPECIFIC, pin, pinLen, NULL);
+  CK_RV rv = CMD_PKCS11_CALL(C_CNK_Login, pContext->session, CKU_CONTEXT_SPECIFIC, pin, pinLen, NULL);
   SecureZeroMemory(pin, sizeof(pin));
   CMD_DEBUG("Context-specific USER authentication returned 0x%lx", rv);
   return rv;
@@ -60,7 +60,7 @@ static void try_login_pin_protected_management_key(CMD_CONTEXT_PTR pContext, PBY
   // USER authentication already supplied Windows with the retry count. This
   // best-effort extension keeps ADMIN DATA parsing and raw key bytes entirely
   // inside PKCS#11, and only elevates the minidriver role after verification.
-  CK_RV rv = C_CNK_LoginPinManaged(pContext->session, pin, pinLen);
+  CK_RV rv = CMD_PKCS11_CALL(C_CNK_LoginPinManaged, pContext->session, pin, pinLen);
 
   if (rv == CKR_OK || rv == CKR_USER_ALREADY_LOGGED_IN) {
     SET_PIN(pContext->authenticatedPins, ROLE_ADMIN);
@@ -134,7 +134,7 @@ static int hex_digit_value(BYTE ch) {
 }
 
 static DWORD logout_after_pin_update(CMD_CONTEXT_PTR pContext) {
-  CK_RV rv = C_Logout(pContext->session);
+  CK_RV rv = CMD_PKCS11_CALL(C_Logout, pContext->session);
   cmd_clear_all_user_pins();
   pContext->authenticatedPins = PIN_SET_NONE;
   if (rv != CKR_OK && rv != CKR_USER_NOT_LOGGED_IN) {
@@ -150,7 +150,8 @@ static DWORD change_user_pin(CMD_CONTEXT_PTR pContext, PBYTE pbOldPin, DWORD cbO
   set_attempts_unknown(pcAttemptsRemaining);
 
   BYTE pinTries = 0;
-  CK_RV rv = C_CNK_SetPIN(pContext->session, CNK_PIV_PIN_TYPE_PIN, pbOldPin, cbOldPin, pbNewPin, cbNewPin, &pinTries);
+  CK_RV rv = CMD_PKCS11_CALL(C_CNK_SetPIN, pContext->session, CNK_PIV_PIN_TYPE_PIN, pbOldPin, cbOldPin, pbNewPin,
+                             cbNewPin, &pinTries);
   maybe_set_attempts_remaining(pcAttemptsRemaining, pinTries);
   if (rv != CKR_OK) {
     CMD_RETURN(map_pkcs11_pin_error(rv), "C_CNK_SetPIN failed");
@@ -175,7 +176,7 @@ static DWORD unblock_user_pin(CMD_CONTEXT_PTR pContext, PBYTE pbPuk, DWORD cbPuk
   CMD_ENSURE_NONNULL(pbNewPin, SCARD_E_INVALID_PARAMETER);
 
   BYTE pinTries = 0;
-  CK_RV rv = C_CNK_UnblockPIN(pContext->session, pbPuk, cbPuk, pbNewPin, cbNewPin, &pinTries);
+  CK_RV rv = CMD_PKCS11_CALL(C_CNK_UnblockPIN, pContext->session, pbPuk, cbPuk, pbNewPin, cbNewPin, &pinTries);
   maybe_set_attempts_remaining(pcAttemptsRemaining, pinTries);
   if (rv != CKR_OK) {
     CMD_RETURN(map_pkcs11_login_error(rv, pinTries), "C_CNK_UnblockPIN failed");
@@ -239,7 +240,7 @@ static DWORD decode_management_key(PBYTE pbPinData, DWORD cbPinData, BYTE manage
 
 static CK_RV login_with_role(CMD_CONTEXT_PTR pContext, CK_USER_TYPE userType, PBYTE loginData, CK_ULONG loginDataLen,
                              BYTE *pPinTries) {
-  CK_RV rv = C_CNK_Login(pContext->session, userType, loginData, loginDataLen, pPinTries);
+  CK_RV rv = CMD_PKCS11_CALL(C_CNK_Login, pContext->session, userType, loginData, loginDataLen, pPinTries);
   // An already-logged-in result does not validate the supplied credential.
   // Log out and retry so callers cannot turn a stale role bit into successful
   // authentication with an arbitrary PIN or management key.
@@ -247,13 +248,13 @@ static CK_RV login_with_role(CMD_CONTEXT_PTR pContext, CK_USER_TYPE userType, PB
     return rv;
   }
 
-  rv = C_Logout(pContext->session);
+  rv = CMD_PKCS11_CALL(C_Logout, pContext->session);
   if (rv != CKR_OK && rv != CKR_USER_NOT_LOGGED_IN) {
     return rv;
   }
   cmd_clear_all_user_pins();
   pContext->authenticatedPins = PIN_SET_NONE;
-  return C_CNK_Login(pContext->session, userType, loginData, loginDataLen, pPinTries);
+  return CMD_PKCS11_CALL(C_CNK_Login, pContext->session, userType, loginData, loginDataLen, pPinTries);
 }
 
 /*
@@ -412,7 +413,7 @@ DWORD WINAPI CardDeauthenticateEx(__in PCARD_DATA pCardData, __in PIN_SET PinId,
     CMD_RETURN(SCARD_E_INVALID_PARAMETER, "Token-wide logout cannot honor a role subset");
   }
 
-  CK_RV rv = C_Logout(pContext->session);
+  CK_RV rv = CMD_PKCS11_CALL(C_Logout, pContext->session);
   cmd_clear_all_user_pins();
   if (rv == CKR_USER_NOT_LOGGED_IN) {
     pContext->authenticatedPins = PIN_SET_NONE;

@@ -81,7 +81,7 @@ static void release_exclusive_context_lock(PSRWLOCK *lock) {
 static CK_RV cleanup_failed_acquire(CK_SESSION_HANDLE session, BOOL sessionOpen) {
   CK_RV result = CKR_OK;
   if (sessionOpen) {
-    CK_RV closeRv = C_CloseSession(session);
+    CK_RV closeRv = CMD_PKCS11_CALL(C_CloseSession, session);
     if (closeRv != CKR_OK && closeRv != CKR_SESSION_HANDLE_INVALID && closeRv != CKR_CRYPTOKI_NOT_INITIALIZED) {
       CMD_WARN("C_CloseSession during acquire cleanup failed: 0x%lx", closeRv);
       // The session reference is still owned by this context. Do not finalize
@@ -92,7 +92,7 @@ static CK_RV cleanup_failed_acquire(CK_SESSION_HANDLE session, BOOL sessionOpen)
   // Each successful C_Initialize owns one managed reference. C_Finalize here
   // releases only that reference; the PKCS#11 lifecycle layer tears down the
   // shared backend only when the last reference is gone.
-  CK_RV finalizeRv = C_Finalize(NULL);
+  CK_RV finalizeRv = CMD_PKCS11_CALL(C_Finalize, NULL);
   if (finalizeRv != CKR_OK && finalizeRv != CKR_CRYPTOKI_NOT_INITIALIZED) {
     CMD_WARN("C_Finalize during acquire cleanup failed: 0x%lx", finalizeRv);
     if (result == CKR_OK)
@@ -153,7 +153,7 @@ DWORD WINAPI CardAcquireContext(__inout PCARD_DATA pCardData, __in DWORD dwFlags
                                             .free_func = (CNK_FREE_FUNC)pCardData->pfnCspFree,
                                             .hSCardCtx = pCardData->hSCardCtx,
                                             .hScard = pCardData->hScard};
-  CK_RV managedRv = C_CNK_EnableManagedMode(&managedArgs);
+  CK_RV managedRv = CMD_PKCS11_CALL(C_CNK_EnableManagedMode, &managedArgs);
   if (managedRv != CKR_OK && managedRv != CKR_CRYPTOKI_ALREADY_INITIALIZED)
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot bind managed card context");
 
@@ -257,7 +257,7 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
   // callback fails, pvVendorSpecific remains available for CardDeleteContext.
   CMD_CONTEXT_PTR context = g_pfnCspAlloc(sizeof(CMD_CONTEXT));
   if (context == NULL) {
-    CK_RV resetRv = C_CNK_ResetManagedMode();
+    CK_RV resetRv = CMD_PKCS11_CALL(C_CNK_ResetManagedMode);
     if (resetRv != CKR_OK)
       CMD_WARN("Managed binding rollback after allocation failure failed: 0x%lx", resetRv);
     g_pfnCspAlloc = previousAlloc;
@@ -270,9 +270,11 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
   pCardData->pvVendorSpecific = context;
 
   // initialize canokey-pkcs11
-  CK_RV ret = C_Initialize(NULL);
+  // C_Finalize clears PKCS#11 logging; this DLL still owns the stream.
+  cmd_configure_pkcs11_logging();
+  CK_RV ret = CMD_PKCS11_CALL(C_Initialize, NULL);
   if (ret != CKR_OK && ret != CKR_CRYPTOKI_ALREADY_INITIALIZED) {
-    CK_RV resetRv = C_CNK_ResetManagedMode();
+    CK_RV resetRv = CMD_PKCS11_CALL(C_CNK_ResetManagedMode);
     if (resetRv != CKR_OK)
       CMD_WARN("Managed binding rollback after C_Initialize failure failed: 0x%lx", resetRv);
     if (resetRv == CKR_OK) {
@@ -285,7 +287,7 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "cannot initialize canokey-pkcs11");
   }
 
-  ret = C_OpenSession(0, CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, &context->session);
+  ret = CMD_PKCS11_CALL(C_OpenSession, 0, CKF_SERIAL_SESSION | CKF_RW_SESSION, NULL, NULL, &context->session);
   if (ret != CKR_OK) {
     CK_RV cleanupRv = cleanup_failed_acquire(CK_INVALID_HANDLE, FALSE);
     if (cleanupRv == CKR_OK) {
@@ -350,7 +352,7 @@ INVOKE_X_ON_NO_IMPL_FUNCS(CMD_SET_CARD_DATA_PFN);
                                                 .free_func = (CNK_FREE_FUNC)g_pfnCspFree,
                                                 .hSCardCtx = g_managed_card_context,
                                                 .hScard = g_managed_card_handle};
-      CK_RV restoreRv = C_CNK_EnableManagedMode(&restoreArgs);
+      CK_RV restoreRv = CMD_PKCS11_CALL(C_CNK_EnableManagedMode, &restoreArgs);
       if (restoreRv != CKR_OK)
         CMD_WARN("Failed to restore active managed card handle: 0x%lx", restoreRv);
       pCardData->pvVendorSpecific = NULL;
@@ -386,7 +388,7 @@ DWORD CardDeleteContext(__inout PCARD_DATA pCardData) {
     // a later cleanup stage reports an error and the context is retained.
     cmd_clear_user_pin(context);
     cmd_clear_enrollment_container_map(context);
-    CK_RV rv = C_CloseSession(context->session);
+    CK_RV rv = CMD_PKCS11_CALL(C_CloseSession, context->session);
     DWORD cleanupError = SCARD_S_SUCCESS;
     if (rv != CKR_OK && rv != CKR_SESSION_HANDLE_INVALID && rv != CKR_CRYPTOKI_NOT_INITIALIZED) {
       CMD_WARN("C_CloseSession failed: 0x%lx", rv);
@@ -398,22 +400,24 @@ DWORD CardDeleteContext(__inout PCARD_DATA pCardData) {
     // Managed C_Initialize/C_Finalize is reference-counted. Release this
     // CARD_DATA's reference even when other contexts remain; the backend is
     // destroyed only by the final reference.
-    rv = C_Finalize(NULL);
+    rv = CMD_PKCS11_CALL(C_Finalize, NULL);
     if (rv != CKR_OK && rv != CKR_CRYPTOKI_NOT_INITIALIZED) {
       CMD_WARN("C_Finalize failed: 0x%lx", rv);
       CMD_RETURN(SCARD_F_INTERNAL_ERROR, "C_Finalize failed");
     }
     if (rv == CKR_CRYPTOKI_NOT_INITIALIZED) {
-      CK_RV resetRv = C_CNK_ResetManagedMode();
+      CK_RV resetRv = CMD_PKCS11_CALL(C_CNK_ResetManagedMode);
       if (resetRv == CKR_OPERATION_ACTIVE) {
         // A failed initialize can leave a retryable backend cleanup pending
         // while Cryptoki is uninitialized. Re-enter initialization to drain
         // that cleanup, then finalize the temporary managed instance.
-        resetRv = C_Initialize(NULL);
+        // C_Finalize clears PKCS#11 logging; this DLL still owns the stream.
+        cmd_configure_pkcs11_logging();
+        resetRv = CMD_PKCS11_CALL(C_Initialize, NULL);
         if (resetRv == CKR_OK)
-          resetRv = C_Finalize(NULL);
+          resetRv = CMD_PKCS11_CALL(C_Finalize, NULL);
         if (resetRv == CKR_OK)
-          resetRv = C_CNK_ResetManagedMode();
+          resetRv = CMD_PKCS11_CALL(C_CNK_ResetManagedMode);
       }
       if (resetRv != CKR_OK) {
         CMD_WARN("Managed binding cleanup is still pending: 0x%lx", resetRv);

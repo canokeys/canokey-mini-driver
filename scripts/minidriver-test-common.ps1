@@ -116,6 +116,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 
 namespace CanokeyMinidriver {
@@ -141,6 +142,7 @@ namespace CanokeyMinidriver {
         private const string BcryptEccPublicBlob = "ECCPUBLICBLOB";
         private const uint PROV_RSA_FULL = 1;
         private const uint CRYPT_SILENT = 0x00000040;
+        private const uint CRYPT_VERIFYCONTEXT = 0xF0000000;
         private const uint AT_KEYEXCHANGE = 1;
         private const uint AT_SIGNATURE = 2;
         private const int AT_ECDSA_P256 = 3;
@@ -335,7 +337,9 @@ namespace CanokeyMinidriver {
         public static string[] EnumCapiContainers() {
             IntPtr hProv = IntPtr.Zero;
             try {
-                if (!CryptAcquireContext(out hProv, null, BaseSmartCardCsp, PROV_RSA_FULL, CRYPT_SILENT)) {
+                // Enumeration must not open the default container: that can be
+                // an EC identity even when other card containers support CAPI.
+                if (!CryptAcquireContext(out hProv, null, BaseSmartCardCsp, PROV_RSA_FULL, CRYPT_SILENT | CRYPT_VERIFYCONTEXT)) {
                     int error = Marshal.GetLastWin32Error();
                     if (error == unchecked((int)0x80090016)) return new string[0]; // NTE_BAD_KEYSET
                     throw new InvalidOperationException("CryptAcquireContext(enum) failed: " + FormatWin32(error));
@@ -461,6 +465,11 @@ namespace CanokeyMinidriver {
         }
 
         public static SignResult CngSign(string container, string pin, string mode, int legacyKeySpec) {
+            return CngSign(container, pin, mode, legacyKeySpec, null);
+        }
+
+        public static SignResult CngSign(string container, string pin, string mode, int legacyKeySpec,
+                                         X509Certificate2 expectedCertificate) {
             IntPtr hProvider = IntPtr.Zero;
             IntPtr hKey = IntPtr.Zero;
             IntPtr pPaddingInfo = IntPtr.Zero;
@@ -501,10 +510,26 @@ namespace CanokeyMinidriver {
                 }
 
                 int cbSignature;
-                CheckStatus(NCryptSignHash(hKey, pPaddingInfo, hash, hash.Length, null, 0, out cbSignature, flags), "NCryptSignHash(size)");
+                CheckStatus(NCryptSignHash(hKey, pPaddingInfo, hash, hash.Length, null, 0, out cbSignature, flags | NCRYPT_SILENT_FLAG), "NCryptSignHash(size)");
                 byte[] signature = new byte[cbSignature];
-                CheckStatus(NCryptSignHash(hKey, pPaddingInfo, hash, hash.Length, signature, signature.Length, out cbSignature, flags), "NCryptSignHash");
+                CheckStatus(NCryptSignHash(hKey, pPaddingInfo, hash, hash.Length, signature, signature.Length, out cbSignature, flags | NCRYPT_SILENT_FLAG), "NCryptSignHash");
                 CheckStatus(NCryptVerifySignature(hKey, pPaddingInfo, hash, hash.Length, signature, cbSignature, flags), "NCryptVerifySignature");
+                if (expectedCertificate != null) {
+                    // A provider can verify against the wrong live key. Propagation
+                    // acceptance must also verify against the certificate's key.
+                    if (String.Equals(group, "RSA", StringComparison.OrdinalIgnoreCase)) {
+                        using (RSA publicKey = expectedCertificate.GetRSAPublicKey()) {
+                            RSASignaturePadding signaturePadding = padding == "PSS" ? RSASignaturePadding.Pss : RSASignaturePadding.Pkcs1;
+                            if (publicKey == null || !publicKey.VerifyHash(hash, signature, HashAlgorithmName.SHA256, signaturePadding))
+                                throw new CryptographicException("Signature does not match the propagated certificate");
+                        }
+                    } else {
+                        using (ECDsa publicKey = expectedCertificate.GetECDsaPublicKey()) {
+                            if (publicKey == null || !publicKey.VerifyHash(hash, signature))
+                                throw new CryptographicException("Signature does not match the propagated certificate");
+                        }
+                    }
+                }
 
                 return new SignResult {
                     Provider = SmartCardKsp,
@@ -954,9 +979,10 @@ function Select-MinidriverTestKeys {
     $selectedBaseCspContainers = @()
     if ($BaseCspContainer) {
         $selectedBaseCspContainers = @($BaseCspContainer)
-    } elseif ($Discovery.RsaKspNames.Count -gt 0) {
+    } elseif ($Discovery.RsaKspSignKeys.Count -gt 0) {
+        $signingNames = @($Discovery.RsaKspSignKeys | Select-Object -ExpandProperty Container)
         $selectedBaseCspContainers = @($Discovery.CapiContainers |
-            Where-Object { $Discovery.RsaKspNames -contains $_ } |
+            Where-Object { $signingNames -contains $_ } |
             Select-Object -Unique)
         if ($selectedBaseCspContainers.Count -eq 0) {
             $selectedBaseCspContainers = @($Discovery.CapiContainers | Select-Object -Unique)
