@@ -197,7 +197,7 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
   // the old FindObjects path as a compatibility fallback for older firmware.
   CNK_PIV_METADATA_DIRECTORY_ENTRY directory[CNK_PIV_METADATA_DIRECTORY_MAX_ENTRIES];
   CK_ULONG directoryCount = CNK_PIV_METADATA_DIRECTORY_MAX_ENTRIES;
-  CK_RV directoryRv = C_CNK_GetPivMetadataDirectory(session, directory, &directoryCount);
+  CK_RV directoryRv = CMD_PKCS11_CALL(C_CNK_GetPivMetadataDirectory, session, directory, &directoryCount);
   CK_BBOOL haveDirectory = directoryRv == CKR_OK ? CK_TRUE : CK_FALSE;
   if (directoryRv != CKR_OK && directoryRv != CKR_FUNCTION_NOT_SUPPORTED)
     CMD_RETURN(directoryRv, "C_CNK_GetPivMetadataDirectory failed");
@@ -207,7 +207,7 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
 
     SLOT *slot = &snapshot.slots[i - 1];
     slot->id = i;
-    C_CNK_ObjIdToPivTag(i, &slot->pivId);
+    CMD_PKCS11_CALL(C_CNK_ObjIdToPivTag, i, &slot->pivId);
     slot->capabilities = capabilities_for_piv_slot(slot->pivId);
 
     CK_OBJECT_CLASS objectClass = CKO_PUBLIC_KEY;
@@ -223,15 +223,15 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
           {CKA_ID, &i, sizeof(i)},
           {CKA_CLASS, &objectClass, sizeof(objectClass)},
       };
-      rv = C_FindObjectsInit(session, templates, 2);
+      rv = CMD_PKCS11_CALL(C_FindObjectsInit, session, templates, 2);
       if (rv != CKR_OK)
         CMD_RETURN(rv, "C_FindObjectsInit failed");
-      rv = C_FindObjects(session, &hObject, 1, &ulObjectCount);
+      rv = CMD_PKCS11_CALL(C_FindObjects, session, &hObject, 1, &ulObjectCount);
       if (rv != CKR_OK) {
-        C_FindObjectsFinal(session);
+        CMD_PKCS11_CALL(C_FindObjectsFinal, session);
         CMD_RETURN(rv, "C_FindObjects failed");
       }
-      rv = C_FindObjectsFinal(session);
+      rv = CMD_PKCS11_CALL(C_FindObjectsFinal, session);
       if (rv != CKR_OK)
         CMD_RETURN(rv, "C_FindObjectsFinal failed");
     }
@@ -254,7 +254,7 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
     CK_BYTE ecParams[16];
     attr[4].pValue = ecParams;
     attr[4].ulValueLen = sizeof(ecParams);
-    rv = C_GetAttributeValue(session, hObject, attr, 5);
+    rv = CMD_PKCS11_CALL(C_GetAttributeValue, session, hObject, attr, 5);
     if (rv != CKR_OK && rv != CKR_ATTRIBUTE_TYPE_INVALID)
       CMD_RETURN(rv, "C_GetAttributeValue failed");
 
@@ -307,15 +307,15 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
           {CKA_ID, &i, sizeof(i)},
           {CKA_CLASS, &objectClass, sizeof(objectClass)},
       };
-      rv = C_FindObjectsInit(session, templates, 2);
+      rv = CMD_PKCS11_CALL(C_FindObjectsInit, session, templates, 2);
       if (rv != CKR_OK)
         CMD_RETURN(rv, "C_FindObjectsInit failed");
-      rv = C_FindObjects(session, &hObject, 1, &ulObjectCount);
+      rv = CMD_PKCS11_CALL(C_FindObjects, session, &hObject, 1, &ulObjectCount);
       if (rv != CKR_OK) {
-        C_FindObjectsFinal(session);
+        CMD_PKCS11_CALL(C_FindObjectsFinal, session);
         CMD_RETURN(rv, "C_FindObjects failed");
       }
-      rv = C_FindObjectsFinal(session);
+      rv = CMD_PKCS11_CALL(C_FindObjectsFinal, session);
       if (rv != CKR_OK)
         CMD_RETURN(rv, "C_FindObjectsFinal failed");
     }
@@ -325,7 +325,7 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
       attr[0].type = CKA_VALUE;
       attr[0].pValue = slot->cert;
       attr[0].ulValueLen = sizeof(slot->cert);
-      rv = C_GetAttributeValue(session, hObject, attr, 1);
+      rv = CMD_PKCS11_CALL(C_GetAttributeValue, session, hObject, attr, 1);
       if (rv != CKR_OK)
         CMD_RETURN(rv, "C_GetAttributeValue failed");
       slot->certLen = attr[0].ulValueLen;
@@ -340,7 +340,8 @@ CK_RV read_canokey(CK_SESSION_HANDLE session, CANOKEY *pCanokey) {
     if (!canokey_slot_has_key(slot))
       continue;
     CK_ULONG nameLen = sizeof(slot->containerName) - sizeof(uint16_t);
-    CK_RV rv = C_CNK_GetContainerName(session, slot->pivId, (CK_BYTE_PTR)slot->containerName, &nameLen);
+    CK_RV rv =
+        CMD_PKCS11_CALL(C_CNK_GetContainerName, session, slot->pivId, (CK_BYTE_PTR)slot->containerName, &nameLen);
     if (rv == CKR_FUNCTION_NOT_SUPPORTED)
       break; // No negative cache survives this snapshot or a card replacement.
     if (rv != CKR_OK)

@@ -111,10 +111,10 @@ static DWORD HashCardIdentity(CK_SESSION_HANDLE session, CK_BYTE_PTR identity, C
   CK_MECHANISM mech = {CKM_SHA_1, NULL, 0};
   CK_BYTE digest[20];
   CK_ULONG digestLen = sizeof(digest);
-  CK_RV rv = C_DigestInit(session, &mech);
+  CK_RV rv = CMD_PKCS11_CALL(C_DigestInit, session, &mech);
   if (rv != CKR_OK)
     return SCARD_F_INTERNAL_ERROR;
-  rv = C_Digest(session, identity, identityLen, digest, &digestLen);
+  rv = CMD_PKCS11_CALL(C_Digest, session, identity, identityLen, digest, &digestLen);
   if (rv != CKR_OK || digestLen < 16)
     return SCARD_F_INTERNAL_ERROR;
   memcpy(cardId, digest, 16);
@@ -130,12 +130,12 @@ DWORD GenerateCardIdentifier(CMD_CONTEXT_PTR pContext) {
   // whenever a container is replaced.
   static CK_BYTE chuidTag[] = {0x5F, 0xC1, 0x02};
   CK_ULONG chuidLen = 0;
-  CK_RV rv = C_CNK_GetPivData(pContext->session, chuidTag, sizeof(chuidTag), NULL, &chuidLen);
+  CK_RV rv = CMD_PKCS11_CALL(C_CNK_GetPivData, pContext->session, chuidTag, sizeof(chuidTag), NULL, &chuidLen);
   if (rv == CKR_OK && chuidLen > 0) {
     CK_BYTE_PTR chuid = g_pfnCspAlloc(chuidLen);
     CMD_ENSURE_NONNULL(chuid, SCARD_E_NO_MEMORY);
     CK_ULONG available = chuidLen;
-    rv = C_CNK_GetPivData(pContext->session, chuidTag, sizeof(chuidTag), chuid, &available);
+    rv = CMD_PKCS11_CALL(C_CNK_GetPivData, pContext->session, chuidTag, sizeof(chuidTag), chuid, &available);
     DWORD result =
         rv == CKR_OK ? HashCardIdentity(pContext->session, chuid, available, pContext->cardId) : SCARD_F_INTERNAL_ERROR;
     g_pfnCspFree(chuid);
@@ -148,9 +148,9 @@ DWORD GenerateCardIdentifier(CMD_CONTEXT_PTR pContext) {
 
   CK_SESSION_INFO sessionInfo;
   CK_TOKEN_INFO tokenInfo;
-  rv = C_GetSessionInfo(pContext->session, &sessionInfo);
+  rv = CMD_PKCS11_CALL(C_GetSessionInfo, pContext->session, &sessionInfo);
   if (rv == CKR_OK)
-    rv = C_GetTokenInfo(sessionInfo.slotID, &tokenInfo);
+    rv = CMD_PKCS11_CALL(C_GetTokenInfo, sessionInfo.slotID, &tokenInfo);
   if (rv != CKR_OK)
     CMD_RETURN(SCARD_F_INTERNAL_ERROR, "Failed to read stable token serial");
   DWORD result =
@@ -481,7 +481,7 @@ DWORD WINAPI CardWriteFile(__in PCARD_DATA pCardData, __in_opt LPSTR pszDirector
       {CKA_VALUE, pbData, cbData},
   };
 
-  CK_RV rv = C_CreateObject(pContext->session, templ, ARRAYSIZE(templ), &objectHandle);
+  CK_RV rv = CMD_PKCS11_CALL(C_CreateObject, pContext->session, templ, ARRAYSIZE(templ), &objectHandle);
   if (rv != CKR_OK) {
     CMD_RETURN(map_pkcs11_write_error(rv), "C_CreateObject certificate failed");
   }
@@ -792,16 +792,16 @@ static DWORD GenerateContainerMapFile(CMD_CONTEXT_PTR pContext, PBYTE *ppbData, 
       } else {
         continue;
       }
-      CK_RV rv = C_DigestInit(pContext->session, &mech);
+      CK_RV rv = CMD_PKCS11_CALL(C_DigestInit, pContext->session, &mech);
       if (rv != CKR_OK) {
         g_pfnCspFree(*ppbData);
         *ppbData = NULL;
         *pcbData = 0;
         return map_pkcs11_write_error(rv);
       }
-      rv = C_Digest(pContext->session, containerIdentity, containerIdentityLen, digest, &digLen);
+      rv = CMD_PKCS11_CALL(C_Digest, pContext->session, containerIdentity, containerIdentityLen, digest, &digLen);
       if (rv != CKR_OK) {
-        C_SessionCancel(pContext->session, CKF_DIGEST);
+        CMD_PKCS11_CALL(C_SessionCancel, pContext->session, CKF_DIGEST);
         g_pfnCspFree(*ppbData);
         *ppbData = NULL;
         *pcbData = 0;

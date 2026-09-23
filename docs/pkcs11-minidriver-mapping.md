@@ -1,564 +1,93 @@
-# PKCS#11 to Windows Smart Card Minidriver Mapping
+# PKCS#11 and Windows minidriver boundary
 
-This document describes the implemented boundary between CanoKey PKCS#11 and
-the Windows Smart Card Minidriver. It is an implementation guide, not a
-replacement for either specification.
+The minidriver implements Windows cardmod policy and representations. PKCS#11
+owns sessions, token authorization, reservations, host crypto and PC/SC leases.
+Libcanokey owns PIV APDUs, firmware rules, bounded parsing and temporary protocol
+secrets. No minidriver callback sends its own raw APDU.
 
-Relevant contracts:
+See [architecture](architecture.md) for lifetime and enrollment invariants,
+[PKCS#11 API contracts](../external/canokey-pkcs11/docs/api-contracts.md) for
+per-entry failure/ownership rules, and [validation](validation.md) for acceptance.
 
-- OASIS PKCS#11 Cryptographic Token Interface
-- Microsoft Smart Card Minidriver Specification (`cardmod.h`)
-- NIST SP 800-73 PIV application and data model
+## Entry points
 
-For ownership and module boundaries, also read `docs/architecture.md`.
-
-## 1. Architecture
-
-The Windows request path is:
-
-```text
-Application
-  -> Microsoft Base Smart Card CSP or Smart Card KSP
-  -> canokey-minidriver.dll
-  -> statically linked canokey-pkcs11 managed mode
-  -> PIV APDUs over the Windows-owned card handle
-```
-
-The minidriver is responsible for:
-
-- validating `cardmod.h` structures, versions, flags, and buffer sizes;
-- exposing Windows card files, properties, containers, and role state;
-- applying Windows-specific PIV slot and key-usage policy;
-- converting Windows key blobs, padding descriptions, and byte order;
-- translating PKCS#11 failures into the correct `SCARD_*` result for each API.
-
-PKCS#11 is responsible for:
-
-- PIV APDU construction and transport;
-- token object discovery and cryptographic operation state;
-- firmware feature and algorithm discovery;
-- PIN-policy enforcement;
-- management-key authentication;
-- sensitive temporary-buffer lifetime and zeroization.
-
-The minidriver must not issue a parallel raw PC/SC command path for operations
-owned by PKCS#11.
-
-## 2. Context and Session Lifetime
-
-`CardAcquireContext` enables PKCS#11 managed mode before calling
-`C_Initialize`. Managed mode receives the caller-owned `SCARDCONTEXT`,
-`SCARDHANDLE`, and allocation callbacks, so PKCS#11 does not reconnect to the
-same card independently.
-
-Each `CMD_CONTEXT` owns one PKCS#11 session:
-
-```text
-CardAcquireContext
-  -> C_CNK_EnableManagedMode
-  -> C_Initialize
-  -> C_OpenSession
-
-CardDeleteContext
-  -> C_CloseSession
-  -> C_Finalize
-```
-
-The managed token and allocator binding is process-wide rather than per
-`CMD_CONTEXT`, with an explicit one-physical-card-per-process limit. Windows
-may create several contexts for that same card, so a different PC/SC handle is
-accepted and becomes active for the current operation. A different physical
-card or allocator must be rejected. Each context owns one PKCS#11 session;
-only the final context releases the process-wide managed binding. If
-initialization fails, the acquisition path rolls back an uninitialized managed
-binding or retains `pvVendorSpecific` so `CardDeleteContext` can retry failed
-session/finalize cleanup.
-
-The close-before-finalize order is required. Reversing it can retain stale
-session state and eventually exhaust the firmware session table during repeated
-Windows probes.
-
-Authentication and cryptographic operation state belong to that session. They
-must not be kept in process-global minidriver state.
-
-## 3. Implemented PKCS#11 Surface
-
-### 3.1 Foundation
-
-The bundled library implements the standard initialization, slot/token,
-session, object-search, and attribute APIs used by the minidriver, including:
-
-```text
-C_Initialize / C_Finalize / C_GetInfo / C_GetFunctionList
-C_GetSlotList / C_GetSlotInfo / C_GetTokenInfo
-C_GetMechanismList / C_GetMechanismInfo
-C_OpenSession / C_CloseSession / C_CloseAllSessions / C_GetSessionInfo
-C_FindObjectsInit / C_FindObjects / C_FindObjectsFinal
-C_GetAttributeValue
-```
-
-`C_WaitForSlotEvent` uses PC/SC notification in standalone mode. Managed mode
-does not own the Windows card lifecycle and returns
-`CKR_FUNCTION_NOT_SUPPORTED` for slot waiting.
-
-### 3.2 Authentication and Management
-
-The minidriver uses:
-
-```text
-C_Login / C_Logout
-C_SetPIN
-C_CNK_Login
-C_CNK_LoginPinManaged
-C_CNK_UnblockPIN
-```
-
-`C_CNK_LoginPinManaged` is a narrow CanoKey extension. After successful user
-PIN verification, it validates PIV ADMIN DATA, checks that the PUK retry counter
-is zero, and checks the management-key cache. Only when the key is not already
-cached does it read the PIN-protected PRINTED object, parse the payload, and
-authenticate the management key. The raw management key never crosses into the
-minidriver.
-
-### 3.3 Cryptographic Operations
-
-The bundled implementation includes:
-
-```text
-C_DigestInit / C_Digest / C_DigestUpdate / C_DigestKey / C_DigestFinal
-C_SignInit / C_Sign / C_SignUpdate / C_SignFinal
-C_VerifyInit / C_Verify / C_VerifyUpdate / C_VerifyFinal
-C_EncryptInit / C_Encrypt
-C_DecryptInit / C_Decrypt
-C_DeriveKey
-```
-
-The Windows minidriver directly consumes signing, RSA decryption, and ECDH
-derivation. Digest, verification, and encryption are host-side PKCS#11
-features and are not separate `cardmod.h` callbacks.
-
-### 3.4 Provisioning and Object Operations
-
-The bundled implementation includes:
-
-```text
-C_GenerateKeyPair
-C_GenerateKey
-C_CreateObject
-C_CopyObject
-C_DestroyObject
-C_GetObjectSize
-C_SetAttributeValue
-```
-
-PIV key-pair generation and private-key import are persistent token mutations.
-`C_DestroyObject` and `C_SetAttributeValue` intentionally have narrower
-semantics for session secrets and do not provide generic PIV container deletion
-or arbitrary persistent-object mutation.
-
-### 3.5 Randomness
-
-Firmware PIV version 6.0 and newer exposes token randomness through
-`C_GenerateRandom`. Requests larger than one APDU are chunked by PKCS#11.
-`C_SeedRandom` returns `CKR_RANDOM_SEED_NOT_SUPPORTED` because the firmware RNG
-does not accept external seed material.
-
-Windows cardmod has no generic random-generation DDI. `CardGetChallenge` and
-`CardGetChallengeEx` are challenge/response PIN callbacks and must not be used
-as an RNG transport.
-
-### 3.6 Intentionally Unsupported Operations
-
-Operations without a complete token contract return
-`CKR_FUNCTION_NOT_SUPPORTED`, including:
-
-```text
-C_EncryptUpdate / C_EncryptFinal
-C_DecryptUpdate / C_DecryptFinal
-C_SignRecoverInit / C_SignRecover
-C_VerifyRecoverInit / C_VerifyRecover
-C_DigestEncryptUpdate / C_DecryptDigestUpdate
-C_SignEncryptUpdate / C_DecryptVerifyUpdate
-C_WrapKey / C_UnwrapKey
-C_GetOperationState / C_SetOperationState
-C_InitToken / C_InitPIN
-```
-
-## 4. Windows Minidriver Surface
-
-### 4.1 Card and Property Plumbing
-
-The minidriver implements the standard discovery path used by Base CSP and
-Smart Card KSP:
-
-```text
-CardAcquireContext / CardDeleteContext
-CardQueryCapabilities / CardQueryFreeSpace / CardQueryKeySizes
-CardGetProperty / CardSetProperty
-CardGetContainerProperty
-CardCreateFile / CardReadFile / CardWriteFile
-CardGetFileInfo / CardEnumFiles
-CardGetContainerInfo
-```
-
-Directory and arbitrary file creation/deletion are not exposed as a generic PIV
-filesystem. Writable card files are limited to the cache views accepted by
-Windows and PIV certificate objects authorized by the management role.
-`CardSetContainerProperty` is not exposed because there is no persistent
-container-property contract behind it.
-
-### 4.2 Authentication and PIN Management
-
-The implemented role mapping is:
-
-| Windows role | PIV meaning | PKCS#11 path |
+| Windows operation | PKCS#11 boundary | Windows responsibility |
 | --- | --- | --- |
-| `ROLE_USER` | PIV PIN | `C_Login(CKU_USER, ...)` |
-| `ROLE_ADMIN` | PIV management key | `C_CNK_Login` or `C_CNK_LoginPinManaged` |
-| `CMD_ROLE_PUK` | PIV PUK for PIN reset only | narrow unblock/reset extension |
-
-The exposed Windows entry points include:
-
-```text
-CardAuthenticatePin / CardAuthenticateEx
-CardDeauthenticateEx
-CardChangeAuthenticator / CardChangeAuthenticatorEx
-CardUnblockPin
-```
-
-Standalone PUK login, PUK changes, and challenge/response authentication are
-intentionally unsupported. Session-PIN generation is also unsupported.
-
-### 4.3 Cryptographic Operations
-
-The minidriver implements:
-
-```text
-CardSignData
-CardRSADecrypt
-CardConstructDHAgreement
-CardDeriveKey
-CardDestroyDHAgreement
-```
-
-Supported Windows paths are:
-
-- RSA PKCS#1 and PSS signing;
-- ECDSA P-256, P-384, and P-521 signing;
-- RSA PKCS#1 and OAEP decryption through the PKCS#11/API-level path;
-- P-256, P-384, and P-521 ECDH with `BCRYPT_KDF_RAW_SECRET`.
-
-Higher-level CNG KDF parameter lists are not implemented. PKCS#11 receives
-`CKD_NULL`, and the minidriver returns the raw agreement value.
-
-### 4.4 Provisioning
-
-`CardCreateContainer` and `CardCreateContainerEx` support:
-
-- on-card RSA key-pair generation;
-- on-card P-256, P-384, and P-521 key-pair generation;
-- RSA import from a CAPI `PRIVATEKEYBLOB`;
-- EC import from a CNG `BCRYPT_ECCPRIVATE_BLOB`.
-
-Private-key blobs are parsed strictly and validated with the Windows software
-crypto provider before the token is mutated. Generation and import require
-`ROLE_USER` authentication. The PKCS#11 backend may additionally use the
-PIN-protected management-key cache for the card-side write, but Windows never
-passes a raw management key to this API.
-
-Certificate writes are accepted through `CardWriteFile` for zero-padded `kscNN`
-and `kxcNN`
-after admin authentication. The live metadata inventory is refreshed after key
-or certificate writes.
-
-Generic `CardDeleteContainer` support is not exposed. Session-secret deletion
-inside PKCS#11 is not equivalent to deleting a persistent PIV key slot.
-
-## 5. Container and Slot Policy
-
-Windows container indexes are stable policy assignments, not enumeration order.
-The minidriver exposes exactly six entries, mapped to PIV object IDs 1..6:
-
-| Container index | PIV object ID | PIV slot | Windows use |
-| ---: | ---: | --- | --- |
-| 0 | 1 | `9A` | signature |
-| 1 | 2 | `9C` | signature |
-| 2 | 3 | `9D` | signature; RSA key exchange when RSA |
-| 3 | 4 | `9E` | signature |
-| 4 | 5 | `82` | signature |
-| 5 | 6 | `83` | signature |
-
-`CardRSADecrypt` accepts an RSA key in `9D` and the Windows propagation map
-publishes its validated `AT_KEYEXCHANGE` view. EC ECDH remains PKCS#11-only:
-publishing an EC companion view currently causes Windows to drop the associated
-certificate during propagation.
-
-PIV PIN policy is enforced by PKCS#11 and firmware:
-
-- PIN-never keys may operate without a user login;
-- PIN-once keys require authentication once for the session;
-- PIN-always keys require the appropriate per-operation authentication path;
-  runtime sign/decrypt uses the same-context retry described below, while
-  Windows provisioning still rejects this policy because session-PIN bridging
-  is unavailable.
-
-The minidriver must not add a blanket `ROLE_USER` check around every private-key
-operation.
-
-## 6. Request Mappings
-
-### 6.1 Container Discovery
-
-The minidriver reads the live PIV metadata directory through PKCS#11 and builds
-six stable Windows `SLOT` records for container indexes `0..5`. The PKCS#11
-backend may discover all 24 PIV object IDs, but unsupported or unmapped slots
-remain outside the Windows interface. Metadata determines key presence,
-algorithm, public key, certificate presence, PIN policy, touch policy, and
-operation capabilities.
-
-Consequently, a P-521 key in PIV `84` (object ID 7) is visible to PKCS#11 but
-does not create a seventh Windows container. P-521 is exposed to Windows only
-when it is provisioned into one of the six mapped slots above.
-
-Firmware 5.7 and newer may provide the fast metadata-directory extension.
-Older supported firmware falls back to individual metadata reads. Version and
-algorithm-extension checks remain inside PKCS#11.
-
-### 6.2 Public-Key Export
-
-`CardGetContainerInfo` converts the PKCS#11 public object into the Windows blob
-required by the selected key type:
-
-ECDH companion properties are not exposed through the current Windows function
-table. PKCS#11 still owns ECDH operations; a future Windows key-spec bridge
-must be validated before publishing `CCP_ASSOCIATED_ECDH_KEY`.
-
-| PKCS#11 attributes | Windows output |
-| --- | --- |
-| `CKA_MODULUS`, `CKA_PUBLIC_EXPONENT` | `BCRYPT_RSAKEY_BLOB` |
-| `CKA_EC_PARAMS`, `CKA_EC_POINT` | `BCRYPT_ECCKEY_BLOB` |
-
-`CKA_EC_POINT` is a DER OCTET STRING containing the uncompressed point
-`04 || X || Y`. The DER wrapper is decoded before the coordinates are copied to
-the CNG blob.
-
-### 6.3 Signing
-
-`CardSignData` uses the CSP padding callback for RSA, then sends the padded
-message through raw RSA. ECDSA is delegated directly to PKCS#11:
-
-| Windows request | PKCS#11 mechanism |
-| --- | --- |
-| RSA PKCS#1/PSS | host `g_pfnCspPadData` + `CKM_RSA_X_509` |
-| raw RSA | `CKM_RSA_X_509` |
-| ECDSA | `CKM_ECDSA` |
-
-For PSS, the CSP callback applies the requested hash and salt policy before the
-raw RSA operation; no `CK_RSA_PKCS_PSS_PARAMS` is sent to the token.
-
-When the selected PIV key reports PIN-always policy, the minidriver retries a
-`C_Sign` that returns `CKR_USER_NOT_LOGGED_IN` once after a
-`CKU_CONTEXT_SPECIFIC` login using the bounded USER PIN captured for the same
-`CARD_DATA` context. The PIN is cleared on every operation exit. Session-PIN
-flags remain unsupported and the raw PIN is never returned to Windows.
-
-### 6.4 RSA Decryption
-
-`CardRSADecrypt` accepts an RSA key in `9D` and maps:
-
-| Windows request | PKCS#11 mechanism |
-| --- | --- |
-| PKCS#1 v1.5 | `CKM_RSA_PKCS` |
-| OAEP | `CKM_RSA_PKCS_OAEP` |
-| raw RSA | `CKM_RSA_X_509` |
-
-Windows supplies and expects the RSA buffers in little-endian order. PKCS#11
-uses big-endian values. The minidriver reverses the ciphertext before
-`C_Decrypt` and reverses the returned plaintext before handing it to Windows,
-including modes where PKCS#11 removes padding.
-
-RSA decrypt uses the same one-shot context-specific retry for PIN-always keys;
-the cached PIN is not retained after the decrypt callback returns.
-
-### 6.5 ECDH
-
-`CardConstructDHAgreement` creates a PKCS#11 session secret with
-`CKM_ECDH1_DERIVE` and `CKD_NULL`. The agreement index stored by the minidriver
-refers to that session object.
-
-`CardDeriveKey` reads the raw X coordinate and reverses its PKCS#11 big-endian
-encoding to the little-endian form expected by CNG
-`BCRYPT_KDF_RAW_SECRET`. `CardDestroyDHAgreement` clears the session object and
-agreement slot.
-
-PIN-always ECDH remains fail-closed because PKCS#11 `C_DeriveKey` has no
-operation-initiation boundary for context-specific login.
-
-## 7. Windows Virtual Files
-
-### 7.1 `cardid`
-
-`cardid` is a stable 16-byte digest of the PIV CHUID, with token serial as a
-fallback when CHUID is absent. It does not depend on mutable key or certificate
-inventory. Its contents must be byte-for-byte identical to `CP_CARD_GUID`;
-Windows uses the pair for cache identity.
-
-### 7.2 `cardcf`
-
-The root `cardcf` file is a versioned `CARD_CACHE_FILE_FORMAT`. The minidriver
-reports `CP_CACHE_MODE_NO_CACHE`. PIN freshness remains zero because PIV has no
-durable PIN generation. Container and file freshness are non-zero,
-deterministic hashes of the complete key/certificate snapshot, so unchanged
-cards remain stable while external mutations trigger Windows to reread
-`cmapfile` and certificate files. Base CSP writes remain compatibility
-synchronization and are not authoritative.
-
-### 7.3 `mscp/cmapfile`
-
-`cmapfile` is serialized from the six stable Windows container records. Each
-`CONTAINER_MAP_RECORD` reports the stable container name, valid/default flags,
-and signature key size, except RSA 9D, which reports only its validated
-key-exchange size and public-key blob. It still supports signing through
-`AT_KEYEXCHANGE`; a duplicate signature view prevents KSP spec-zero opens.
-EC records leave the key-exchange field zero because publishing the ECDH
-companion currently drops the associated certificate. Container names use F5
-per-key names when present; unnamed keys and firmware explicitly lacking F5
-retain the historical public-key-derived names.
-
-Windows may write the map during enrollment. The minidriver validates its
-record-aligned bounded length and names, and stages it in the current `CARD_DATA`
-context so later KSP reads can resolve the provisional container name during
-`NCryptFinalizeKey`. When KSP uses the first empty index for a unique
-provisional RSA key-exchange record, the enrollment context aliases that
-logical index to the empty fixed 9D slot. Container creation, public-key lookup,
-private-key operations, container properties, and certificate-file access all
-resolve the same alias while KSP continues to see its original map record. The
-submitted name never changes the persistent fixed index-to-PIV mapping. The
-overlay and alias survive KSP logout and reauthentication within the same
-enrollment context and identity-verified same-card reconnects; they are cleared
-on failed card identity verification, failed creation, an incompatible
-replacement map write, or context teardown. Matching map rewrites preserve
-aliases only when the captured post-creation RSA public key still matches the
-target. Identity failure remains latched independently of map cleanup until the
-context is released. Stable slot policy and live token
-metadata remain authoritative across contexts. On F5 firmware the staged name
-is persisted after generation, and subsequent name changes for live keys are
-also persisted. Default/size-only writes need no name write. Name failures are
-reported without retrying generation; earlier records in a multi-record write
-may already be committed. Unsupported firmware retains context-local behavior
-and its cross-process certreq limitation.
-
-### 7.4 Certificate Files
-
-Certificate filenames follow the standard container convention:
-
-```text
-mscp/ksc00, mscp/ksc01, ...  signature certificates
-mscp/kxc02                       RSA 9D key-exchange certificate when provisioned
-```
-
-RSA 9D does not expose `ksc02`; enumeration and file access follow the same
-single-KeySpec policy as its public-key blob and container-map record. EC 9D
-continues to expose `ksc02` only. Private signing remains available on RSA 9D
-through `AT_KEYEXCHANGE`.
-
-Reads return the DER certificate bytes from the matching PIV object. File info
-uses Windows-friendly read permissions so CSP/KSP enumeration succeeds. Writes
-still require admin authentication because they mutate a PIV data object.
-`msroots` remains part of the standard file view and is a successful
-zero-length compatibility file when enterprise roots are not provisioned.
-
-`CardQueryCapabilities` and `CP_CARD_CAPABILITIES` both report
-`fCertificateCompression = TRUE`. This tells Base CSP/KSP that the minidriver
-owns the physical-to-logical certificate representation and that `CardReadFile`
-already returns final DER bytes. Reporting `FALSE` causes Windows to discard
-otherwise valid certificate data after reading it.
-
-## 8. Properties
-
-Important property mappings include:
-
-| Property | Source or behavior |
-| --- | --- |
-| `CP_CARD_GUID` | same stable 16 bytes as `cardid` |
-| `CP_CARD_CAPABILITIES` | implemented cardmod capabilities |
-| `CP_CARD_KEYSIZES` | supported RSA/EC Windows key specifications |
-| `CP_CARD_READ_ONLY` | `FALSE` for the implemented provisioning surface |
-| `CP_CARD_CACHE_MODE` | Windows cache policy for this token |
-| `CP_SUPPORTS_WIN_X509_ENROLLMENT` | enabled for supported classic keys |
-| `CP_CARD_PIN_INFO` | role permissions and configured cache timeout |
-| `CP_CARD_LIST_PINS` | USER, ADMIN, and the narrow PUK reset role |
-| `CP_CARD_AUTHENTICATED_STATE` | minidriver role bits for this context |
-| `CP_CARD_SERIAL_NO` | not implemented; callers should use `CP_CARD_GUID` |
-
-`CP_PARENT_WINDOW` and `CP_PIN_CONTEXT_STRING` are optional UI context
-properties. This development minidriver does not implement `CardSetProperty`
-for them and does not provide an external PIN dialog; callers must not rely on
-these values being persisted or consumed.
-
-## 9. Buffer and Memory Rules
-
-- Buffers returned to Windows must use `pfnCspAlloc`; Windows releases them
-  with `pfnCspFree`.
-- On `ERROR_INSUFFICIENT_BUFFER`, report the required length before returning
-  the error so the caller can retry.
-- PKCS#11 two-stage output queries must not consume an operation before the
-  caller supplies a sufficiently large destination.
-- RSA CAPI private-blob CRT fields are little-endian; PKCS#11 integer
-  attributes are big-endian.
-- EC private scalar and public coordinates in `BCRYPT_ECCPRIVATE_BLOB` are
-  big-endian after the CNG header.
-- Sensitive PIN, management-key, imported-key, and derived-secret buffers must
-  be cleared before release.
-
-## 10. Error Translation
-
-PKCS#11 errors are translated at the cardmod API family that owns the Windows
-semantics. Authentication, crypto, data-write, and provisioning paths retain
-separate mappings because one `CK_RV` can require different `SCARD_*` results
-depending on the operation.
-
-Examples:
-
-- a missing user login maps to the Windows security-violation path for a
-  private operation;
-- an absent optional object maps to a missing container or file during
-  enumeration;
-- a small output buffer maps to the Windows buffer error with the required
-  size populated;
-- unsupported algorithms map to `SCARD_E_UNSUPPORTED_FEATURE`.
-
-Do not centralize these mappings solely because their switch statements share
-some cases.
-
-## 11. Post-Quantum and Windows Boundaries
-
-The bundled PKCS#11 3.2 implementation supports ML-DSA-65 and ML-KEM-768
-across all 24 PIV key slots. Current Windows CPDK headers do not define
-minidriver key specifications, structures, or callbacks for those algorithms.
-
-The minidriver therefore exposes only six stable classic RSA and EC containers
-(`9A`, `9C`, `9D`, `9E`, `82`, and `83`) through Microsoft Base Smart Card CSP
-and Smart Card KSP. It does not invent private Windows identifiers or an
-incompatible ABI. Applications can use PQC directly
-through PKCS#11 until Microsoft publishes a suitable provider contract.
-
-## 12. Verification
-
-The primary integration tests are:
-
-```powershell
-.\scripts\smoke-scinfo.ps1
-.\scripts\sign-test.ps1
-.\scripts\decrypt-test.ps1
-.\scripts\derive-test.ps1
-.\scripts\crypto-test.ps1
-.\scripts\pin-test.ps1
-.\scripts\keygen-test.ps1 -UsePinProtectedManagementKey
-.\scripts\keygen-test.ps1 -Import
-.\scripts\ksp-keygen-test.ps1
-```
-
-Tests that generate, import, or reset credentials mutate the attached token.
-Discover the current inventory first, restore temporary credentials, and do not
-overwrite `9D` merely to create an RSA decrypt test prerequisite.
+| Acquire/delete context | Enable managed mode, initialize/open; close/finalize | Borrow Windows handles/allocators; close this context's session before finalizing the last context |
+| USER authentication | `C_CNK_Login(CKU_USER)` | Report attempts; retain only the bounded context-specific PIN retry copy |
+| ADMIN authentication | `C_CNK_Login(CKU_SO)` | Decode the supplied management-key representation |
+| PIN-managed ADMIN | `C_CNK_LoginPinManaged` | Mark ADMIN only after the backend verifies protection and authenticates the key |
+| Deauthentication | `C_Logout` | Respect token-wide logout; clear context PIN copies and role state |
+| Change user PIN | `C_CNK_SetPIN(PIN)` | Accept current/new PIN, map retries, clear old context copies and authenticate the replacement |
+| Unblock/reset PIN | `C_CNK_UnblockPIN` | PUK is reset-only; clear authentication after success |
+| Discover containers/files | Find objects, attributes, metadata directory and F5 names | Publish one complete six-slot snapshot; never turn transient failures into empty slots |
+| Generate/import container | `C_GenerateKeyPair` / private `C_CreateObject` | Require USER plus management authorization, reject occupied slots and validate Windows blobs before writing |
+| Write certificate | certificate `C_CreateObject` | Require ADMIN and refresh the live snapshot |
+| Sign | `C_SignInit` / `C_Sign` | RSA padding through the CSP callback plus `CKM_RSA_X_509`; ECDSA through `CKM_ECDSA` |
+| RSA decrypt | `C_DecryptInit` / `C_Decrypt` | Map raw/PKCS#1/OAEP parameters and reverse Windows little-endian input/output |
+| Construct/destroy DH agreement | `C_DeriveKey` / `C_DestroyObject` | Own a session-secret handle until explicit destruction or context teardown |
+| Read DH secret | `C_GetAttributeValue` | Support raw-secret KDF only; reverse the big-endian X coordinate for Windows |
+
+PIN changes may start from a PUBLIC PKCS#11 session: the supplied old PIN
+authenticates the card command, and PUBLIC remains PUBLIC. PUK recovery reads
+ADMIN DATA and resets PIN within one selected transaction. Malformed or
+PIN-protected policy forbids recovery before a PUK mutation. See
+[PIN-protected management](pin-only-management-key.md).
+
+Token login is shared across PKCS#11 sessions. Operation contexts and secret
+objects are session-owned. A Windows `CARD_DATA` owns one session and its own
+bounded PIN-always retry copy. Managed mode supports one physical card per
+process; same-card handle changes must reassert the current binding.
+
+## Windows slot and file view
+
+Indexes `0..5` map to PIV `9A`, `9C`, `9D`, `9E`, `82`, `83`.
+RSA 9D exposes only `AT_KEYEXCHANGE`, including signing, and `mscp/kxc02`.
+Other supported keys expose signature views and `mscp/kscNN`; EC 9D uses
+`ksc02`. Do not publish a duplicate RSA 9D signature view or an EC key-exchange
+view. Those representations break Windows key opening or certificate propagation.
+
+RSA public output is a CAPI `PUBLICKEYBLOB` (`PUBLICKEYSTRUC`, `RSAPUBKEY`,
+little-endian modulus). EC output is a `BCRYPT_ECCKEY_BLOB` with big-endian
+coordinates. Match the complete `CKA_EC_PARAMS` OID; coordinate length does not
+identify a curve. Only NIST P-256/P-384/P-521 and supported RSA sizes map to Windows.
+
+`cardid` and `CP_CARD_GUID` contain the same stable 16 bytes. `cardcf` reports
+zero PIN freshness and deterministic nonzero container/file freshness from the
+complete live snapshot; cache mode is `CP_CACHE_MODE_NO_CACHE`. F5 names and
+Windows enrollment overlays follow [container-names.md](container-names.md).
+
+Both capability interfaces report `fCertificateCompression = TRUE`.
+`CardReadFile` returns final DER after the backend unwraps/decompresses the PIV
+representation. Certificate file info uses `EveryoneReadUserWriteAc`; actual
+writes still require ADMIN. An unprovisioned `mscp/msroots` reads successfully
+with zero length.
+
+## Buffers, policy and errors
+
+Returned Windows buffers use `pfnCspAlloc` and `pfnCspFree`. Short-buffer errors
+must report the required size. PKCS#11 output preflight must not consume private
+operations. RSA import reverses CAPI CRT components; EC import retains the
+big-endian scalar. Clear temporary private material on every exit.
+
+Stored PIV policy controls private operations: PIN-never works without USER;
+PIN-once requires a cached PIN; PIN-always sign/decrypt allow one same-context
+`CKU_CONTEXT_SPECIFIC` retry after Init. Clear that copy after the operation.
+One-shot ECDH/ML-KEM have no such Init boundary and fail closed for PIN-always.
+Windows session-PIN output remains unsupported.
+
+Each callback family maps structured backend failures to its own `SCARD_*`
+semantics. Rust error kind, phase, reference, SW and retry presence survive into
+PKCS#11 diagnostics. Every PKCS#11/Rust/PCSC external call logs DEBUG completion,
+including success in Release. Raw APDU logging remains separately controlled.
+
+## Deliberately absent Windows surfaces
+
+There is no generic cardmod RNG: `CardGetChallenge*` is challenge/response PIN
+plumbing, not `C_GenerateRandom`. Generic container deletion, arbitrary filesystem
+mutation, standalone PUK login/change and session-PIN generation are unsupported.
+
+The direct ECDH DDI supports `BCRYPT_KDF_RAW_SECRET`, but CSP/KSP enumeration
+publishes no EC DH containers. Ed25519, X25519, secp256k1, SM2 and PQC stay within
+PKCS#11, subject to their firmware and mechanism contracts. Host Verify, Encrypt
+and unrelated applet code need not remain reachable in the static minidriver link.

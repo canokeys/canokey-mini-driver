@@ -213,12 +213,12 @@ Start-Sleep -Seconds 6
   `-SkipBuild -SkipInstall -SkipReset` for fast reruns.
 - The Windows-facing map intentionally has no ECDH containers during
   certificate propagation. RSA key exchange is exposed only when slot 9D
-  contains an RSA key. Run `sign-test.ps1` for the Windows surface and use the
+  contains an RSA key. Run `crypto-test.ps1 -Operation Sign` for the Windows surface and use the
   PKCS#11/API-level decrypt and derive tests for capabilities that are not
   Windows-mapped; do not overwrite 9D merely to satisfy a KSP test unless that
   destructive provisioning is explicitly intended.
-- For focused reruns, use `.\scripts\sign-test.ps1`,
-  `.\scripts\decrypt-test.ps1`, or `.\scripts\derive-test.ps1`. They share
+- For focused reruns, use `.\scripts\crypto-test.ps1 -Operation Sign`,
+  `.\scripts\crypto-test.ps1 -Operation Decrypt`, or `.\scripts\crypto-test.ps1 -Operation Derive`. They share
   `scripts\minidriver-test-common.ps1`, so `crypto-test.ps1` can build,
   debug-install, reset, discover once, and then run all three categories in a
   single PowerShell process.
@@ -257,7 +257,7 @@ decrypt with supported RSA keys regardless of Windows mapping.
 EC keys in those slots       -> PKCS#11 ECDH-capable (not Windows-mapped)
 ```
 
-- `scripts\sign-test.ps1` should exercise every discovered signing container.
+- `scripts\crypto-test.ps1 -Operation Sign` should exercise every discovered signing container.
   CAPI coverage is for RSA containers; CNG coverage is split by RSA and ECDSA
   algorithm group. Open CNG signing keys with `LegacyKeySpec = AT_SIGNATURE`
   and CNG decrypt keys with `LegacyKeySpec = AT_KEYEXCHANGE`; opening a

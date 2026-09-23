@@ -91,3 +91,12 @@ add_custom_target(
           "${CMD_DEBUG_INSTALL_DIR}/$<TARGET_FILE_NAME:${CMD_LIB_NAME}>"
   DEPENDS ${CMD_LIB_NAME}
   COMMENT "Copying ${CMD_LIB_NAME} to ${CMD_DEBUG_INSTALL_DIR} for registry-only debugging")
+
+# Explicitly run this executable with a DLL path and the documented real-card
+# fixture. It is not registered with CTest and never installs a driver.
+option(CMD_BUILD_DDI_TESTS "Build the real-card DDI and logging regression host" OFF)
+if(CMD_BUILD_DDI_TESTS)
+  add_executable(ddi-smoke tests/ddi-smoke.c)
+  target_include_directories(ddi-smoke PRIVATE include)
+  target_link_libraries(ddi-smoke PRIVATE winscard bcrypt advapi32 crypt32)
+endif()

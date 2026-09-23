@@ -26,7 +26,7 @@ static DWORD map_pkcs11_crypto_error(CK_RV rv) {
 }
 
 static DWORD cancel_context_operation(CMD_CONTEXT_PTR pContext, CK_FLAGS flags, DWORD fallback) {
-  CK_RV cancelRv = C_SessionCancel(pContext->session, flags);
+  CK_RV cancelRv = CMD_PKCS11_CALL(C_SessionCancel, pContext->session, flags);
   if (cancelRv != CKR_OK && cancelRv != CKR_OPERATION_NOT_INITIALIZED) {
     CMD_ERROR("C_SessionCancel failed for flags 0x%lx: 0x%lx", (unsigned long)flags, (unsigned long)cancelRv);
     return SCARD_F_INTERNAL_ERROR;
@@ -36,7 +36,7 @@ static DWORD cancel_context_operation(CMD_CONTEXT_PTR pContext, CK_FLAGS flags, 
 
 static CK_RV sign_with_context_pin(CMD_CONTEXT_PTR pContext, CK_BYTE_PTR data, CK_ULONG dataLen, CK_BYTE_PTR signature,
                                    CK_ULONG_PTR signatureLen) {
-  CK_RV rv = C_Sign(pContext->session, data, dataLen, signature, signatureLen);
+  CK_RV rv = CMD_PKCS11_CALL(C_Sign, pContext->session, data, dataLen, signature, signatureLen);
   if (rv != CKR_USER_NOT_LOGGED_IN)
     return rv;
 
@@ -49,14 +49,14 @@ static CK_RV sign_with_context_pin(CMD_CONTEXT_PTR pContext, CK_BYTE_PTR data, C
     CMD_DEBUG("C_Sign context-specific authentication failed: 0x%lx", authRv);
     return authRv == CKR_OPERATION_NOT_INITIALIZED ? CKR_USER_NOT_LOGGED_IN : authRv;
   }
-  rv = C_Sign(pContext->session, data, dataLen, signature, signatureLen);
+  rv = CMD_PKCS11_CALL(C_Sign, pContext->session, data, dataLen, signature, signatureLen);
   CMD_DEBUG("C_Sign context-specific retry returned 0x%lx", rv);
   return rv;
 }
 
 static CK_RV decrypt_with_context_pin(CMD_CONTEXT_PTR pContext, CK_BYTE_PTR encryptedData, CK_ULONG encryptedLen,
                                       CK_BYTE_PTR plainData, CK_ULONG_PTR plainLen) {
-  CK_RV rv = C_Decrypt(pContext->session, encryptedData, encryptedLen, plainData, plainLen);
+  CK_RV rv = CMD_PKCS11_CALL(C_Decrypt, pContext->session, encryptedData, encryptedLen, plainData, plainLen);
   if (rv != CKR_USER_NOT_LOGGED_IN)
     return rv;
 
@@ -66,7 +66,7 @@ static CK_RV decrypt_with_context_pin(CMD_CONTEXT_PTR pContext, CK_BYTE_PTR encr
     CMD_DEBUG("C_Decrypt context-specific authentication failed: 0x%lx", authRv);
     return authRv == CKR_OPERATION_NOT_INITIALIZED ? CKR_USER_NOT_LOGGED_IN : authRv;
   }
-  rv = C_Decrypt(pContext->session, encryptedData, encryptedLen, plainData, plainLen);
+  rv = CMD_PKCS11_CALL(C_Decrypt, pContext->session, encryptedData, encryptedLen, plainData, plainLen);
   CMD_DEBUG("C_Decrypt context-specific retry returned 0x%lx", rv);
   return rv;
 }
@@ -240,7 +240,7 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
     // Sign
     CK_MECHANISM mech = {CKM_RSA_X_509, NULL, 0};
     CK_OBJECT_HANDLE hKey = CMD_MAKE_OBJECT_HANDLE(0, CKO_PRIVATE_KEY, slot->id);
-    CK_RV rv = C_SignInit(pContext->session, &mech, hKey);
+    CK_RV rv = CMD_PKCS11_CALL(C_SignInit, pContext->session, &mech, hKey);
     if (rv != CKR_OK) {
       g_pfnCspFree(pCardSigningInfo->pbSignedData);
       pCardSigningInfo->pbSignedData = NULL;
@@ -268,7 +268,7 @@ DWORD WINAPI CardSignData(__in PCARD_DATA pCardData, __in PCARD_SIGNING_INFO pCa
   } else if (slot->keyType == CKK_EC) {
     CK_MECHANISM mech = {CKM_ECDSA, NULL, 0};
     CK_OBJECT_HANDLE hKey = CMD_MAKE_OBJECT_HANDLE(0, CKO_PRIVATE_KEY, slot->id);
-    CK_RV rv = C_SignInit(pContext->session, &mech, hKey);
+    CK_RV rv = CMD_PKCS11_CALL(C_SignInit, pContext->session, &mech, hKey);
     if (rv != CKR_OK) {
       pCardSigningInfo->pbSignedData = NULL;
       pCardSigningInfo->cbSignedData = 0;
@@ -396,8 +396,8 @@ DWORD WINAPI CardConstructDHAgreement(__in PCARD_DATA pCardData, __inout PCARD_D
   CK_OBJECT_HANDLE hBaseKey = CMD_MAKE_OBJECT_HANDLE(0, CKO_PRIVATE_KEY, slot->id);
   CK_OBJECT_HANDLE hSecret = 0;
   CMD_CONTEXT_PTR userPinGuard CMD_USER_PIN_GUARD = pContext;
-  CK_RV rv =
-      C_DeriveKey(pContext->session, &mech, hBaseKey, template, sizeof(template) / sizeof(template[0]), &hSecret);
+  CK_RV rv = CMD_PKCS11_CALL(C_DeriveKey, pContext->session, &mech, hBaseKey, template,
+                             sizeof(template) / sizeof(template[0]), &hSecret);
   SecureZeroMemory(peerPoint, sizeof(peerPoint));
   if (rv != CKR_OK) {
     CMD_RETURN(map_pkcs11_crypto_error(rv), "C_DeriveKey failed");
@@ -406,7 +406,7 @@ DWORD WINAPI CardConstructDHAgreement(__in PCARD_DATA pCardData, __inout PCARD_D
   BYTE agreementIndex;
   ret = find_free_dh_agreement(pContext, &agreementIndex);
   if (ret != SCARD_S_SUCCESS) {
-    CK_RV destroyRv = C_DestroyObject(pContext->session, hSecret);
+    CK_RV destroyRv = CMD_PKCS11_CALL(C_DestroyObject, pContext->session, hSecret);
     if (destroyRv != CKR_OK)
       CMD_WARN("C_DestroyObject for ECDH secret failed: 0x%lx", destroyRv);
     CMD_RETURN(ret, "No free DH agreement slot");
@@ -415,8 +415,8 @@ DWORD WINAPI CardConstructDHAgreement(__in PCARD_DATA pCardData, __inout PCARD_D
   CMD_DH_AGREEMENT *agreement = &pContext->dhAgreements[agreementIndex - 1];
   clear_dh_agreement(agreement);
   CK_ATTRIBUTE valueAttr = {CKA_VALUE, agreement->secret, sizeof(agreement->secret)};
-  rv = C_GetAttributeValue(pContext->session, hSecret, &valueAttr, 1);
-  CK_RV destroyRv = C_DestroyObject(pContext->session, hSecret);
+  rv = CMD_PKCS11_CALL(C_GetAttributeValue, pContext->session, hSecret, &valueAttr, 1);
+  CK_RV destroyRv = CMD_PKCS11_CALL(C_DestroyObject, pContext->session, hSecret);
   if (destroyRv != CKR_OK) {
     clear_dh_agreement(agreement);
     CMD_RETURN(map_pkcs11_crypto_error(destroyRv), "C_DestroyObject for ECDH secret failed");
@@ -625,7 +625,7 @@ DWORD WINAPI CardRSADecrypt(__in PCARD_DATA pCardData, __inout PCARD_RSA_DECRYPT
   reverse_bytes(encryptedData, pInfo->cbData);
 
   CK_OBJECT_HANDLE hKey = CMD_MAKE_OBJECT_HANDLE(0, CKO_PRIVATE_KEY, slot->id);
-  CK_RV rv = C_DecryptInit(pContext->session, &mech, hKey);
+  CK_RV rv = CMD_PKCS11_CALL(C_DecryptInit, pContext->session, &mech, hKey);
   if (rv != CKR_OK) {
     g_pfnCspFree(encryptedData);
     CMD_RETURN(map_pkcs11_crypto_error(rv), "C_DecryptInit failed");

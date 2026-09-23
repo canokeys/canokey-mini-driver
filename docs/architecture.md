@@ -23,6 +23,7 @@ Base CSP / Smart Card KSP
   -> cardmod entry point
   -> CMD_CONTEXT and slot policy
   -> managed canokey-pkcs11
+  -> libcanokey PIV operation
   -> PIV APDU on the Windows-owned card handle
 ```
 
@@ -34,6 +35,14 @@ entry points such as context/session creation and operation initialization do
 not keep a reader transaction open. A second context may request another PIV
 operation concurrently; PC/SC serializes the physical transactions while
 PKCS#11 still protects token-wide authorization and session operation state.
+The dependency now uses one Rust profile for capabilities and message limits,
+and one Rust operation for PIN-managed policy validation, management-key
+verification and explicit PUK finalization. The minidriver continues to own its
+Windows callback/session lifetime. PKCS#11's SM2, attestation and physical key
+provisioning extensions are available to PKCS#11 consumers; Windows retains its
+six-container RSA/NIST view. Shared private-operation admission prevents a
+management mutation from overtaking a queued sign/decrypt call.
+
 
 The PIV standard permits a same-AID reselect to preserve security status, but
 the current CanoKey firmware resets PIN/PUK/management status in `piv_select()`.
@@ -47,7 +56,7 @@ that order can leak card sessions or exhaust the firmware session table.
 ## Source Responsibilities
 
 - `context.c`: cardmod function table, context acquisition, and lifetime.
-- `canokey.c`: live PIV metadata decoding and per-slot capabilities.
+- `canokey.c`: PKCS#11 metadata to Windows slots and capabilities.
 - `container.c`: Windows container generation/import and public-key blobs.
 - `crypto.c`: cardmod sign, RSA decrypt, and ECDH operations.
 - `data.c`: card files, certificates, card identity, and cmap/cache views.
@@ -190,9 +199,9 @@ not itself compressed: setting it to `FALSE` makes Windows read certificate
 files successfully and then reject them before key association and
 propagation.
 
-Windows propagation exposes signature views for all six containers and
-populates `wKeyExchangeKeySizeBits`/`pbKeyExPublicKey` only for an RSA 9D
-container. EC ECDH remains a PKCS#11 capability and is intentionally not
+Windows propagation exposes one view per container: RSA 9D uses key exchange
+(including signing), and all other supported keys use signature views.
+EC ECDH remains a PKCS#11 capability and is intentionally not
 mapped to Windows until a compatible companion-property path is validated.
 
 The minidriver accepts Base CSP/KSP writes to `cardcf` and `cmapfile` for
@@ -307,8 +316,8 @@ The primary local loop is:
 ```powershell
 .\build.ps1 -Arch x64
 .\scripts\keygen-test.ps1 -UsePinProtectedManagementKey
-.\scripts\sign-test.ps1 -SkipBuild -SkipInstall -SkipReset
-.\scripts\derive-test.ps1 -SkipBuild -SkipInstall -SkipReset
+.\scripts\crypto-test.ps1 -Operation Sign -SkipBuild -SkipInstall -SkipReset
+.\scripts\crypto-test.ps1 -Operation Derive -SkipBuild -SkipInstall -SkipReset
 ```
 
 Run `crypto-test.ps1` for the Windows signing surface and use the PKCS#11
@@ -328,3 +337,25 @@ mapping lives in `canokey.c`, post-write inventory refresh lives in `data.c`,
 and only allocation/free/padding callbacks that are actually consumed are
 retained globally. Do not centralize error maps merely because their switch
 statements overlap.
+
+## Logging across managed contexts
+
+The minidriver owns its log stream until DLL unload. PKCS#11 borrows that stream
+for one initialization/finalization lifecycle and clears its own logging state
+at the final `C_Finalize`. Therefore every managed `C_Initialize`, including a
+cleanup retry, must reapply the registry-derived configuration through
+`cmd_configure_pkcs11_logging`. Releasing the final CARD_DATA does not close the
+minidriver's stream. A later CARD_DATA must regain the same PKCS#11 sink.
+
+`CMD_BUILD_DDI_TESTS` builds a direct DLL test host for the documented development
+card (0/1 P-256, 2/3 RSA, 4 P-384 and 5 P-521). It checks two acquire/delete
+cycles, six certificate read/write paths, USER signatures and EC raw-secret
+agreement against Windows BCrypt, including P-521.
+A private volatile HKCU fixture redirects HKLM reads only while loading the DLL;
+it does not change Calais or machine configuration. Normal mode disables raw
+APDUs, and `raw` mode exercises public reads without credential submission.
+
+Every PKCS#11 call also emits a DEBUG completion record through
+CMD_PKCS11_CALL, including successful calls in Release. Function names and CK_RV
+values locate the boundary without printing PINs, management keys or buffers.
+The PKCS#11 backend similarly records Rust/PCSC completions and typed failures.

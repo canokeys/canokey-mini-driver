@@ -57,7 +57,8 @@ static void ConfigureEnrollmentContainerAliases(CMD_CONTEXT_PTR pContext, PCONTA
   DWORD keyExchangeIndex = recordCount;
   for (DWORD i = 0; i < recordCount; i++) {
     CK_BYTE pivTag = 0;
-    if (C_CNK_ObjIdToPivTag(canokey_container_object_id((CK_BYTE)i), &pivTag) == CKR_OK && pivTag == 0x9D) {
+    if (CMD_PKCS11_CALL(C_CNK_ObjIdToPivTag, canokey_container_object_id((CK_BYTE)i), &pivTag) == CKR_OK &&
+        pivTag == 0x9D) {
       keyExchangeIndex = i;
       break;
     }
@@ -187,7 +188,7 @@ DWORD cmd_persist_enrollment_name(CMD_CONTEXT_PTR context, BYTE index, const WCH
   SLOT *slot = &context->canokey.slots[physical];
   WCHAR current[40] = {0};
   CK_ULONG currentLen = CNK_PIV_CONTAINER_NAME_MAX_BYTES;
-  CK_RV rv = C_CNK_GetContainerName(context->session, slot->pivId, (CK_BYTE_PTR)current, &currentLen);
+  CK_RV rv = CMD_PKCS11_CALL(C_CNK_GetContainerName, context->session, slot->pivId, (CK_BYTE_PTR)current, &currentLen);
   if (rv == CKR_FUNCTION_NOT_SUPPORTED) {
     CMD_WARN("Firmware has no F5 container names; enrollment name remains context-local");
     return SCARD_S_SUCCESS;
@@ -197,8 +198,8 @@ DWORD cmd_persist_enrollment_name(CMD_CONTEXT_PTR context, BYTE index, const WCH
     // regenerating it; invalidate other contexts even if the response is lost.
     InterlockedIncrement(&g_cmd_metadata_generation);
     context->metadata_refresh_valid = FALSE;
-    rv = C_CNK_SetContainerName(context->session, slot->pivId, (CK_BYTE_PTR)record->wszGuid,
-                                (CK_ULONG)(wcslen(record->wszGuid) * sizeof(WCHAR)));
+    rv = CMD_PKCS11_CALL(C_CNK_SetContainerName, context->session, slot->pivId, (CK_BYTE_PTR)record->wszGuid,
+                         (CK_ULONG)(wcslen(record->wszGuid) * sizeof(WCHAR)));
   }
   if (rv != CKR_OK) {
     CMD_ERROR("Persistent container name failed after possible key/name commit: 0x%lx", rv);

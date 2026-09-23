@@ -1,4 +1,6 @@
 param(
+    [ValidateSet("All", "Sign", "Decrypt", "Derive")]
+    [string]$Operation = "All",
     [string]$ReaderName = "canokeys.org OpenPGP PIV OATH 0",
     [string]$Pin = "123456",
     [string]$Arch = "x64",
@@ -54,28 +56,34 @@ try {
     }
 
     $results = @()
-    $results += Invoke-MinidriverSignTests `
-        -Selection $selection `
-        -ReaderName $ReaderName `
-        -PinArg $pinArg `
-        -ContinueOnError:$ContinueOnError
-    if ($selection.DecryptKspContainers.Count -gt 0) {
-        $results += Invoke-MinidriverDecryptTests `
+    if ($Operation -in @("All", "Sign")) {
+        $results += Invoke-MinidriverSignTests `
             -Selection $selection `
+            -ReaderName $ReaderName `
             -PinArg $pinArg `
             -ContinueOnError:$ContinueOnError
-    } else {
-        Write-Host "Skipping optional RSA decrypt coverage because no RSA 9D key-exchange container was discovered."
     }
-    if ($selection.EcdhKspContainers.Count -gt 0) {
-        $results += Invoke-MinidriverDeriveTests `
-            -Selection $selection `
-            -PinArg $pinArg `
-            -ContinueOnError:$ContinueOnError
-    } else {
-        Write-Host "Skipping optional ECDH coverage because no Windows-mapped ECDH container was discovered."
+    if ($Operation -in @("All", "Decrypt")) {
+        if ($selection.DecryptKspContainers.Count -gt 0) {
+            $results += Invoke-MinidriverDecryptTests `
+                -Selection $selection `
+                -PinArg $pinArg `
+                -ContinueOnError:$ContinueOnError
+        } else {
+            Write-Host "Skipping optional RSA decrypt coverage because no RSA 9D key-exchange container was discovered."
+        }
     }
+    if ($Operation -in @("All", "Derive")) {
+        if ($selection.EcdhKspContainers.Count -gt 0) {
+            $results += Invoke-MinidriverDeriveTests `
+                -Selection $selection `
+                -PinArg $pinArg `
+                -ContinueOnError:$ContinueOnError
+        } else {
+            Write-Host "Skipping optional ECDH coverage because no Windows-mapped ECDH container was discovered."
+        }
 
+    }
     Complete-MinidriverTestRun -Results $results
 } finally {
     Pop-Location

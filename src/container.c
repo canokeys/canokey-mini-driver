@@ -44,7 +44,8 @@ static DWORD map_pkcs11_container_error(CK_RV rv) {
 
 static BOOL container_index_is_piv_9d(BYTE bContainerIndex) {
   CK_BYTE pivTag = 0;
-  return C_CNK_ObjIdToPivTag(canokey_container_object_id(bContainerIndex), &pivTag) == CKR_OK && pivTag == 0x9D;
+  return CMD_PKCS11_CALL(C_CNK_ObjIdToPivTag, canokey_container_object_id(bContainerIndex), &pivTag) == CKR_OK &&
+         pivTag == 0x9D;
 }
 
 static DWORD refresh_metadata_after_committed_key_write(CMD_CONTEXT_PTR pContext, const char *operation) {
@@ -196,8 +197,8 @@ static DWORD create_keypair(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWOR
     publicTemplate[publicCount++] = (CK_ATTRIBUTE){CKA_EC_PARAMS, (CK_BYTE_PTR)ecParams, ecParamsLen};
   }
 
-  CK_RV rv = C_GenerateKeyPair(pContext->session, &mechanism, publicTemplate, publicCount, privateTemplate,
-                               privateCount, &publicKey, &privateKeyHandle);
+  CK_RV rv = CMD_PKCS11_CALL(C_GenerateKeyPair, pContext->session, &mechanism, publicTemplate, publicCount,
+                             privateTemplate, privateCount, &publicKey, &privateKeyHandle);
   if (rv != CKR_OK) {
     CMD_RETURN(map_pkcs11_container_error(rv), "C_GenerateKeyPair failed");
   }
@@ -325,7 +326,7 @@ static DWORD import_rsa_key(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWOR
   }
 
   CK_OBJECT_HANDLE privateKeyHandle = CK_INVALID_HANDLE;
-  CK_RV rv = C_CreateObject(pContext->session, templ, count, &privateKeyHandle);
+  CK_RV rv = CMD_PKCS11_CALL(C_CreateObject, pContext->session, templ, count, &privateKeyHandle);
   SecureZeroMemory(components, sizeof(components));
   if (rv != CKR_OK) {
     CMD_RETURN(map_pkcs11_container_error(rv), "C_CreateObject RSA import failed");
@@ -422,7 +423,7 @@ static DWORD import_ec_key(CMD_CONTEXT_PTR pContext, BYTE bContainerIndex, DWORD
   }
 
   CK_OBJECT_HANDLE privateKeyHandle = CK_INVALID_HANDLE;
-  CK_RV rv = C_CreateObject(pContext->session, templ, count, &privateKeyHandle);
+  CK_RV rv = CMD_PKCS11_CALL(C_CreateObject, pContext->session, templ, count, &privateKeyHandle);
   SecureZeroMemory(privateScalar, sizeof(privateScalar));
   if (rv != CKR_OK) {
     CMD_RETURN(map_pkcs11_container_error(rv), "C_CreateObject EC import failed");
